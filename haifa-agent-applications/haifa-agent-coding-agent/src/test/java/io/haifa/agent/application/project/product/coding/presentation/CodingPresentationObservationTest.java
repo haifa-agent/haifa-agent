@@ -251,6 +251,54 @@ class CodingPresentationObservationTest {
     }
 
     @Test
+    void nativeToolProjectionPreservesTimingExitAndBoundedResultAcrossUpdates() throws Exception {
+        Fixture f = new Fixture();
+        try (var observation = f.observe("client")) {
+            observation.initial();
+            f.events
+                    .get()
+                    .onEvent(f.tool(
+                            1,
+                            100,
+                            new RunEventPayloads.ToolLifecycle(
+                                    "call", "Run Command", "STARTED", "NONE", "fixture command", "")));
+            observation.poll(Duration.ofSeconds(5));
+            f.events
+                    .get()
+                    .onEvent(f.tool(
+                            2,
+                            350,
+                            new RunEventPayloads.ToolLifecycle(
+                                    "call",
+                                    "Run Command",
+                                    "FAILED",
+                                    "NONE",
+                                    "fixture command",
+                                    "result-1",
+                                    Optional.of(new RunEventPayloads.ToolObservation(
+                                            Optional.of(io.haifa.agent.runtime.api.display.BoundedText.of(
+                                                    "fixture result", 1024, 10)),
+                                            Optional.of("EXITED"),
+                                            Optional.of(17))),
+                                    "Check fixture",
+                                    "execution_run")));
+            var update = (Update) observation.poll(Duration.ofSeconds(5));
+            assertThat(update.replacement().entries())
+                    .filteredOn(entry -> entry.kind().equals("tool"))
+                    .singleElement()
+                    .satisfies(entry -> {
+                        assertThat(entry.toolCallId()).isEqualTo("call");
+                        var details = entry.toolDetails();
+                        assertThat(details.startedAtEpochMillis()).isEqualTo(100L);
+                        assertThat(details.durationMillis()).isEqualTo(250L);
+                        assertThat(details.exitCode()).isEqualTo(17L);
+                        assertThat(details.resultRef()).isEqualTo("result-1");
+                        assertThat(details.output().text()).isEqualTo("fixture result");
+                    });
+        }
+    }
+
+    @Test
     void deliveryNoticesRetainSourceAndFactsInInitialReplayAndLiveUpdates() throws Exception {
         Fixture f = new Fixture();
         f.replay.set(List.of(f.delivery(
@@ -450,6 +498,21 @@ class CodingPresentationObservationTest {
                     new Scope("view", "host", clientId, session.value(), 1, "native"),
                     new DefaultSecretRedactor(),
                     () -> new Consent("ASK", null, false));
+        }
+
+        AgentRunEvent tool(long sequence, long occurredAt, RunEventPayloads.ToolLifecycle payload) {
+            return new AgentRunEvent(
+                    "tool-" + sequence,
+                    "tool.lifecycle",
+                    "1",
+                    run,
+                    session,
+                    sequence,
+                    new RunEventCursor(run, "1", OptionalLong.of(sequence)),
+                    Instant.ofEpochMilli(occurredAt),
+                    Optional.empty(),
+                    Optional.empty(),
+                    payload);
         }
 
         AgentRunEvent delivery(long sequence, RunEventPayloads.DeliveryLifecycle payload) {

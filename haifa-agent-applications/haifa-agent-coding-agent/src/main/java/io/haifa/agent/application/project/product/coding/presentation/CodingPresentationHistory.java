@@ -29,7 +29,8 @@ public final class CodingPresentationHistory {
                 null,
                 null,
                 item.code().orElse(null),
-                item.diagnosticId().orElse(null));
+                item.diagnosticId().orElse(null),
+                null);
     }
 
     public static HistoryPage page(CodingSessionHistoryPage source, SecretRedactor redactor) {

@@ -21,6 +21,12 @@ public sealed interface TerminalUiAction {
 
     record HistoryLoaded(CodingSessionHistoryPage history) implements TerminalUiAction {}
 
+    record ProductToolsChanged(List<Entry> entries) implements TerminalUiAction {
+        public ProductToolsChanged {
+            entries = List.copyOf(entries);
+        }
+    }
+
     record ProductDeliveryChanged(List<Entry> entries, List<String> notices) implements TerminalUiAction {
         public ProductDeliveryChanged {
             entries = List.copyOf(entries);
@@ -98,7 +104,12 @@ public sealed interface TerminalUiAction {
         }
     }
 
-    record RunEventReceived(AgentRunEvent event, long selectionGeneration) implements TerminalUiAction {
+    record RunEventReceived(AgentRunEvent event, long selectionGeneration, boolean renderTool)
+            implements TerminalUiAction {
+        public RunEventReceived(AgentRunEvent event, long selectionGeneration) {
+            this(event, selectionGeneration, true);
+        }
+
         /** Unscoped actions remain supported for reducers and direct tests. */
         public RunEventReceived(AgentRunEvent event) {
             this(event, 0L);

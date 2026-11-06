@@ -59,6 +59,8 @@ export function createContract(
     for (const entry of value.entries) {
       if (entry.kind === "tool" && (!entry.toolCallId || !entry.runId))
         return false;
+      if (entry.toolDetails != null && (entry.kind !== "tool" || value.scope.source !== "native"))
+        return false;
       if (entry.interactionId) {
         const linked = value.entries.find(
           (e) => e.interaction?.id === entry.interactionId,

@@ -547,6 +547,11 @@ public final class CodingTerminalController implements AutoCloseable {
                     || !Objects.equals(next.live(), previous.live())) {
                 apply(new TerminalUiAction.ProductHistoryUpdated(history, next.live()));
             }
+            var previousTools = previous == null ? List.<CodingProtocol.Entry>of() : previous.entries();
+            var tools = next.entries().stream()
+                    .filter(entry -> entry.toolDetails() != null && !previousTools.contains(entry))
+                    .toList();
+            if (!tools.isEmpty()) apply(new TerminalUiAction.ProductToolsChanged(tools));
             var entries = deliveryEntries(next);
             if (previous == null
                     || !entries.equals(deliveryEntries(previous))
@@ -1079,13 +1084,13 @@ public final class CodingTerminalController implements AutoCloseable {
         try {
             switch (startup.mode()) {
                 case EMPTY -> {}
-                case SELECTOR -> showResumeOptions(client.list(projectId, 50));
+                case SELECTOR -> showResumeOptions(readTerminalSessions(null, 50));
                 case AUTO_LAST -> {
                     startAutomaticLastSessionLoad();
                     return;
                 }
                 case LAST -> {
-                    List<CodingSessionSummary> sessions = client.list(projectId, 1);
+                    List<CodingSessionSummary> sessions = readTerminalSessions(null, 1);
                     if (sessions.isEmpty()) {
                         apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
                         return;
@@ -1111,7 +1116,7 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Loading most recent session"));
         submitEffect(
                 () -> {
-                    List<CodingSessionSummary> sessions = client.list(projectId, 1);
+                    List<CodingSessionSummary> sessions = readTerminalSessions(null, 1);
                     Optional<LoadedSession> loaded = sessions.isEmpty()
                             ? Optional.empty()
                             : Optional.of(readSession(
@@ -1513,7 +1518,7 @@ public final class CodingTerminalController implements AutoCloseable {
         submitControlEffect(
                 () -> {
                     List<TerminalSessionRow> rows =
-                            TerminalSessionRow.ordered(client.list(projectId, TerminalUiState.MAX_SESSION_ROWS));
+                            TerminalSessionRow.ordered(readTerminalSessions(null, TerminalUiState.MAX_SESSION_ROWS));
                     return () -> {
                         sessionRowsInFlight = false;
                         sessionRowsFetchedAtMillis = System.currentTimeMillis();
@@ -2601,7 +2606,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.StatusChanged("Searching sessions"));
                 submitEffect(
                         () -> {
-                            List<CodingSessionSummary> found = client.search(projectId, argument, 50);
+                            List<CodingSessionSummary> found = readTerminalSessions(argument, 50);
                             return () -> showResumeOptions(found);
                         },
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
@@ -2723,7 +2728,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 long request = ++configurationSummaryRequest;
                 submitEffect(
                         () -> {
-                            List<String> summary = List.copyOf(client.configurationSummary());
+                            List<String> summary = List.copyOf(
+                                    productClient == null
+                                            ? client.configurationSummary()
+                                            : queryTerminalProduct("configuration", null, 100)
+                                                    .lines());
                             return () -> completeConfigurationSummary(generation, request, summary);
                         },
                         code -> completeConfigurationSummary(
@@ -2733,7 +2742,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 // Reuses the reviewed resume selector instead of a parallel Session navigator, so keyboard-only and
                 // narrow terminals reach the same Session list the sidebar shows.
                 preserveDraft();
-                showResumeOptions(client.list(projectId, TerminalUiState.MAX_SESSION_ROWS));
+                showResumeOptions(readTerminalSessions(null, TerminalUiState.MAX_SESSION_ROWS));
             }
             case COMMANDS -> openCommandSelector();
             case THEME -> handleThemeCommand(argument);
@@ -3000,7 +3009,7 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.StatusChanged("Loading workspace trust"));
             submitEffect(
                     () -> {
-                        List<String> options = client.workspaces().stream()
+                        List<String> options = readTerminalWorkspaces().stream()
                                 .map(CodingTerminalController::workspaceOption)
                                 .toList();
                         return () -> {
@@ -3033,6 +3042,46 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
+    private List<CodingWorkspaceView> readTerminalWorkspaces() {
+        if (productClient == null) return client.workspaces();
+        return queryTerminalProduct("workspaces", null, 100).workspaces().stream()
+                .map(value -> new CodingWorkspaceView(
+                        value.id(), value.safeDisplayName(), value.mode(), value.status(), value.revocable()))
+                .toList();
+    }
+
+    private List<CodingSessionSummary> readTerminalSessions(String search, int limit) {
+        if (productClient == null) {
+            return search == null ? client.list(projectId, limit) : client.search(projectId, search, limit);
+        }
+        return queryTerminalProduct("sessions", search, limit).sessions().stream()
+                .map(value -> {
+                    if (!projectId.value().equals(value.projectId())) {
+                        throw new CodingClientException("SESSION_SCOPE_MISMATCH", false);
+                    }
+                    return new CodingSessionSummary(
+                            new AgentSessionId(value.sessionId()),
+                            projectId,
+                            value.title(),
+                            io.haifa.agent.core.session.AgentSessionStatus.valueOf(value.status()),
+                            Optional.ofNullable(value.runId()).map(AgentRunId::new),
+                            Optional.ofNullable(value.runStatus()).map(io.haifa.agent.core.run.AgentRunStatus::valueOf),
+                            Math.toIntExact(value.queuedCount()),
+                            java.time.Instant.ofEpochMilli(value.lastActivityAtEpochMillis()),
+                            value.revision());
+                })
+                .toList();
+    }
+
+    private CodingProtocol.QueryResult queryTerminalProduct(String operation, String search, int limit) {
+        return productClient.query(new CodingProtocol.Query(
+                operation,
+                new CodingProtocol.CommandTarget(projectId.value(), null, null, null, null),
+                search,
+                limit,
+                null));
+    }
+
     private static String workspaceOption(CodingWorkspaceView workspace) {
         return String.join(
                         " · ",
@@ -3055,7 +3104,9 @@ public final class CodingTerminalController implements AutoCloseable {
             Optional<RunEventCursor> previousCursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
-        List<String> resources = client.loadedResources();
+        List<String> resources = productClient == null
+                ? client.loadedResources()
+                : queryTerminalProduct("resources", null, 100).lines();
         var history = productClient == null
                 ? client.history(view.summary().sessionId(), HISTORY_LIMIT)
                 : io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage.empty(
@@ -5865,6 +5916,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 return;
             }
             observeRunLifecycle(received.event());
+            if (productConnection != null
+                    && productConnection.capabilities().contains("native-tool-details-v1")
+                    && received.event().payload() instanceof RunEventPayloads.ToolLifecycle) {
+                action = new TerminalUiAction.RunEventReceived(received.event(), received.selectionGeneration(), false);
+            }
         }
         if (action instanceof TerminalUiAction.RunOutputReceived received) {
             if (productClient != null) return;

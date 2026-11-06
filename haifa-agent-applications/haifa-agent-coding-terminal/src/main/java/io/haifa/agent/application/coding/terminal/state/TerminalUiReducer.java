@@ -117,6 +117,35 @@ public final class TerminalUiReducer {
                             state.exitRequested())
                     .withWaiting(Optional.empty());
         }
+        if (action instanceof TerminalUiAction.ProductToolsChanged tools) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            for (Entry entry : tools.entries()) {
+                var details = entry.toolDetails();
+                if (details == null) continue;
+                var output = Optional.ofNullable(details.output())
+                        .map(value -> new ToolOutputFacts(
+                                value.text(), value.truncated(), value.byteCount(), value.lineCount()));
+                var tool = new ToolCardFacts(
+                        entry.toolCallId(),
+                        entry.title(),
+                        details.name(),
+                        entry.status(),
+                        details.reasonCode(),
+                        entry.text(),
+                        details.intent(),
+                        details.resultRef(),
+                        Optional.ofNullable(details.processState()),
+                        Optional.ofNullable(details.exitCode()).map(Math::toIntExact),
+                        output);
+                putTool(
+                        items,
+                        tool,
+                        entry.runId(),
+                        Optional.ofNullable(details.startedAtEpochMillis()),
+                        Optional.ofNullable(details.durationMillis()));
+            }
+            return productTranscript(state, items);
+        }
         if (action instanceof TerminalUiAction.ProductDeliveryChanged delivery) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             var previous = new java.util.HashMap<String, TranscriptItem>();
@@ -428,7 +457,7 @@ public final class TerminalUiReducer {
             return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.RunEventReceived received) {
-            return event(state, received.event());
+            return event(state, received.event(), received.renderTool());
         }
         if (action instanceof TerminalUiAction.RunOutputReceived received) {
             return output(state, received.event());
@@ -732,7 +761,7 @@ public final class TerminalUiReducer {
         return "\n" + marker + "\n";
     }
 
-    private TerminalUiState event(TerminalUiState state, AgentRunEvent event) {
+    private TerminalUiState event(TerminalUiState state, AgentRunEvent event, boolean renderTool) {
         if (state.seenEventIds().contains(event.eventId())) return state;
         if (state.currentRunId().isPresent()
                 && !state.currentRunId().orElseThrow().equals(event.runId())) {
@@ -744,7 +773,9 @@ public final class TerminalUiReducer {
                 >= event.sequence()) {
             return copyWithFailure(state, "EVENT_OUT_OF_ORDER");
         }
-        List<TranscriptItem> transcript = project(state.transcript(), event);
+        List<TranscriptItem> transcript = !renderTool && event.payload() instanceof RunEventPayloads.ToolLifecycle
+                ? state.transcript()
+                : project(state.transcript(), event);
         boolean runSettled = isTerminalRunLifecycle(event.payload());
         List<PendingMessage> pending = runSettled
                 ? state.pending().stream()
@@ -839,40 +870,35 @@ public final class TerminalUiReducer {
                 items.set(index, items.get(index).append(payload.textDelta()));
             }
         } else if (event.payload() instanceof RunEventPayloads.ToolLifecycle payload) {
-            String id = "tool-" + payload.toolCallId();
-            String projectedStatus = displayStatus(payload);
-            int existing = index(items, id);
+            int existing = index(items, "tool-" + payload.toolCallId());
             Optional<Long> startedAt = existing >= 0 ? items.get(existing).startedAtEpochMillis() : Optional.empty();
             if (startedAt.isEmpty()) startedAt = Optional.of(event.occurredAt().toEpochMilli());
             Optional<Long> duration = existing >= 0 ? items.get(existing).durationMillis() : Optional.empty();
-            if (terminalToolStatus(projectedStatus)) {
+            if (terminalToolStatus(displayStatus(payload))) {
                 duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
             }
-            boolean expanded = existing >= 0 && items.get(existing).expanded();
-            String displayName = ToolPresentation.displayName(payload);
-            upsert(
+            var observation = payload.observation();
+            var output = observation
+                    .flatMap(RunEventPayloads.ToolObservation::outputPreview)
+                    .map(value ->
+                            new ToolOutputFacts(value.text(), value.truncated(), value.byteCount(), value.lineCount()));
+            putTool(
                     items,
-                    new TranscriptItem(
-                                    id,
-                                    TranscriptItem.Kind.TOOL,
-                                    toolTitle(payload, displayName),
-                                    toolBody(payload, displayName),
-                                    projectedStatus,
-                                    expanded,
-                                    Optional.empty(),
-                                    startedAt,
-                                    duration,
-                                    payload.observation().flatMap(RunEventPayloads.ToolObservation::exitCode),
-                                    Optional.of(ToolPresentation.machineName(payload)),
-                                    Optional.of(new ToolDetails(
-                                            toolBody(payload, displayName, false),
-                                            toolTechnicalDetails(payload),
-                                            existing >= 0
-                                                    && items.get(existing)
-                                                            .toolDetails()
-                                                            .map(ToolDetails::expanded)
-                                                            .orElse(false))))
-                            .withSourceRunId(event.runId().value()));
+                    new ToolCardFacts(
+                            payload.toolCallId(),
+                            payload.displayName(),
+                            payload.toolName(),
+                            payload.status(),
+                            payload.reasonCode(),
+                            payload.targetSummary(),
+                            payload.intentSummary(),
+                            payload.resultRef(),
+                            observation.flatMap(RunEventPayloads.ToolObservation::processState),
+                            observation.flatMap(RunEventPayloads.ToolObservation::exitCode),
+                            output),
+                    event.runId().value(),
+                    startedAt,
+                    duration);
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(
@@ -1212,23 +1238,74 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle, String displayName) {
-        return toolBody(lifecycle, displayName, true);
+    private record ToolOutputFacts(String text, boolean truncated, long byteCount, long lineCount) {}
+
+    private record ToolCardFacts(
+            String toolCallId,
+            String title,
+            String name,
+            String status,
+            String reasonCode,
+            String targetSummary,
+            String intentSummary,
+            String resultRef,
+            Optional<String> processState,
+            Optional<Integer> exitCode,
+            Optional<ToolOutputFacts> output) {
+        String machineName() {
+            return ToolPresentation.machineName(title, name);
+        }
     }
 
-    private static String toolBody(RunEventPayloads.ToolLifecycle lifecycle, String displayName, boolean technical) {
+    private static void putTool(
+            List<TranscriptItem> items,
+            ToolCardFacts tool,
+            String runId,
+            Optional<Long> startedAt,
+            Optional<Long> duration) {
+        String id = "tool-" + tool.toolCallId();
+        int index = index(items, id);
+        var previous = index < 0 ? null : items.get(index);
+        String displayName = ToolPresentation.displayName(tool.title(), tool.name());
+        String status = isOutcomeUnknown(tool.status(), tool.reasonCode()) ? OUTCOME_UNKNOWN_STATUS : tool.status();
+        boolean technical = previous != null
+                && previous.toolDetails().map(ToolDetails::expanded).orElse(false);
+        upsert(
+                items,
+                new TranscriptItem(
+                                id,
+                                TranscriptItem.Kind.TOOL,
+                                toolTitle(tool, displayName),
+                                toolBody(tool, displayName),
+                                status,
+                                previous != null && previous.expanded(),
+                                Optional.empty(),
+                                startedAt,
+                                duration,
+                                tool.exitCode(),
+                                Optional.of(tool.machineName()),
+                                Optional.of(new ToolDetails(
+                                        toolBody(tool, displayName, false), toolTechnicalDetails(tool), technical)))
+                        .withSourceRunId(runId));
+    }
+
+    private static String toolBody(ToolCardFacts tool, String displayName) {
+        return toolBody(tool, displayName, true);
+    }
+
+    private static String toolBody(ToolCardFacts tool, String displayName, boolean technical) {
         List<String> lines = new ArrayList<>();
-        String target = boundedTarget(lifecycle.targetSummary());
+        String target = boundedTarget(tool.targetSummary());
         if (!target.isBlank()
                 && !target.equalsIgnoreCase(displayName)
-                && !target.equalsIgnoreCase(ToolPresentation.machineName(lifecycle))) {
+                && !target.equalsIgnoreCase(tool.machineName())) {
             lines.add(ToolBodyLines.TARGET_PREFIX + " " + target);
         }
-        Optional<String> reasonCode = normalizedReasonCode(lifecycle.reasonCode());
-        if (isOutcomeUnknown(lifecycle.status(), lifecycle.reasonCode())) {
+        Optional<String> reasonCode = normalizedReasonCode(tool.reasonCode());
+        if (isOutcomeUnknown(tool.status(), tool.reasonCode())) {
             lines.add(ToolBodyLines.OUTCOME_PREFIX + " UNKNOWN");
-            if (!OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(lifecycle.status())) {
-                lines.add(ToolBodyLines.STATUS_PREFIX + " " + lifecycle.status());
+            if (!OUTCOME_UNKNOWN_STATUS.equalsIgnoreCase(tool.status())) {
+                lines.add(ToolBodyLines.STATUS_PREFIX + " " + tool.status());
             }
             if (technical) reasonCode.ifPresent(reason -> lines.add(ToolBodyLines.REASON_PREFIX + " " + reason));
             lines.add(ToolBodyLines.NEXT_PREFIX + " " + OUTCOME_UNKNOWN_NEXT_ACTION);
@@ -1239,34 +1316,26 @@ public final class TerminalUiReducer {
                 if (!nextAction.isBlank()) lines.add(ToolBodyLines.NEXT_PREFIX + " " + nextAction);
             });
         }
-        lifecycle
-                .observation()
-                .flatMap(RunEventPayloads.ToolObservation::outputPreview)
-                .ifPresent(preview -> {
-                    lines.add(preview.truncated() ? ToolBodyLines.OUTPUT_TRUNCATED : ToolBodyLines.OUTPUT);
-                    lines.add(preview.text());
-                    if (preview.truncated()) {
-                        lines.add(ToolBodyLines.OUTPUT_TRUNCATED_SUMMARY_PREFIX + preview.byteCount() + " bytes · "
-                                + preview.lineCount() + " lines");
-                    }
-                });
-        String resultRef =
-                lifecycle.resultRef() == null ? "" : lifecycle.resultRef().strip();
+        tool.output().ifPresent(preview -> {
+            lines.add(preview.truncated() ? ToolBodyLines.OUTPUT_TRUNCATED : ToolBodyLines.OUTPUT);
+            lines.add(preview.text());
+            if (preview.truncated()) {
+                lines.add(ToolBodyLines.OUTPUT_TRUNCATED_SUMMARY_PREFIX + preview.byteCount() + " bytes · "
+                        + preview.lineCount() + " lines");
+            }
+        });
+        String resultRef = tool.resultRef() == null ? "" : tool.resultRef().strip();
         if (technical && !resultRef.isBlank()) lines.add(ToolBodyLines.RESULT_PREFIX + " " + resultRef);
         return String.join("\n", lines);
     }
 
-    private static String toolTechnicalDetails(RunEventPayloads.ToolLifecycle lifecycle) {
+    private static String toolTechnicalDetails(ToolCardFacts tool) {
         List<String> lines = new ArrayList<>();
-        lines.add("Tool: " + ToolPresentation.machineName(lifecycle));
-        lines.add("Call ID: " + lifecycle.toolCallId());
-        normalizedReasonCode(lifecycle.reasonCode()).ifPresent(reason -> lines.add("Reason: " + reason));
-        if (lifecycle.resultRef() != null && !lifecycle.resultRef().isBlank())
-            lines.add("Result: " + lifecycle.resultRef());
-        lifecycle
-                .observation()
-                .flatMap(RunEventPayloads.ToolObservation::processState)
-                .ifPresent(process -> lines.add("Process: " + process));
+        lines.add("Tool: " + tool.machineName());
+        lines.add("Call ID: " + tool.toolCallId());
+        normalizedReasonCode(tool.reasonCode()).ifPresent(reason -> lines.add("Reason: " + reason));
+        if (tool.resultRef() != null && !tool.resultRef().isBlank()) lines.add("Result: " + tool.resultRef());
+        tool.processState().ifPresent(process -> lines.add("Process: " + process));
         return String.join("\n", lines);
     }
 
@@ -1357,10 +1426,10 @@ public final class TerminalUiReducer {
         return stage + "Reason code: " + code + "\nNext: " + next;
     }
 
-    private static String toolTitle(RunEventPayloads.ToolLifecycle lifecycle, String displayName) {
-        String suffix = ToolPresentation.statusSuffix(lifecycle.status(), lifecycle.reasonCode());
-        String machineName = ToolPresentation.machineName(lifecycle);
-        String headline = toolHeadline(lifecycle);
+    private static String toolTitle(ToolCardFacts tool, String displayName) {
+        String suffix = ToolPresentation.statusSuffix(tool.status(), tool.reasonCode());
+        String machineName = tool.machineName();
+        String headline = toolHeadline(tool);
         if (headline.isBlank() || headline.equalsIgnoreCase(displayName) || headline.equalsIgnoreCase(machineName)) {
             return displayName + suffix;
         }
@@ -1382,12 +1451,12 @@ public final class TerminalUiReducer {
      * Display priority for the collapsed tool headline: model intent description, then the existing
      * safe target summary, then the tool name (handled by the caller when this returns blank).
      */
-    private static String toolHeadline(RunEventPayloads.ToolLifecycle lifecycle) {
-        String intent = boundedTarget(lifecycle.intentSummary());
+    private static String toolHeadline(ToolCardFacts tool) {
+        String intent = boundedTarget(tool.intentSummary());
         if (!intent.isBlank()) {
             return intent;
         }
-        return boundedTarget(lifecycle.targetSummary());
+        return boundedTarget(tool.targetSummary());
     }
 
     private static TranscriptItem runSummaryItem(RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {

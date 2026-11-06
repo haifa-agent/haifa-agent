@@ -14,8 +14,12 @@ import java.util.concurrent.atomic.*;
 
 /** One negotiated native context; mutations are sent once and unknown outcomes are never replayed. */
 final class HttpCodingClient implements CodingClient {
-    private static final Set<String> OFFERED =
-            Set.of("coding-product-v1", "session-presentation-v1", "session-consent-v1", "preview-v1");
+    private static final Set<String> OFFERED = Set.of(
+            "coding-product-v1",
+            "session-presentation-v1",
+            "session-consent-v1",
+            "preview-v1",
+            "native-tool-details-v1");
     private static final Set<String> REQUIRED = Set.of("coding-product-v1", "session-presentation-v1");
     private static final int RESPONSE_BYTES = 1024 * 1024, REQUEST_BYTES = 256 * 1024;
     private final ObjectMapper json = new ObjectMapper()
@@ -282,10 +286,26 @@ final class HttpCodingClient implements CodingClient {
 
     private <T> T decode(JsonNode node, Class<T> type) {
         try {
+            if (type == Subscribed.class)
+                supplyToolDetailsDefaults(node.path("snapshot").path("entries"));
+            if (type == Update.class)
+                supplyToolDetailsDefaults(node.path("replacement").path("entries"));
+            if (type == HistoryPage.class) supplyToolDetailsDefaults(node.path("entries"));
+            if (type == CommandResult.class) supplyToolDetailsDefault(node.path("interaction"));
             return json.treeToValue(node, type);
         } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
             throw failure("PROTOCOL_INCOMPATIBLE", false);
         }
+    }
+
+    // The negotiated native extension is the only Entry slot allowed to be omitted on the v1 wire.
+    private static void supplyToolDetailsDefaults(JsonNode entries) {
+        if (entries.isArray()) entries.forEach(HttpCodingClient::supplyToolDetailsDefault);
+    }
+
+    private static void supplyToolDetailsDefault(JsonNode entry) {
+        if (entry instanceof com.fasterxml.jackson.databind.node.ObjectNode object && !object.has("toolDetails"))
+            object.putNull("toolDetails");
     }
 
     private static String text(JsonNode node, String name) {

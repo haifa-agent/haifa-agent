@@ -23,6 +23,8 @@ class CodingHostProductTest {
                 var embedded = host.embeddedClient();
                 var remote = CodingClients.connect(host.endpoint())) {
             assertThat(remote.connection().displayName()).isEqualTo("Third-party SDK product");
+            assertThat(remote.connection().capabilities()).contains("native-tool-details-v1");
+            assertThat(embedded.connection().capabilities()).contains("native-tool-details-v1");
             assertThat(remote.connection().projectId())
                     .isEqualTo(embedded.connection().projectId());
             var receipt = remote.execute(create("create-once", "create-key", "first turn"));

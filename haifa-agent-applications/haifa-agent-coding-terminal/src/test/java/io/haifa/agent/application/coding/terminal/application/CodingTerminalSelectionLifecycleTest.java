@@ -77,6 +77,7 @@ class CodingTerminalSelectionLifecycleTest {
                         null,
                         null,
                         "TOKEN_BUDGET",
+                        null,
                         null)),
                 new CodingProtocol.History(true, 5L, true),
                 null,
@@ -138,6 +139,7 @@ class CodingTerminalSelectionLifecycleTest {
                                 null,
                                 null,
                                 null,
+                                null,
                                 null)),
                         new CodingProtocol.History(false, null, true));
             }
@@ -153,6 +155,7 @@ class CodingTerminalSelectionLifecycleTest {
                 Runnable::run)) {
             controller.attachProductClient(product);
             controller.open(SESSION_ID);
+            assertThat(controller.state().loadedResources()).containsExactly("Product resource");
             assertThat(productReady.await(5, java.util.concurrent.TimeUnit.SECONDS))
                     .isTrue();
             controller.drainEvents();
@@ -164,16 +167,36 @@ class CodingTerminalSelectionLifecycleTest {
             controller.accept(input(TerminalInput.Kind.EXECUTE_COMMAND, "/history"));
             assertThat(controller.state().transcript().getFirst().body()).isEqualTo("Earlier fixture message");
 
+            pump.offer(new TerminalUiAction.ProductToolsChanged(List.of(new CodingProtocol.Entry(
+                    "view-tool-1",
+                    "tool",
+                    "run-1",
+                    "tool",
+                    "Run Command",
+                    "fixture",
+                    "STARTED",
+                    null,
+                    false,
+                    null,
+                    0L,
+                    "call-1",
+                    null,
+                    null,
+                    null,
+                    new CodingProtocol.ToolDetails(
+                            "execution_run", "Inspect fixture", "NONE", "", null, null, 0L, null, null)))));
             legacy.emit(event(
-                    1,
-                    new RunEventPayloads.ToolLifecycle("call-1", "execution_run", "STARTED", "NONE", "fixture", "")));
+                    1, new RunEventPayloads.ToolLifecycle("call-1", "Old tool display", "STARTED", "NONE", "", "")));
             pump.offer(new TerminalUiAction.ProductDeliveryChanged(List.of(), List.of("Bounded product window")));
             controller.drainEvents();
             controller.accept(input(TerminalInput.Kind.TOGGLE_EXPANSION, ""));
             assertThat(controller.state().transcript())
                     .filteredOn(item -> item.id().equals("tool-call-1"))
                     .singleElement()
-                    .satisfies(item -> assertThat(item.expanded()).isTrue());
+                    .satisfies(item -> {
+                        assertThat(item.expanded()).isTrue();
+                        assertThat(item.title()).isEqualTo("Run Command · Inspect fixture");
+                    });
 
             controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
             controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
@@ -285,12 +308,24 @@ class CodingTerminalSelectionLifecycleTest {
                     PROJECT_ID.value(),
                     "1",
                     "Host",
-                    List.of("coding-product-v1", "session-presentation-v1"),
+                    List.of("coding-product-v1", "session-presentation-v1", "native-tool-details-v1"),
                     "native");
         }
 
         public CodingProtocol.QueryResult query(CodingProtocol.Query query) {
-            throw new AssertionError("unexpected query");
+            assertThat(query.operation()).isEqualTo("resources");
+            assertThat(query.target().projectId()).isEqualTo(PROJECT_ID.value());
+            return new CodingProtocol.QueryResult(
+                    List.of(),
+                    null,
+                    null,
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of("Product resource"),
+                    null,
+                    false);
         }
 
         public CodingPreviewSubscription preview(String sessionId, String runId) {

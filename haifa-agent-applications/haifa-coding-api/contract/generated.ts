@@ -47,6 +47,23 @@ export type Interaction = Readonly<{
   review: Review | null;
   actions: ReadonlyArray<Action>;
 }>;
+export type ToolOutput = Readonly<{
+  text: string;
+  truncated: boolean;
+  byteCount: number;
+  lineCount: number;
+}>;
+export type ToolDetails = Readonly<{
+  name: string;
+  intent: string;
+  reasonCode: string;
+  resultRef: string;
+  processState: string | null;
+  exitCode: number | null;
+  startedAtEpochMillis: number | null;
+  durationMillis: number | null;
+  output: ToolOutput | null;
+}>;
 export type Entry = Readonly<{
   id: string;
   kind: "message" | "tool" | "interaction" | "notice";
@@ -63,6 +80,7 @@ export type Entry = Readonly<{
   interactionId: string | null;
   noticeCode: string | null;
   diagnosticId: string | null;
+  toolDetails?: ToolDetails | null;
 }>;
 export type Run = Readonly<{
   id: string;

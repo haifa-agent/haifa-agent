@@ -60,7 +60,15 @@ public final class CodingHostServer implements AutoCloseable {
     private final ExecutorService executor;
     private final Semaphore commandPermits = new Semaphore(COMMAND_PERMITS);
     private final Semaphore controlPermits = new Semaphore(CONTROL_PERMITS);
-    private final ObjectMapper json = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    private final ObjectMapper json = new ObjectMapper()
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .addMixIn(io.haifa.coding.api.CodingProtocol.Entry.class, OptionalToolDetails.class);
+
+    private interface OptionalToolDetails {
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        io.haifa.coding.api.CodingProtocol.ToolDetails toolDetails();
+    }
+
     private final CountDownLatch terminated = new CountDownLatch(1);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Map<String, Object> recoveryReport;
@@ -147,7 +155,10 @@ public final class CodingHostServer implements AutoCloseable {
                                                     new io.haifa.coding.api.CodingProtocol.Consent("ASK", null, false)),
                                     String.join("; ", configurationSummary) + "; "
                                             + CodingHostWorkspace.summary(local.workspaceRoot()),
-                                    local::presentationEventStart),
+                                    local::presentationEventStart,
+                                    "native".equals(clientSource(clientId))
+                                            && clients.capabilities(clientId)
+                                                    .contains(CodingHostDispatcher.NATIVE_TOOL_DETAILS)),
                     local.credentialRedactor());
         }
         this.server = HttpServer.create(new InetSocketAddress(bind, port), 16);
@@ -325,8 +336,11 @@ public final class CodingHostServer implements AutoCloseable {
 
     public io.haifa.coding.api.CodingClient embeddedClient() {
         if (closed.get()) throw new io.haifa.coding.api.CodingClientException("HOST_CLOSED", false);
-        var offered = new java.util.HashSet<>(
-                java.util.Set.of("coding-product-v1", "session-presentation-v1", "session-consent-v1"));
+        var offered = new java.util.HashSet<>(java.util.Set.of(
+                "coding-product-v1",
+                "session-presentation-v1",
+                "session-consent-v1",
+                CodingHostDispatcher.NATIVE_TOOL_DETAILS));
         if (subscriptions.previewAvailable()) offered.add("preview-v1");
         String clientId = clients.initialize(offered);
         approvals.initialize(clientId);
@@ -376,7 +390,8 @@ public final class CodingHostServer implements AutoCloseable {
                                         .orElseGet(() ->
                                                 new io.haifa.coding.api.CodingProtocol.Consent("ASK", null, false)),
                                 String.join("; ", configurationSummary),
-                                local::presentationEventStart),
+                                local::presentationEventStart,
+                                capabilities.contains(CodingHostDispatcher.NATIVE_TOOL_DETAILS)),
                 new io.haifa.agent.application.project.product.coding.presentation.CodingProductBinding.Approvals() {
                     public io.haifa.agent.runtime.api.InteractionResponseReceipt allow(
                             io.haifa.agent.runtime.api.InteractionView pending, String key) {

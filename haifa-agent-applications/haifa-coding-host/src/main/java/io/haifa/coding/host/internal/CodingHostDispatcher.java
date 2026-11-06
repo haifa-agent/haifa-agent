@@ -119,7 +119,7 @@ public final class CodingHostDispatcher {
                 params == null ? com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode() : params;
         if (!safeParams.isObject()) throw CodingHostException.invalidParams("params must be an object");
         try {
-            if (method.equals("initialize")) return initialize(safeParams);
+            if (method.equals("initialize")) return initialize(safeParams, clientId == null);
             if (method.equals("host/ping")) return ping();
             return switch (method) {
                 case "client/renew" -> Map.of("renewed", true);
@@ -293,14 +293,19 @@ public final class CodingHostDispatcher {
         }
     }
 
-    private Map<String, Object> initialize(JsonNode params) {
+    static final String NATIVE_TOOL_DETAILS = "native-tool-details-v1";
+
+    private Map<String, Object> initialize(JsonNode params, boolean nativeTransport) {
         String version = optionalText(params, "protocolVersion").orElse("");
         if (!PROTOCOL_VERSION.equals(version)) {
             throw CodingHostException.conflict("CONTRACT_VERSION_UNSUPPORTED", "Unsupported protocol version");
         }
         var available = new java.util.HashSet<String>();
         available.add("coding-product-v1");
-        if (presentationFactory != null) available.add(PRESENTATION_CAPABILITY);
+        if (presentationFactory != null) {
+            available.add(PRESENTATION_CAPABILITY);
+            if (nativeTransport) available.add(NATIVE_TOOL_DETAILS);
+        }
         if (subscriptions != null && subscriptions.previewAvailable()) available.add("preview-v1");
         if (approvals != null) available.add(CodingHostApprovals.CAPABILITY);
         return clientInfo(CodingHostCapabilities.negotiate(params, available));

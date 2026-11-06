@@ -152,6 +152,62 @@ public final class CodingProtocol {
         }
     }
 
+    public record ToolOutput(String text, boolean truncated, long byteCount, long lineCount) {
+        public ToolOutput {
+            Objects.requireNonNull(text, "text");
+            if (text.codePointCount(0, text.length()) > 4000) throw new IllegalArgumentException("text exceeds budget");
+            if (byteCount < 0L || byteCount > 9007199254740991L)
+                throw new IllegalArgumentException("Invalid byteCount");
+            if (lineCount < 0L || lineCount > 9007199254740991L)
+                throw new IllegalArgumentException("Invalid lineCount");
+        }
+    }
+
+    public record ToolDetails(
+            String name,
+            String intent,
+            String reasonCode,
+            String resultRef,
+            String processState,
+            Long exitCode,
+            Long startedAtEpochMillis,
+            Long durationMillis,
+            ToolOutput output) {
+        public ToolDetails {
+            Objects.requireNonNull(name, "name");
+            if (name.codePointCount(0, name.length()) > 128) throw new IllegalArgumentException("name exceeds budget");
+            Objects.requireNonNull(intent, "intent");
+            if (intent.codePointCount(0, intent.length()) > 256)
+                throw new IllegalArgumentException("intent exceeds budget");
+            Objects.requireNonNull(reasonCode, "reasonCode");
+            if (reasonCode.codePointCount(0, reasonCode.length()) > 128)
+                throw new IllegalArgumentException("reasonCode exceeds budget");
+            Objects.requireNonNull(resultRef, "resultRef");
+            if (resultRef.codePointCount(0, resultRef.length()) > 512)
+                throw new IllegalArgumentException("resultRef exceeds budget");
+            if (processState != null) {
+                Objects.requireNonNull(processState, "processState");
+                if (processState.codePointCount(0, processState.length()) > 64)
+                    throw new IllegalArgumentException("processState exceeds budget");
+            }
+            if (exitCode != null) {
+                if (exitCode < -2147483648L || exitCode > 2147483647L)
+                    throw new IllegalArgumentException("Invalid exitCode");
+            }
+            if (startedAtEpochMillis != null) {
+                if (startedAtEpochMillis < 0L || startedAtEpochMillis > 9007199254740991L)
+                    throw new IllegalArgumentException("Invalid startedAtEpochMillis");
+            }
+            if (durationMillis != null) {
+                if (durationMillis < 0L || durationMillis > 9007199254740991L)
+                    throw new IllegalArgumentException("Invalid durationMillis");
+            }
+            if (output != null) {
+                Objects.requireNonNull(output, "output");
+            }
+        }
+    }
+
     public record Entry(
             String id,
             String kind,
@@ -167,7 +223,8 @@ public final class CodingProtocol {
             String toolCallId,
             String interactionId,
             String noticeCode,
-            String diagnosticId) {
+            String diagnosticId,
+            ToolDetails toolDetails) {
         public Entry {
             Objects.requireNonNull(id, "id");
             if (id.isEmpty()) throw new IllegalArgumentException("Empty id");
@@ -228,6 +285,9 @@ public final class CodingProtocol {
                 if (diagnosticId.isEmpty()) throw new IllegalArgumentException("Empty diagnosticId");
                 if (diagnosticId.codePointCount(0, diagnosticId.length()) > 256)
                     throw new IllegalArgumentException("diagnosticId exceeds budget");
+            }
+            if (toolDetails != null) {
+                Objects.requireNonNull(toolDetails, "toolDetails");
             }
         }
     }

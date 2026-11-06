@@ -19,10 +19,22 @@ import java.util.function.Supplier;
 public final class CodingPresentationObservation implements CodingPresentationSubscription {
     private static final int SNAPSHOT_BYTES = 256 * 1024;
     private static final int UPDATE_BYTES = 64 * 1024;
+    private static final Set<String> TERMINAL_TOOL_STATUSES = Set.of(
+            "COMPLETED",
+            "SUCCEEDED",
+            "FAILED",
+            "ERROR",
+            "CANCELLED",
+            "TIMEOUT",
+            "DENIED",
+            "REJECTED",
+            "OUTCOME_UNKNOWN",
+            "SHELL COMMAND DENIED");
     private static final int QUEUE_BYTES = 512 * 1024;
     private final CodingSessionClient client;
     private final AgentSessionId sessionId;
     private final Scope scope;
+    private final boolean detailedTools;
     private final SecretRedactor redactor;
     private final Supplier<Consent> consent;
     private final String context;
@@ -106,7 +118,29 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 consent,
                 context,
                 eventStart,
-                sessions::reviewState);
+                sessions::reviewState,
+                false);
+    }
+
+    public CodingPresentationObservation(
+            CodingSessionService sessions,
+            CodingSessionClient client,
+            Scope scope,
+            SecretRedactor redactor,
+            Supplier<Consent> consent,
+            String context,
+            java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
+            boolean detailedTools) {
+        this(
+                listener -> sessions.observeChanges(new AgentSessionId(scope.sessionId()), listener),
+                client,
+                scope,
+                redactor,
+                consent,
+                context,
+                eventStart,
+                sessions::reviewState,
+                detailedTools);
     }
 
     CodingPresentationObservation(
@@ -123,7 +157,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 consent,
                 "Host process",
                 RunEventCursor::beforeFirst,
-                interaction -> new CodingReviewState(false, true, false));
+                interaction -> new CodingReviewState(false, true, false),
+                true);
     }
 
     private CodingPresentationObservation(
@@ -134,7 +169,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             Supplier<Consent> consent,
             String context,
             java.util.function.Function<AgentRunId, RunEventCursor> eventStart,
-            java.util.function.Function<InteractionView, CodingReviewState> reviewState) {
+            java.util.function.Function<InteractionView, CodingReviewState> reviewState,
+            boolean detailedTools) {
+        this.detailedTools = detailedTools && "native".equals(scope.source());
         this.reviewState = Objects.requireNonNull(reviewState);
         this.eventStart = Objects.requireNonNull(eventStart);
         this.context = Objects.requireNonNull(context);
@@ -234,7 +271,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 entry.toolCallId(),
                 entry.interactionId(),
                 entry.noticeCode(),
-                entry.diagnosticId());
+                entry.diagnosticId(),
+                null);
     }
 
     private void enqueue(Runnable action) {
@@ -455,7 +493,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 entry.toolCallId(),
                 entry.interactionId(),
                 entry.noticeCode(),
-                entry.diagnosticId());
+                entry.diagnosticId(),
+                null);
     }
 
     private Entry unavailable(Entry value) {
@@ -485,7 +524,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 value.toolCallId(),
                 value.interactionId(),
                 value.noticeCode(),
-                value.diagnosticId());
+                value.diagnosticId(),
+                null);
     }
 
     private Entry interaction(InteractionView value, Consent observedConsent) {
@@ -590,6 +630,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -675,8 +716,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
         if (!run.equals(watched) || event.sequence() <= eventSequence) return;
         eventSequence = event.sequence();
         if (event.payload() instanceof RunEventPayloads.ToolLifecycle tool) {
+            var key = toolEntryId(run, tool.toolCallId());
             var entry = new Entry(
-                    toolEntryId(run, tool.toolCallId()),
+                    key,
                     "tool",
                     run.value(),
                     "tool",
@@ -690,8 +732,9 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                     tool.toolCallId(),
                     null,
                     null,
-                    null);
-            tools.put(entry.id(), entry);
+                    null,
+                    detailedTools ? toolDetails(tool, tools.get(key), event) : null);
+            tools.put(key, entry);
             while (tools.size() > 32) tools.remove(tools.keySet().iterator().next());
         } else if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle lifecycle) {
             if (delivery.size() == DELIVERY_LIMIT) {
@@ -707,6 +750,44 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                     || event.payload() instanceof RunEventPayloads.InteractionLifecycle
                     || event.payload() instanceof RunEventPayloads.MessageCommitted) publish();
         }
+    }
+
+    private ToolDetails toolDetails(RunEventPayloads.ToolLifecycle tool, Entry previous, AgentRunEvent event) {
+        long occurred = event.occurredAt().toEpochMilli();
+        Long started = previous == null ? null : previous.toolDetails().startedAtEpochMillis();
+        if (started == null && "STARTED".equals(tool.status())) started = occurred;
+        Long duration = started != null && TERMINAL_TOOL_STATUSES.contains(tool.status())
+                ? Math.max(0, occurred - started)
+                : null;
+        var observation = tool.observation();
+        var output = observation
+                .flatMap(RunEventPayloads.ToolObservation::outputPreview)
+                .map(value -> {
+                    var bounded = io.haifa.agent.runtime.api.display.BoundedText.of(
+                            safe(value.text(), Integer.MAX_VALUE), 4_000, 100);
+                    return new ToolOutput(
+                            bounded.text(),
+                            value.truncated() || bounded.truncated(),
+                            value.byteCount(),
+                            value.lineCount());
+                })
+                .orElse(null);
+        return new ToolDetails(
+                safe(tool.toolName(), 128),
+                safe(tool.intentSummary(), 256),
+                safe(tool.reasonCode(), 128),
+                safe(tool.resultRef(), 512),
+                observation
+                        .flatMap(RunEventPayloads.ToolObservation::processState)
+                        .map(value -> safe(value, 64))
+                        .orElse(null),
+                observation
+                        .flatMap(RunEventPayloads.ToolObservation::exitCode)
+                        .map(Integer::longValue)
+                        .orElse(null),
+                started,
+                duration,
+                output);
     }
 
     private Live live() {
@@ -765,6 +846,7 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 null,
                 null,
                 code.isEmpty() ? null : code,
+                null,
                 null);
     }
 
@@ -807,7 +889,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
                 entry.toolCallId(),
                 entry.id().equals(pendingToolKey) ? pendingInteractionId : null,
                 entry.noticeCode(),
-                entry.diagnosticId());
+                entry.diagnosticId(),
+                entry.toolDetails());
     }
 
     private record Window(List<Entry> entries, boolean reduced, Long before) {}

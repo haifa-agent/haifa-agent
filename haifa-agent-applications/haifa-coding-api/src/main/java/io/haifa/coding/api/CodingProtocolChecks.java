@@ -31,6 +31,9 @@ public final class CodingProtocolChecks {
         for (Entry entry : value.entries()) {
             if (entry.kind().equals("tool") && (entry.toolCallId() == null || entry.runId() == null))
                 fail("TOOL_IDENTITY_REQUIRED");
+            if (entry.toolDetails() != null
+                    && (!entry.kind().equals("tool") || !value.scope().source().equals("native")))
+                fail("TOOL_DETAIL_SCOPE_INVALID");
             if (entry.interactionId() != null) {
                 var linked = value.entries().stream()
                         .filter(e ->

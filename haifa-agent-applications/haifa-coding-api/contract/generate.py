@@ -28,7 +28,7 @@ for name,spec in schema['$defs'].items():
     j+=['    public record '+name+'('+fields+')'+(' implements Envelope' if name in ['Snapshot','Update','Resync'] else '')+' {','        public '+name+' {']
     t+=['export type '+name+' = Readonly<{']
     for k,v in props.items():
-        t+=['  '+k+': '+ts_type(v)+';']
+        t+=['  '+k+('' if k in spec['required'] else '?')+': '+ts_type(v)+';']
         optional='anyOf' in v
         actual=v['anyOf'][0] if optional else v
         if optional:j+=['            if ('+k+' != null) {']

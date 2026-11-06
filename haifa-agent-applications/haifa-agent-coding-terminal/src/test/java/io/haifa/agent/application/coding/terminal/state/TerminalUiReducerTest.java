@@ -75,6 +75,7 @@ class TerminalUiReducerTest {
                 null,
                 null,
                 null,
+                null,
                 null);
         var update = new TerminalUiAction.ProductHistoryUpdated(List.of(persisted), null);
         state = reducer.reduce(state, update);
