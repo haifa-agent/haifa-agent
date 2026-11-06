@@ -14,7 +14,9 @@ observer, remains responsible for reconciliation and follow-up dispatch. History
 identity and explicit truncation while the legacy Host wire keeps its original fields. No new durable
 store, persistence owner or Run lifecycle is introduced. Live tokens/tool progress do not reload the
 whole Session. Exact final-message correlation controls live-to-history handoff; unavailable review
-data disables approval. The contract README records budgets, recovery and compatibility bindings.
+data disables approval. Active Run delivery events produce bounded notice cards with the source Run,
+reason and safe display facts. The event tail provides recovery and the view reports when earlier
+delivery events may be omitted. The contract README records budgets and compatibility bindings.
 
 ## Product client API
 

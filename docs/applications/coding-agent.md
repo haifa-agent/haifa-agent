@@ -159,3 +159,11 @@ return unavailable and consumed tokens cannot dispatch again. Host restart is no
 Cancellation is a request until the broker reports the actual process outcome. Host shutdown requests
 Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
 Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.
+
+## Browser SDK 与同源 Web 准备实现
+
+实验性 [浏览器 SDK](../../haifa-agent-applications/haifa-coding-browser-client/README.md) 复用唯一产品
+schema，可生成私有 npm tarball；[Coding Web](../../haifa-agent-applications/haifa-coding-web/README.md)
+及[独立 UI 样例](../../examples/coding-browser-ui/README.md)只消费该包。浏览器直接使用同源 Host，
+构建后的资源不需要 Node/BFF。当前只完成独立协议/构建/合成渲染验证；真实 Host 产品联调、
+跨平台浏览器与完整发布门禁尚未关闭，不代表已交付 Alpha 或已迁移 Terminal。
