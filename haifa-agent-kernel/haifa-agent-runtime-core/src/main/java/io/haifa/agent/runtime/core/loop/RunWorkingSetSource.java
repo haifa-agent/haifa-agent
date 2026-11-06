@@ -37,6 +37,7 @@ public final class RunWorkingSetSource {
     private static final int FIRST_ROWS = 32, RECENT_ROWS = 64, MAX_RUN_ROWS = 4096, CACHE_ENTRIES = 16;
     private static final int CONTINUATION_RESULT_ROWS = 8;
     private static final Pattern REFERENCE = Pattern.compile("\\[history:([^\\]\\s]+)\\]");
+    private static final Set<String> HISTORY_TOOLS = Set.of("history_search", "history_read");
     private static final Pattern PATH_TERM = Pattern.compile("`([^`\\r\\n]{1,256})`|[\\p{L}\\p{N}_./\\\\@-]+");
     private final RuntimePersistencePorts ports;
     private final HistoryToolProvider history;
@@ -94,7 +95,7 @@ public final class RunWorkingSetSource {
                 .filter(binding -> binding.definition().providerId().equals(HistoryToolProvider.ID))
                 .map(binding -> binding.alias().value())
                 .collect(Collectors.toSet());
-        return names.containsAll(Set.of("history_search", "history_read"));
+        return names.containsAll(HISTORY_TOOLS);
     }
 
     public boolean unified(AgentRun run) {
@@ -102,11 +103,17 @@ public final class RunWorkingSetSource {
     }
 
     public SessionMessageSource.MeasuredSelection select(AgentRun run, long hardBudget, String expectedPrefix) {
-        return ports.unitOfWork().executeReadOnly(() -> selectSnapshot(run, hardBudget, expectedPrefix));
+        return select(run, hardBudget, expectedPrefix, null);
+    }
+
+    SessionMessageSource.MeasuredSelection select(
+            AgentRun run, long hardBudget, String historyPrefix, String currentOnlyPrefix) {
+        return ports.unitOfWork()
+                .executeReadOnly(() -> selectSnapshot(run, hardBudget, historyPrefix, currentOnlyPrefix));
     }
 
     private SessionMessageSource.MeasuredSelection selectSnapshot(
-            AgentRun run, long hardBudget, String expectedPrefix) {
+            AgentRun run, long hardBudget, String historyPrefix, String currentOnlyPrefix) {
         history.requireCurrentScope(run);
         var state = ports.state();
         var opts = options(run);
@@ -348,6 +355,8 @@ public final class RunWorkingSetSource {
             items = phased;
         }
         var selected = selection(run, items, head, summaryVersion, hardBudget);
+        boolean includesHistory = currentOnlyPrefix == null || requiresHistoryDataRule(run.id(), selected.items());
+        String expectedPrefix = includesHistory ? historyPrefix : currentOnlyPrefix;
         var decision =
                 new WorkingSetCostPolicy.Decision(false, "CACHE_COST_UNAVAILABLE", Optional.empty(), Optional.empty());
         long reuseStart = time.now().toEpochMilli();
@@ -374,7 +383,9 @@ public final class RunWorkingSetSource {
             }
             Optional<SessionMessageSource.Selection> retained = Optional.empty();
             if (reusable && relationship.equals("CONTINUE") && !steered) {
-                retained = retain(run, previous, head, hardBudget);
+                retained = retain(run, previous, head, hardBudget)
+                        .filter(candidate -> currentOnlyPrefix == null
+                                || requiresHistoryDataRule(run.id(), candidate.items()) == includesHistory);
                 rows += retained.map(s -> s.items().size()).orElse(0);
             }
             long keepTokens = retained.map(SessionMessageSource.Selection::estimatedSessionTokens)
@@ -478,6 +489,23 @@ public final class RunWorkingSetSource {
                         selected.estimatedSessionTokens(),
                         0,
                         0));
+    }
+
+    static boolean requiresHistoryDataRule(AgentRunId runId, List<ContextItem> items) {
+        return items.stream()
+                .anyMatch(item -> item.security().labels().contains(DATA)
+                        || item.content() instanceof ConversationSummaryContent
+                        || item.content() instanceof HistoricalExcerptContent
+                        || item.content() instanceof MessageGroupContextContent group
+                                && (!group.resultViews().isEmpty()
+                                        || group.messages().stream()
+                                                .anyMatch(message -> carriesHistoricalData(runId, message))));
+    }
+
+    private static boolean carriesHistoricalData(AgentRunId runId, AgentMessage message) {
+        return message.runId().filter(runId::equals).isEmpty()
+                || message.contents().stream()
+                        .anyMatch(part -> part instanceof ToolCallPart call && HISTORY_TOOLS.contains(call.toolName()));
     }
 
     private Optional<SessionMessageSource.Selection> retain(

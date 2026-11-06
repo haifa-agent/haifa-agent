@@ -29,6 +29,10 @@ For a follow-up with the Run working set enabled, an exact path named in the req
 priority within the bounded history candidates. It remains optional quoted data and uses the same access checks
 and versioned readback as other excerpts.
 
+Unified working-set requests with only current Run messages omit the historical-data instruction.
+The instruction remains for saved excerpts, summaries and history reader calls. Cache decisions
+compare the prefix for the selected data boundary, including when retaining a previous window.
+
 `model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
 call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted
 input defaults to `UNAVAILABLE`. Frozen `haifa.runtime.input_price_ratios` may provide exact

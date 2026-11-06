@@ -274,7 +274,11 @@ public final class SessionMessageSource {
     }
 
     MeasuredSelection selectMeasured(AgentRun run, long sessionTokenBudget, String prefix) {
-        if (workingSetEnabled(run)) return workingSets.select(run, sessionTokenBudget, prefix);
+        return selectMeasured(run, sessionTokenBudget, prefix, null);
+    }
+
+    MeasuredSelection selectMeasured(AgentRun run, long sessionTokenBudget, String prefix, String currentOnlyPrefix) {
+        if (workingSetEnabled(run)) return workingSets.select(run, sessionTokenBudget, prefix, currentOnlyPrefix);
         Objects.requireNonNull(run, "run must not be null");
         if (sessionTokenBudget < 1) {
             throw new IllegalArgumentException("sessionTokenBudget must be positive");
