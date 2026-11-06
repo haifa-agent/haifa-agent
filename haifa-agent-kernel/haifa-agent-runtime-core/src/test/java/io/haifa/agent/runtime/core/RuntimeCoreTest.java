@@ -3677,6 +3677,37 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void runWorkingSetSelectsTheSavedToolResultForAnExactNamedPath() {
+        var captured = new ArrayList<AgentChatRequest>();
+        var fixture = workingSetFixture(
+                call -> {
+                    captured.add(call);
+                    return response(finalDecision("complete"));
+                },
+                Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
+                () -> ContextLifecycleHistoryFixture.NOW,
+                new AtomicInteger());
+        ContextLifecycleHistoryFixture.append(fixture.store, 12);
+        var accepted =
+                fixture.runtime.start(workingSetRequest("named-path", "What was the saved result for `unrelated/1`?"));
+        ContextLifecycleHistoryFixture.registerOwner(
+                fixture.store, fixture.store.find(accepted.runId()).orElseThrow());
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(captured).hasSize(1);
+        assertThat(captured.getFirst().messages())
+                .filteredOn(message -> message.content().contains("message=baseline-result-"))
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+                    assertThat(message.content())
+                            .contains("message=baseline-result-1;", "Untrusted historical data", "unrelated output");
+                });
+    }
+
+    @Test
     void decisionNextStepStaysQuotedWhileTheCurrentQuestionAndConstraintStayRequired() {
         var captured = new ArrayList<AgentChatRequest>();
         var fixture = workingSetFixture(

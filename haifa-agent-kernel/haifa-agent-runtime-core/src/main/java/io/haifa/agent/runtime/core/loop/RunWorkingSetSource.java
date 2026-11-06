@@ -37,6 +37,7 @@ public final class RunWorkingSetSource {
                     + "Use history_search/history_read for missing saved evidence; do not rerun an old operation to reconstruct its result.";
     private static final int FIRST_ROWS = 32, RECENT_ROWS = 64, MAX_RUN_ROWS = 4096, CACHE_ENTRIES = 16;
     private static final Pattern REFERENCE = Pattern.compile("\\[history:([^\\]\\s]+)\\]");
+    private static final Pattern PATH_TERM = Pattern.compile("`([^`\\r\\n]{1,256})`|[\\p{L}\\p{N}_./\\\\@-]+");
     private final RuntimePersistencePorts ports;
     private final HistoryToolProvider history;
     private final SessionMessageSource source;
@@ -245,11 +246,20 @@ public final class RunWorkingSetSource {
             }
         }
         if (!samePhase) {
-            var ranked = candidates.values().stream()
+            var eligible = candidates.values().stream()
                     .filter(message -> message.sequence() < input.sequence() && !pinnedIds.contains(message.id()))
                     .filter(RunWorkingSetSource::visible)
+                    .toList();
+            var pathMatches = relationship.equals("NEW_TASK")
+                    ? Set.<AgentMessageId>of()
+                    : history.matchingSavedPaths(run, eligible, namedPaths(text(goal)));
+            var ranked = eligible.stream()
                     .map(message -> new Candidate(
-                            message, score(message, goal, relationship, explicit), explicit.contains(message.id())))
+                            message,
+                            Math.max(
+                                    score(message, goal, relationship, explicit),
+                                    pathMatches.contains(message.id()) ? 800 : 0),
+                            explicit.contains(message.id())))
                     .filter(candidate -> candidate.score() > 0)
                     .sorted(Comparator.<Candidate>comparingInt(Candidate::score)
                             .reversed()
@@ -804,6 +814,18 @@ public final class RunWorkingSetSource {
                 || text.contains("format")
                 || text.contains("格式")) return "FOLLOW_UP";
         return "AMBIGUOUS";
+    }
+
+    private static Set<String> namedPaths(String objective) {
+        return PATH_TERM
+                .matcher(objective)
+                .results()
+                .map(match -> match.group(1) == null ? match.group().replaceFirst("[.]+$", "") : match.group(1))
+                .filter(term -> term.length() <= 256
+                        && (term.indexOf('/') >= 0 || term.indexOf('\\') >= 0 || term.indexOf('.') > 0))
+                .distinct()
+                .limit(16)
+                .collect(Collectors.toSet());
     }
 
     private static int score(

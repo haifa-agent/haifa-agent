@@ -112,6 +112,56 @@ public final class HistoryToolProvider implements ToolProvider {
         return excerpt(current, message, length, call.value());
     }
 
+    /** Matches path labels on the caller's bounded message window without reading saved assets. */
+    public Set<AgentMessageId> matchingSavedPaths(AgentRun current, List<AgentMessage> messages, Set<String> paths) {
+        if (paths.isEmpty()) return Set.of();
+        return ports.unitOfWork().executeReadOnly(() -> {
+            var authorized = new HashMap<AgentRunId, Boolean>();
+            var candidates = new ArrayList<AgentMessage>();
+            var idsByRun = new HashMap<AgentRunId, Set<ToolCallId>>();
+            for (var message : messages) {
+                if (message.role() != MessageRole.TOOL || !message.sessionId().equals(current.sessionId())) continue;
+                var owner = message.runId().orElse(null);
+                if (owner == null
+                        || !authorized.computeIfAbsent(owner, id -> {
+                            try {
+                                authorize(current, id);
+                                return true;
+                            } catch (Unavailable denied) {
+                                return false;
+                            }
+                        })) continue;
+                candidates.add(message);
+                for (var part : message.contents())
+                    if (part instanceof ToolResultPart result)
+                        idsByRun.computeIfAbsent(owner, ignored -> new HashSet<>())
+                                .add(result.toolCallId());
+            }
+            if (idsByRun.isEmpty()) return Set.of();
+            var matched = new HashMap<ToolCallId, ToolCall>();
+            for (var call : ports.state().toolCallsByIds(idsByRun)) {
+                if (call.result().filter(ToolResult::successful).isPresent()
+                        && !call.toolName().equals("history_read")
+                        && !call.toolName().equals("history_search")
+                        && savedPaths(call).stream().anyMatch(paths::contains)) matched.put(call.id(), call);
+            }
+            var result = new HashSet<AgentMessageId>();
+            for (var message : candidates) {
+                for (var part : message.contents()) {
+                    if (!(part instanceof ToolResultPart ref)) continue;
+                    var call = matched.get(ref.toolCallId());
+                    if (call != null
+                            && message.runId().orElseThrow().equals(call.runId())
+                            && ref.providerCorrelationId().equals(call.providerCorrelationId())) {
+                        result.add(message.id());
+                        break;
+                    }
+                }
+            }
+            return Set.copyOf(result);
+        });
+    }
+
     /** Existing immutable result storage, not a new reader or permission grant. */
     public ToolResult savedResultForCompaction(AgentRun current, ToolCall call) {
         return ports.unitOfWork().executeReadOnly(() -> {
@@ -455,16 +505,7 @@ public final class HistoryToolProvider implements ToolProvider {
         for (ToolCall call : calls) {
             ToolResult value = call.result().orElseThrow();
             results.add(value);
-            for (String key :
-                    List.of("path", "file", "filePath", "targetPath", "sourcePath", "outputPath", "artifactPath")) {
-                Object path = call.arguments().values().get(key);
-                if (path instanceof String text && text.length() <= 256)
-                    paths.add(ToolCallViewProjector.redactText(text));
-            }
-            value.artifacts().forEach(artifact -> {
-                paths.add(ToolCallViewProjector.redactText(artifact.title()));
-                paths.add(ToolCallViewProjector.redactText(artifact.artifactId()));
-            });
+            paths.addAll(savedPaths(call));
         }
         String version = digest(Map.of(
                 "message",
@@ -478,6 +519,20 @@ public final class HistoryToolProvider implements ToolProvider {
                         .map(call -> Map.of("id", call.id().value(), "version", call.version()))
                         .toList()));
         return new Source(message, calls, results, List.copyOf(new TreeSet<>(paths)), version);
+    }
+
+    private static List<String> savedPaths(ToolCall call) {
+        var paths = new ArrayList<String>();
+        for (String key :
+                List.of("path", "file", "filePath", "targetPath", "sourcePath", "outputPath", "artifactPath")) {
+            Object path = call.arguments().values().get(key);
+            if (path instanceof String text && text.length() <= 256) paths.add(ToolCallViewProjector.redactText(text));
+        }
+        call.result().orElseThrow().artifacts().forEach(artifact -> {
+            paths.add(ToolCallViewProjector.redactText(artifact.title()));
+            paths.add(ToolCallViewProjector.redactText(artifact.artifactId()));
+        });
+        return paths;
     }
 
     private Source materialize(Source source) {

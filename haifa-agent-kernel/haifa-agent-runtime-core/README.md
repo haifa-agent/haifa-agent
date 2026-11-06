@@ -25,6 +25,10 @@ path. Search results supply the versioned reference for `history_read`. Its `pat
 saved paths or artifact labels of at most 256 characters each. For another page, preserve the reference and
 `fromLine` and pass `nextOffset` as `offset`.
 
+For a follow-up with the Run working set enabled, an exact path named in the request gives the saved Tool result
+priority within the bounded history candidates. It remains optional quoted data and uses the same access checks
+and versioned readback as other excerpts.
+
 `model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
 call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted
 input defaults to `UNAVAILABLE`. Frozen `haifa.runtime.input_price_ratios` may provide exact
