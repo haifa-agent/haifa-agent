@@ -1470,8 +1470,9 @@ class SemanticCompactionCoordinatorTest {
         var session = run.sessionId();
         var original =
                 store.messagesAfter(session, MessageCursor.BEFORE_FIRST, 1).getFirst();
+        String durableRef = "prior-source-" + "a".repeat(80);
         var prefix = store.appendSessionMessage(
-                draft("short-prefix", session, run.id().value(), MessageRole.USER, "Refactor authentication"));
+                draft(durableRef, session, run.id().value(), MessageRole.USER, "Refactor authentication"));
         var material = store.appendSessionMessage(
                 draft("large-source", session, run.id().value(), MessageRole.ASSISTANT, "material ".repeat(2_600)));
         var requests = new ArrayList<AgentChatRequest>();
@@ -1480,7 +1481,10 @@ class SemanticCompactionCoordinatorTest {
                 run,
                 request -> {
                     requests.add(request);
-                    return response("selected-soft", VALID_SUMMARY_JSON);
+                    String ref = requests.size() == 1 ? "m002" : "p1";
+                    return response(
+                            "selected-soft",
+                            VALID_SUMMARY_JSON.replace("m001", ref).replace("m002", ref));
                 },
                 12_288);
         var selected = CompactionTriggerDecision.compact(
@@ -1502,6 +1506,18 @@ class SemanticCompactionCoordinatorTest {
             assertThat(summary.coveredThrough()).isEqualTo(material.cursor());
             assertThat(summary.sourceMessageIds()).containsExactly(original.id(), prefix.id(), material.id());
         });
+
+        store.appendSessionMessage(draft(
+                "second-large-source", session, run.id().value(), MessageRole.ASSISTANT, "detail ".repeat(2_600)));
+        store.appendSessionMessage(
+                draft("second-retained-tail", session, run.id().value(), MessageRole.USER, "Check the next result"));
+        coordinator.evaluateSelected(run, 3, binding, selected);
+
+        assertThat(requests).hasSize(2);
+        assertThat(requests.getLast().messages().getLast().content()).contains("p1 = " + durableRef);
+        assertThat(store.latestVersion(session)).isEqualTo(2);
+        var folded = store.latestValid(session).orElseThrow().semanticSummary().orElseThrow();
+        assertThat(folded.goals().getFirst().sourceRefs()).containsExactly(durableRef);
     }
 
     @Test

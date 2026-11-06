@@ -1,9 +1,14 @@
 package io.haifa.agent.context.compression;
 
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -11,6 +16,7 @@ import java.util.stream.Collectors;
  */
 public final class CompactionPromptRenderer {
 
+    private static final Pattern INDEXABLE_REFERENCE = Pattern.compile("[A-Za-z0-9_.:-]+");
     private static final String SYSTEM_PROMPT =
             """
             You are a "Conversation State Compiler". You are not a conversational assistant.
@@ -106,6 +112,60 @@ public final class CompactionPromptRenderer {
         return sb.toString();
     }
 
+    /** A per-request text representation and the historical aliases it actually exposes. */
+    public record RenderedPrompt(String text, Map<String, String> historicalAliases) {}
+
+    public static RenderedPrompt userPromptWithHistoricalAliases(
+            SemanticConversationSummaryV1 previous,
+            List<SemanticSummaryItem> carryForwardItems,
+            ProjectedCompactionSource projectedSource,
+            Set<String> historicalDurableRefs) {
+        var labeledItems = carryForwardInPrevious(Optional.of(previous), carryForwardItems);
+        Map<String, String> refs = new LinkedHashMap<>();
+        String original = SemanticSummaryRenderer.renderMarkdown(previous, labeledItems, ref -> {
+            if (INDEXABLE_REFERENCE.matcher(ref).matches()
+                    && !projectedSource.messageAliases().containsKey(ref)
+                    && !projectedSource.toolAliases().containsKey(ref)) refs.put(ref, ref);
+            return ref;
+        });
+        var reserved = new HashSet<>(historicalDurableRefs);
+        reserved.addAll(refs.keySet());
+        reserved.addAll(projectedSource.messageAliases().keySet());
+        reserved.addAll(projectedSource.toolAliases().keySet());
+        projectedSource.sourceMessageIds().forEach(id -> reserved.add(id.value()));
+        projectedSource.toolOutcomeReferences().forEach(id -> reserved.add(id.value()));
+        Map<String, String> aliases = new LinkedHashMap<>();
+        int next = 1;
+        for (var entry : refs.entrySet()) {
+            String alias;
+            do {
+                alias = "p" + next++;
+            } while (!reserved.add(alias));
+            entry.setValue(alias);
+            aliases.put(alias, entry.getKey());
+        }
+        var index = new StringBuilder();
+        if (!aliases.isEmpty()) {
+            index.append("<previous-source-refs>\nUse these aliases when citing sources from the previous summary.\n");
+            aliases.forEach((alias, ref) ->
+                    index.append(alias).append(" = ").append(escapeData(ref)).append("\n"));
+            index.append("</previous-source-refs>\n\n");
+        }
+        String indexed =
+                SemanticSummaryRenderer.renderMarkdown(previous, labeledItems, ref -> refs.getOrDefault(ref, ref));
+        var sb = new StringBuilder();
+        if (HeuristicTokenEstimator.tokens(index + escapeData(indexed))
+                < HeuristicTokenEstimator.tokens(escapeData(original))) {
+            appendSemanticSummary(sb, previous, indexed);
+            sb.append(index);
+        } else {
+            appendSemanticSummary(sb, previous, original);
+            aliases.clear();
+        }
+        appendCarryForwardAndConversation(sb, carryForwardItems, labeledItems, projectedSource);
+        return new RenderedPrompt(sb.toString(), Map.copyOf(aliases));
+    }
+
     private static Set<SemanticSummaryItem> carryForwardInPrevious(
             Optional<SemanticConversationSummaryV1> previous, List<SemanticSummaryItem> carryForwardItems) {
         return previous.stream()
@@ -116,10 +176,15 @@ public final class CompactionPromptRenderer {
 
     private static void appendSemanticSummary(
             StringBuilder sb, SemanticConversationSummaryV1 semantic, Set<SemanticSummaryItem> labeledItems) {
+        appendSemanticSummary(sb, semantic, SemanticSummaryRenderer.renderMarkdown(semantic, labeledItems));
+    }
+
+    private static void appendSemanticSummary(
+            StringBuilder sb, SemanticConversationSummaryV1 semantic, String markdown) {
         sb.append("<previous-summary schema-version=\"")
                 .append(escapeData(semantic.schemaVersion()))
                 .append("\">\n")
-                .append(escapeData(SemanticSummaryRenderer.renderMarkdown(semantic, labeledItems)))
+                .append(escapeData(markdown))
                 .append("\n</previous-summary>\n\n");
     }
 

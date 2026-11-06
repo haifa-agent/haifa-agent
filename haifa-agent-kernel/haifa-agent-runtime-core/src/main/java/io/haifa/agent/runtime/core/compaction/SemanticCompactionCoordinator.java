@@ -737,15 +737,24 @@ public final class SemanticCompactionCoordinator {
                 List<AgentMessage> batchSource;
                 ProjectedCompactionSource projected;
                 String userPrompt;
+                Map<String, String> historicalAliases;
                 while (true) {
                     batchSource = activeGroups.subList(batchStart, batchEnd).stream()
                             .flatMap(List::stream)
                             .toList();
                     projected = projector.apply(batchSource);
-                    userPrompt = batchStart == 0
-                            ? CompactionPromptRenderer.userPromptFromConversationSummary(
-                                    previousSummary, carryForward, projected)
-                            : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
+                    if (completeSource && workingSemantic.isPresent()) {
+                        var rendered = CompactionPromptRenderer.userPromptWithHistoricalAliases(
+                                workingSemantic.orElseThrow(), carryForward, projected, historicalDurableRefs);
+                        userPrompt = rendered.text();
+                        historicalAliases = rendered.historicalAliases();
+                    } else {
+                        userPrompt = batchStart == 0
+                                ? CompactionPromptRenderer.userPromptFromConversationSummary(
+                                        previousSummary, carryForward, projected)
+                                : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
+                        historicalAliases = Map.of();
+                    }
                     if (SummaryModelInvoker.estimatedInput(systemPrompt, userPrompt) <= available) break;
                     batchEnd = smallerBatchEnd(activeGroups, batchStart, batchEnd, completeSource);
                 }
@@ -757,11 +766,14 @@ public final class SemanticCompactionCoordinator {
                 while (true) {
                     ensureSourcesCurrent(sourceToCompact);
                     try {
-                        candidate = prepareCandidate(
-                                invoker.invoke(
-                                        binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, correcting),
-                                carryForward,
-                                projected);
+                        var raw = invoker.invoke(
+                                binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, correcting);
+                        if (!historicalAliases.isEmpty()) {
+                            // Restore historical provenance before reconciliation. Current aliases still identify new
+                            // evidence.
+                            raw = mapSourceRefs(raw, refMapper(historicalAliases));
+                        }
+                        candidate = prepareCandidate(raw, carryForward, projected);
                         SemanticSummaryValidator.validate(
                                 candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
                         break;
@@ -1342,7 +1354,7 @@ public final class SemanticCompactionCoordinator {
             SemanticConversationSummaryV1 summary,
             Map<String, AgentMessageId> messageAliases,
             Map<String, ToolCallId> toolAliases) {
-        java.util.function.Function<List<String>, List<String>> mapper = refs -> refs.stream()
+        return mapSourceRefs(summary, refs -> refs.stream()
                 .map(ref -> {
                     if (messageAliases.containsKey(ref)) {
                         return messageAliases.get(ref).value();
@@ -1352,8 +1364,18 @@ public final class SemanticCompactionCoordinator {
                     }
                     return ref;
                 })
-                .toList();
+                .toList());
+    }
 
+    private static java.util.function.Function<List<String>, List<String>> refMapper(Map<String, String> aliases) {
+        return refs -> refs.stream()
+                .map(ref -> aliases.getOrDefault(ref, ref))
+                .distinct()
+                .toList();
+    }
+
+    private SemanticConversationSummaryV1 mapSourceRefs(
+            SemanticConversationSummaryV1 summary, java.util.function.Function<List<String>, List<String>> mapper) {
         List<SemanticSummaryItem> goals = summary.goals().stream()
                 .map(i -> new SemanticSummaryItem(
                         i.stableItemId(), i.text(), mapper.apply(i.sourceRefs()), i.confidence()))
