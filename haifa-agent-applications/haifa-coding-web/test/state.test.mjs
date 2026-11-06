@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WorkspaceState } from "../src/state.ts";
+import { reanchorHistory, WorkspaceState } from "../src/state.ts";
 test("switching preserves drafts, caret and reading position without sharing them", () => {
   const state = new WorkspaceState();
   state.select("A");
@@ -48,15 +48,37 @@ test("workspace changes isolate local drafts and invalidate old selection genera
   assert.equal(state.current(old, "session-1"), false);
 });
 
-test("an exact consent preparation is not replayed when an observation reopens", () => {
+test("confirmed new approval targets retire settled work while unknowns stay protected", () => {
   const state = new WorkspaceState();
   state.bindWorkspace("project");
-  state.select("session-A");
-  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/1"), true);
-  state.select("session-B");
-  state.select("session-A");
-  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/1"), false);
-  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/2"), true);
+  const session = "session-A";
+  state.claimApprovalPreparation(session, "unknown-target");
+  state.settleApprovalPreparation("unknown-target", true);
+  state.claimApprovalPreparation(session, "in-flight-target");
+  for (let i = 0; i < 256; i++) {
+    const target = "approval-" + i;
+    state.reconcileApprovalPreparation(session, target);
+    assert.equal(state.claimApprovalPreparation(session, target), true);
+    state.settleApprovalPreparation(target, false);
+    assert.equal(state.claimApprovalPreparation(session, target), false);
+  }
+  assert.equal(state.claimApprovalPreparation(session, "unknown-target"), false);
+  assert.equal(state.claimApprovalPreparation(session, "in-flight-target"), false);
   state.bindWorkspace("project");
-  assert.equal(state.claimApprovalPreparation("session-A/run-A/approval/1"), true);
+  assert.equal(state.claimApprovalPreparation(session, "unknown-target"), true);
+});
+
+test("an advancing live window invalidates stale pages and reopens pagination", () => {
+  const cached = {
+    pages: [{ entries: [{ id: "old-message" }] }],
+    cursor: null,
+    liveBefore: 10,
+    hasEarlier: false,
+    shifted: false,
+  };
+  const unchanged = { beforeSequence: 10, hasEarlier: true };
+  assert.equal(reanchorHistory(cached, unchanged), cached);
+  assert.deepEqual(reanchorHistory(cached, { ...unchanged, beforeSequence: 11 }), {
+    pages: [], cursor: 11, liveBefore: 11, hasEarlier: true, shifted: true,
+  });
 });

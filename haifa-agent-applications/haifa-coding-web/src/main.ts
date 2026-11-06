@@ -6,12 +6,11 @@ import {
   type CodingObservation,
   type CommandResult,
   type Entry,
-  type HistoryPage,
   type QuestionAnswer,
   type SessionSummary,
   type Preview,
 } from "@haifa-agent/coding-client";
-import { WorkspaceState } from "./state";
+import { reanchorHistory, WorkspaceState, type CachedHistory } from "./state";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -45,15 +44,7 @@ let sessions: ReadonlyArray<SessionSummary> = [],
   searchGeneration = 0,
   busy = new Set<string>(),
   loading = false;
-const history = new Map<
-  string,
-  {
-    pages: HistoryPage[];
-    cursor: number | null;
-    hasEarlier: boolean;
-    shifted: boolean;
-  }
->();
+const history = new Map<string, CachedHistory>();
 const interactionInputs = new Map<
   string,
   { value: string; checked: boolean }
@@ -472,12 +463,18 @@ function renderTranscript() {
     }
     return;
   }
-  const saved = history.get(view.snapshot.scope.sessionId);
+  const snapshot = view.snapshot;
+  const session = snapshot.scope.sessionId;
+  const cached = history.get(session);
+  const saved = cached && snapshot.hydration === "ready"
+    ? reanchorHistory(cached, snapshot.history)
+    : cached;
+  if (saved && saved !== cached) history.set(session, saved);
   transcript.replaceChildren();
   if (saved?.hasEarlier ?? view.snapshot.history.hasEarlier) {
     const older = el("button", "history-button", "加载更早历史");
     older.onclick = () => void loadHistory();
-    older.disabled = loading;
+    older.disabled = loading || snapshot.hydration !== "ready";
     transcript.append(older);
   }
   if (saved?.shifted)
@@ -485,7 +482,7 @@ function renderTranscript() {
       el(
         "p",
         "fine-print",
-        "较近的已加载历史已移出当前窗口；重开会话可重置历史浏览窗口。",
+        "已加载的历史窗口有变化，可从当前游标继续查看更早历史。",
       ),
     );
   const activeIds = new Set(view.snapshot.entries.map((entry) => entry.id));
@@ -616,30 +613,40 @@ async function applySessionConsent() {
     requester.state !== "connected" ||
     document.visibilityState !== "visible" ||
     current.state !== "live" ||
-    current.snapshot.hydration !== "ready" ||
-    current.snapshot.consent.state !== "ACTIVE" ||
-    busy.has(sessionKey(current.snapshot.scope.sessionId))
+    current.snapshot.hydration !== "ready"
   )
     return;
   const snapshot = current.snapshot;
-  const action = snapshot.entries
-    .filter(
-      (entry) =>
-        reviewSupported(entry) &&
-        entry.interaction?.review?.targetComplete &&
-        !entry.interaction.review.contentTruncated,
-    )
-    .flatMap((entry) => entry.interaction?.actions ?? [])
-    .find((candidate) => candidate.kind === "allowForSession" && candidate.available);
-  if (!action) return;
-  const target = action.target;
-  const key = JSON.stringify([
-    target.sessionId,
-    target.runId,
-    target.interactionId,
-    target.targetRevision,
-  ]);
-  if (!state.claimApprovalPreparation(key)) return;
+  const session = snapshot.scope.sessionId;
+  const entry = snapshot.entries.find((value) =>
+    value.interaction?.actions.some((action) => action.kind === "allowForSession"),
+  );
+  const action = entry?.interaction?.actions.find(
+    (candidate) => candidate.kind === "allowForSession",
+  );
+  const target = action?.target;
+  const key = target
+    ? JSON.stringify([
+        session,
+        target.runId,
+        target.interactionId,
+        target.targetRevision,
+      ])
+    : null;
+  state.reconcileApprovalPreparation(session, key);
+  if (
+    !target ||
+    !key ||
+    !entry ||
+    !action?.available ||
+    snapshot.consent.state !== "ACTIVE" ||
+    busy.has(sessionKey(session)) ||
+    !reviewSupported(entry) ||
+    !entry.interaction?.review?.targetComplete ||
+    entry.interaction.review.contentTruncated ||
+    !state.claimApprovalPreparation(session, key)
+  )
+    return;
   const requestId = crypto.randomUUID();
   try {
     const result = await requester.execute({
@@ -656,10 +663,19 @@ async function applySessionConsent() {
       },
       options: { approved: false, includeInContext: false, answers: [] },
     });
-    if (requester === client && result.receipt.disposition === "unknown")
-      acknowledge(result, target.sessionId);
+    if (requester !== client) return;
+    const unknown = result.receipt.disposition === "unknown";
+    state.settleApprovalPreparation(key, unknown);
+    if (unknown) acknowledge(result, session);
   } catch (error) {
-    if (requester === client && view === current) message(explain(error), true);
+    if (requester !== client) return;
+    state.settleApprovalPreparation(
+      key,
+      !(error instanceof CodingClientError) || error.outcomeUnknown,
+    );
+    if (view === current) message(explain(error), true);
+  } finally {
+    if (requester === client) scheduleRender();
   }
 }
 async function refreshList() {
@@ -755,29 +771,44 @@ async function perform(
   }
 }
 async function loadHistory() {
-  if (!client || !view || loading) return;
+  if (!client || !view || loading || view.snapshot.hydration !== "ready") return;
   const session = view.snapshot.scope.sessionId,
     generation = state.generation;
-  const previous = history.get(session);
+  const snapshot = view.snapshot;
+  const cached = history.get(session);
+  const previous = cached ? reanchorHistory(cached, snapshot.history) : {
+    pages: [], cursor: snapshot.history.beforeSequence,
+    liveBefore: snapshot.history.beforeSequence,
+    hasEarlier: snapshot.history.hasEarlier, shifted: false,
+  };
   loading = true;
   try {
     const page = await client.history(
       session,
       32,
-      previous?.cursor ?? view.snapshot.history.beforeSequence,
+      previous.cursor,
     );
-    if (!state.current(generation, session)) return;
     if (
-      previous?.cursor !== null &&
-      previous?.cursor !== undefined &&
+      !state.current(generation, session) ||
+      !view ||
+      view.snapshot.hydration !== "ready"
+    )
+      return;
+    const current = reanchorHistory(previous, view.snapshot.history);
+    if (current !== previous) {
+      history.set(session, current);
+      return;
+    }
+    if (
+      previous.cursor !== null &&
       page.history.hasEarlier &&
       page.history.beforeSequence === previous.cursor
     ) {
       message("历史游标未前进，请重新获取会话。", true);
       return;
     }
-    const pages = [...(previous?.pages ?? []), page];
-    let shifted = previous?.shifted ?? false;
+    const pages = [...previous.pages, page];
+    let shifted = previous.shifted;
     while (pages.length > 4) {
       pages.shift();
       shifted = true;
@@ -787,6 +818,7 @@ async function loadHistory() {
     history.set(session, {
       pages,
       cursor: page.history.beforeSequence,
+      liveBefore: previous.liveBefore,
       hasEarlier: page.history.hasEarlier,
       shifted,
     });

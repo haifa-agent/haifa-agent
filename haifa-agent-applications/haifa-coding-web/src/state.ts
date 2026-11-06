@@ -1,4 +1,33 @@
+import type { History, HistoryPage } from "@haifa-agent/coding-client";
+
 /** Local UI state, never authority or a durable send queue. All data disappears on page reload. */
+export type CachedHistory = {
+  pages: HistoryPage[];
+  cursor: number | null;
+  liveBefore: number | null;
+  hasEarlier: boolean;
+  shifted: boolean;
+};
+
+export function reanchorHistory(
+  cached: CachedHistory,
+  live: History,
+): CachedHistory {
+  const before = live.beforeSequence;
+  if (
+    before === null ||
+    (cached.liveBefore !== null && before <= cached.liveBefore)
+  )
+    return cached;
+  return {
+    pages: [],
+    cursor: before,
+    liveBefore: before,
+    hasEarlier: live.hasEarlier,
+    shifted: true,
+  };
+}
+
 export type Draft = Readonly<{
   text: string;
   selectionStart: number;
@@ -15,7 +44,10 @@ const empty = (): Draft => ({
 });
 export class WorkspaceState {
   #drafts = new Map<string, Draft>();
-  #preparedApprovals = new Set<string>();
+  #preparedApprovals = new Map<
+    string,
+    { session: string; outcome: "pending" | "known" | "unknown" }
+  >();
   #selection: string | null = null;
   #generation = 0;
   #workspace: string | null = null;
@@ -52,14 +84,27 @@ export class WorkspaceState {
     if (value.text.length > 16384) throw Error("DRAFT_TOO_LARGE");
     this.#drafts.set(key, Object.freeze(value));
   }
-  claimApprovalPreparation(exactTarget: string): boolean {
+  reconcileApprovalPreparation(session: string, pendingTarget: string | null): void {
+    for (const [target, attempt] of this.#preparedApprovals)
+      if (
+        attempt.session === session &&
+        attempt.outcome === "known" &&
+        target !== pendingTarget
+      )
+        this.#preparedApprovals.delete(target);
+  }
+  claimApprovalPreparation(session: string, exactTarget: string): boolean {
     if (
       this.#preparedApprovals.has(exactTarget) ||
       this.#preparedApprovals.size >= 128
     )
       return false;
-    this.#preparedApprovals.add(exactTarget);
+    this.#preparedApprovals.set(exactTarget, { session, outcome: "pending" });
     return true;
+  }
+  settleApprovalPreparation(exactTarget: string, unknown: boolean): void {
+    const attempt = this.#preparedApprovals.get(exactTarget);
+    if (attempt) attempt.outcome = unknown ? "unknown" : "known";
   }
   accepted(session: string | null, sentText: string): void {
     if (this.get(session).text === sentText)
