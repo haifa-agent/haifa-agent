@@ -18,7 +18,7 @@ export class RequestTracker {
       fail("REQUEST_ALREADY_SENT");
     if (this.#requests.size >= 128) {
       const removable = [...this.#requests.values()].find(
-        (r) => r.disposition === "rejected",
+        (r) => r.disposition === "accepted" || r.disposition === "rejected",
       );
       if (!removable) fail("REQUEST_TRACKING_LIMIT");
       this.#requests.delete(removable.requestId);

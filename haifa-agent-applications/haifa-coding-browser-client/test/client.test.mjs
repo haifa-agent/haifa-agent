@@ -473,6 +473,34 @@ test("unknown request association is not upgraded by observing a terminal Run", 
   });
 });
 
+test("known receipts retire without losing unknown or in-flight command associations", () => {
+  const tracker = new RequestTracker();
+  const pending = (id) => ({ ...command().command, clientRequestId: id });
+  tracker.begin(pending("in-flight"));
+  tracker.begin(pending("unknown"));
+  tracker.receipt(result("unknown", "unknown").receipt, null);
+  for (let i = 0; i < 256; i++) {
+    const id = "accepted-" + i;
+    tracker.begin(pending(id));
+    tracker.receipt(result(id).receipt, null);
+  }
+  const tracked = tracker.list();
+  assert.equal(tracked.length, 128);
+  assert.equal(
+    tracked.find((r) => r.requestId === "in-flight")?.disposition,
+    "sending",
+  );
+  assert.equal(
+    tracked.find((r) => r.requestId === "unknown")?.disposition,
+    "unknown",
+  );
+  assert.equal(
+    tracked.some((r) => r.requestId === "accepted-0"),
+    false,
+  );
+  assert.equal(tracked.at(-1).requestId, "accepted-255");
+});
+
 test("local grant expiry closes observations and never renews or pairs silently", async (t) => {
   const wire = new Wire(),
     client = await wire.pair(),

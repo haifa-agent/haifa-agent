@@ -530,6 +530,8 @@ export class CodingBrowserClient {
         limit: 1,
         executionId: null,
       });
+      if (!this.requests.some((r) => r.requestId === requestId))
+        return fail("REQUEST_NOT_FOUND");
       if (facts.run) this.#tracker.observeRun(requestId, facts.run);
     }
     return this.requests.find((r) => r.requestId === requestId)!;
