@@ -90,6 +90,9 @@ untrusted data lane and participates in hard admission; an optional cross-Run ha
 Unrelated new Runs retain the existing sparse-history policy. Summary authorization checks every bounded
 source reference, using the active compaction window bound rather than the smaller handoff candidate limit.
 
+If a complete-source soft compaction has already called the model and a later batch cannot fit, the unchanged
+prefix backs off within the existing time bound. Hard capacity recovery can still evaluate that source.
+
 Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
 `SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain
 unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that

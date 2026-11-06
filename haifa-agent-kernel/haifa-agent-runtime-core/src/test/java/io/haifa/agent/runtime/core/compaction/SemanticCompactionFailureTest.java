@@ -705,7 +705,7 @@ class SemanticCompactionFailureTest {
     }
 
     @Test
-    void aGrowingIntermediateSummaryIsCheckedBeforeTheNextDispatch() {
+    void aGrowingIntermediateSummaryBacksOffSoftEvaluationAndKeepsHardRecoveryAvailable() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentRun run = createRun(store);
         AtomicInteger ids = new AtomicInteger();
@@ -714,30 +714,38 @@ class SemanticCompactionFailureTest {
                 () -> "grow-" + ids.incrementAndGet(),
                 new RunControlRegistry(),
                 CompressionPolicy.defaults().withTailTokenBounds(5, 10));
-        for (int i = 0; i < 30; i++) appendTurn(store, run, "u-" + i, "a-" + i, "objective " + i, "evidence " + i);
+        for (int i = 0; i < 30; i++) {
+            appendTurn(store, run, "u-" + i, "a-" + i, "objective " + i, "retained evidence ".repeat(12) + i);
+        }
         AtomicInteger calls = new AtomicInteger();
-        coordinator.forceCompactOnOverflow(
+        var binding = bindingWithWindowAndOutput(
+                store,
                 run,
-                1,
-                bindingWithWindowAndOutput(
-                        store,
-                        run,
-                        request -> {
-                            calls.incrementAndGet();
-                            assertThat(SummaryModelInvoker.estimatedInput(
-                                            request.messages().getFirst().content(),
-                                            request.messages().getLast().content()))
-                                    .isLessThanOrEqualTo(3_208L);
-                            return validSummaryResponse("x".repeat(9_000));
-                        },
-                        12_000,
-                        8_192));
+                request -> {
+                    calls.incrementAndGet();
+                    assertThat(SummaryModelInvoker.estimatedInput(
+                                    request.messages().getFirst().content(),
+                                    request.messages().getLast().content()))
+                            .isLessThanOrEqualTo(3_208L);
+                    return validSummaryResponse("x".repeat(9_000));
+                },
+                12_000,
+                8_192);
+        var soft = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(12_000, 8_192, 600, 0, 0, 3_208, 4_000, 3_000, 3_000, 1));
+        coordinator.evaluateSelected(run, 1, binding, soft);
         assertThat(calls).hasValue(1);
         assertThat(store.latestVersion(run.sessionId())).isZero();
-        assertThat(store.eventsFor(run.id()))
-                .filteredOn(e -> e.type().equals("session.compaction-failed"))
-                .singleElement()
-                .satisfies(e -> assertThat(e.data()).containsEntry("failureCode", "SUMMARY_INPUT_BUDGET"));
+
+        appendTurn(store, run, "new-u", "new-a", "Continue the task", "New tail");
+        coordinator.evaluateSelected(run, 2, binding, soft);
+        assertThat(calls).hasValue(1);
+        assertThat(store.latestVersion(run.sessionId())).isZero();
+
+        coordinator.forceCompactOnOverflow(run, 3, binding);
+        assertThat(calls).hasValue(2);
+        assertThat(store.latestVersion(run.sessionId())).isZero();
     }
 
     @Test

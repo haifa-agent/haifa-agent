@@ -411,7 +411,8 @@ public final class SemanticCompactionCoordinator {
         boolean targetPressure = decision.reason() == CompactionTriggerReason.ACTIVE_HISTORY_BUDGET;
         if (targetPressure
                 && failureBackoff.contains(
-                        CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion),
+                        CompactionFailureBackoff.Scope.of(
+                                run, binding, policy, expectedPreviousVersion, decision.reason()),
                         activeMessages)) {
             invoker.checkControl(run);
             requireWithinRetention(
@@ -660,6 +661,12 @@ public final class SemanticCompactionCoordinator {
         List<AgentMessage> sourceToCompact = activeGroups.subList(0, safeSplit).stream()
                 .flatMap(List::stream)
                 .toList();
+        boolean softComplete = completeSource && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
+        var backoffScope = CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion, reason);
+        if (softComplete && failureBackoff.contains(backoffScope, sourceToCompact)) {
+            invoker.checkControl(run);
+            return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
+        }
 
         var complete = new HashMap<AgentMessageId, AgentMessage>();
         Function<List<AgentMessage>, ProjectedCompactionSource> projector = completeSource
@@ -827,7 +834,8 @@ public final class SemanticCompactionCoordinator {
                     "failureStage",
                     sourceRefusal ? (sourcePrepared ? "SOURCE_VALIDATION" : "SOURCE_PREPARATION") : failureStage(ex));
             data.put("failureCode", failureCode(ex));
-            data.put("physicalCalls", Math.toIntExact(run.usage().modelCalls() - initialModelCalls));
+            int dispatchedCalls = Math.toIntExact(run.usage().modelCalls() - initialModelCalls);
+            data.put("physicalCalls", dispatchedCalls);
             data.put("degraded", degraded);
             events.append(run.id(), "session.compaction-failed", data, time.now());
             if (sourceRefusal) {
@@ -848,10 +856,15 @@ public final class SemanticCompactionCoordinator {
                     || (completeSource && ex instanceof CompactionBudgetExceededException)
                     || (ex instanceof CompactionBudgetExceededException
                             && !policy.allowDeterministicDegradedFallback())) {
-                if (activeBudget && recoverableFailure(ex) && !(ex instanceof CompactionBudgetExceededException)) {
-                    failureBackoff.record(
-                            CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion),
-                            sourceToCompact);
+                boolean paidSoftPlanningFailure = softComplete
+                        && dispatchedCalls > 0
+                        && ex instanceof CompactionBudgetExceededException budgetFailure
+                        && budgetFailure.code() == CompactionBudgetExceededException.Code.SUMMARY_INPUT_BUDGET;
+                if (paidSoftPlanningFailure
+                        || (activeBudget
+                                && recoverableFailure(ex)
+                                && !(ex instanceof CompactionBudgetExceededException))) {
+                    failureBackoff.record(backoffScope, sourceToCompact);
                 }
                 CompactionEvaluationOutcome recovery = recoveryOutcome(
                         run,

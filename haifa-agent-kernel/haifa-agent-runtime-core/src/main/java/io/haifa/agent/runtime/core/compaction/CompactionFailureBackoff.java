@@ -25,8 +25,14 @@ final class CompactionFailureBackoff {
             String bindingHash,
             String modelDigest,
             CompressionPolicy policy,
-            long summaryVersion) {
-        static Scope of(AgentRun run, FrozenModelBinding binding, CompressionPolicy policy, long version) {
+            long summaryVersion,
+            CompactionTriggerReason reason) {
+        static Scope of(
+                AgentRun run,
+                FrozenModelBinding binding,
+                CompressionPolicy policy,
+                long version,
+                CompactionTriggerReason reason) {
             return new Scope(
                     run.sessionId(),
                     run.tenant(),
@@ -34,7 +40,8 @@ final class CompactionFailureBackoff {
                     binding.configuration().reference().contentHash(),
                     binding.configuration().model().configurationDigest(),
                     policy,
-                    version);
+                    version,
+                    reason);
         }
     }
 
