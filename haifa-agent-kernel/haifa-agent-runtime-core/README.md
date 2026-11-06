@@ -107,9 +107,8 @@ source reference, using the active compaction window bound rather than the small
 If a complete-source soft compaction has already called the model and a later batch cannot fit, the unchanged
 prefix backs off within the existing time bound. When the ordinary input fits, a validated soft checkpoint
 that would leave the estimated active history unchanged or larger does not advance coverage. The same
-candidate range backs off, and a larger removable range may be evaluated. The compiler receives the
-estimated space being replaced as a writing target for this optional checkpoint, while the existing
-schema and evidence requirements still apply. Hard capacity recovery can still evaluate these sources.
+candidate range backs off, and a larger removable range may be evaluated. Hard capacity recovery can
+still evaluate these sources.
 
 Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
 `SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain
