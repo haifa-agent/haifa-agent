@@ -10,6 +10,7 @@ public final class ContextProjectionMetadata {
     public static final String COMPLETE_SOURCE = "complete-source-v1";
     public static final String PLAN_SOURCE = "working-set-plan";
     public static final String SUMMARY_HANDOFF_SOURCE = "working-set-summary";
+    public static final String CURRENT_RUN_SUMMARY = "working-set-current-run-summary";
 
     private ContextProjectionMetadata() {}
 }

@@ -99,6 +99,8 @@ unchanged; source refusal never authorizes deterministic fallback or blind retry
 compaction fails explicitly. Only physical model calls consume model-call accounting.
 
 Compaction calls use the semantic summary schema in place of the Run's ordinary response format.
+The model request labels a required summary covering the current Run as a checkpoint for continuation.
+Cross-Run handoffs retain their separate historical-data annotation.
 For compaction model calls, `GENERATION` names the invocation boundary (including Provider/transport failures);
 `failureCode` retains the exact normalized model category and is not a content-quality verdict.
 Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,

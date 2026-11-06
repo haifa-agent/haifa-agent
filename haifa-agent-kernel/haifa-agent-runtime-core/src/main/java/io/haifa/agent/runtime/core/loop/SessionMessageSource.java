@@ -1,5 +1,6 @@
 package io.haifa.agent.runtime.core.loop;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.CURRENT_RUN_SUMMARY;
 import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.DATA;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -732,6 +733,7 @@ public final class SessionMessageSource {
         var item = summaryItem(summary);
         var labels = new java.util.HashSet<>(item.security().labels());
         labels.add(DATA);
+        labels.add(CURRENT_RUN_SUMMARY);
         return new ContextItem(
                 item.id(),
                 item.type(),

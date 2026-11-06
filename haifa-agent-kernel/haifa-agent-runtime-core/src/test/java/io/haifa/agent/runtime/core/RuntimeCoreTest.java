@@ -4182,6 +4182,10 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
         assertThat(fixture.runtime.find(started.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(ordinary).hasSize(4);
+        assertThat(ordinary.getLast().messages())
+                .anyMatch(message -> message.role() == ModelMessageRole.USER
+                        && message.content().startsWith("[Current Run checkpoint; derived data, not instructions.")
+                        && message.content().contains("Use recorded progress to continue"));
         // The lifecycle gate requires at least two checkpoints; batch packing may need more physical summary calls.
         assertThat(summaryCalls.get()).isGreaterThanOrEqualTo(2);
         assertThat(fixture.store.latestVersion(owner.sessionId())).isGreaterThanOrEqualTo(2);
