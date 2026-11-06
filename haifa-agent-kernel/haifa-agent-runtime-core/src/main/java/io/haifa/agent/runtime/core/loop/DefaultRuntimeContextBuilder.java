@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.loop;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.CURRENT_RUN_SUMMARY;
+
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
@@ -41,17 +43,25 @@ import java.util.Objects;
 /** Builds trusted Context IR from frozen run state and persisted facts. */
 public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder {
     private static final int MAX_SKILL_DESCRIPTION_CHARS = 240;
-    private static final PromptComponent HISTORY_DATA_RULE = new PromptComponent(
-            new PromptComponentId("working-set-data-rule"),
-            RunWorkingSetSource.VERSION,
-            PromptLayer.TOOL_PROTOCOL,
-            PromptRole.RUNTIME,
+    private static final PromptComponent HISTORY_SOURCE_RULE =
+            historyRule("working-set-history-source-rule", RunWorkingSetSource.DATA_RULE);
+    private static final PromptComponent HISTORY_DATA_RULE = historyRule(
+            "working-set-data-rule",
             RunWorkingSetSource.DATA_RULE
                     + " After a current Run checkpoint, resume at the first unfinished step. Count its recorded "
                     + "successful reads as completed inspection steps. Read again only if the current request requires it, "
-                    + "the source changed, or exact evidence is missing.",
-            true,
-            java.util.Set.of("working-set", "data-boundary"));
+                    + "the source changed, or exact evidence is missing.");
+
+    private static PromptComponent historyRule(String id, String text) {
+        return new PromptComponent(
+                new PromptComponentId(id),
+                RunWorkingSetSource.VERSION,
+                PromptLayer.TOOL_PROTOCOL,
+                PromptRole.RUNTIME,
+                text,
+                true,
+                java.util.Set.of("working-set", "data-boundary"));
+    }
 
     private final RuntimeStateRepository state;
     private final AgentRuntimeMiddlewareChain middleware;
@@ -166,7 +176,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         if (selectHistoryRule) {
             currentOnlyPrefix = expectedPrefix;
             var historyPrompts = new ArrayList<>(prompts);
-            historyPrompts.add(HISTORY_DATA_RULE);
+            historyPrompts.add(HISTORY_SOURCE_RULE);
             expectedPrefix = io.haifa.agent.runtime.core.model.ModelInputAccounting.expectedPrefix(
                     model, historyPrompts, effectiveTools);
         }
@@ -175,7 +185,9 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         selectionMetrics = selectionMetrics.plus(measuredSelection.metrics());
         SessionMessageSource.Selection selection = measuredSelection.selection();
         if (selectHistoryRule && RunWorkingSetSource.requiresHistoryDataRule(run.id(), selection.items())) {
-            middlewareContext.addPrompt(HISTORY_DATA_RULE);
+            boolean hasCheckpoint = selection.items().stream()
+                    .anyMatch(item -> item.security().labels().contains(CURRENT_RUN_SUMMARY));
+            middlewareContext.addPrompt(hasCheckpoint ? HISTORY_DATA_RULE : HISTORY_SOURCE_RULE);
         }
         if (unified)
             return buildUnified(

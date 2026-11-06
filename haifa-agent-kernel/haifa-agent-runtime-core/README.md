@@ -32,6 +32,8 @@ priority within the bounded history candidates. It remains optional quoted data 
 and versioned readback as other excerpts.
 Consecutive unified excerpts from one saved Run share its Run identifier in the request. Each excerpt keeps
 its own message identifier, version, range and body, and is revalidated independently.
+Without an explicit cache contract, historical-only selections use the source-data rule without the
+current Run checkpoint instructions. Current Run checkpoints retain the continuation instructions.
 
 Without an explicit cache contract, unified working-set requests with only current Run messages omit
 the historical-data instruction. The instruction remains for saved excerpts, summaries and history
