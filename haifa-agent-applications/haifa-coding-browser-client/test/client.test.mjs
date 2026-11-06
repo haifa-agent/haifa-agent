@@ -158,7 +158,7 @@ class Wire {
     }
     const rpc = JSON.parse(options.body);
     this.calls.push(rpc.method);
-    if (this.denied) return error(rpc.id, "BROWSER_AUTH_REQUIRED");
+    if (this.denied) return error(null, "BROWSER_AUTH_REQUIRED");
     switch (rpc.method) {
       case "initialize":
         return envelope(rpc.id, {

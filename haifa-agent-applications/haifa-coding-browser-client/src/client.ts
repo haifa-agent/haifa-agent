@@ -351,7 +351,6 @@ export class CodingBrowserClient {
       const envelope = object(JSON.parse(text));
       if (
         envelope.jsonrpc !== "2.0" ||
-        envelope.id !== id ||
         ("error" in envelope && "result" in envelope)
       )
         throw new CodingClientError("PROTOCOL_INCOMPATIBLE", mutation);
@@ -362,10 +361,20 @@ export class CodingBrowserClient {
           typeof reason === "string" && /^[A-Z0-9_:.]{1,128}$/.test(reason)
             ? reason
             : "REMOTE_REJECTED";
+        // The Host can reject authentication before reading the request ID.
+        if (
+          envelope.id !== id &&
+          !(envelope.id === null && response.status === 403 && AUTH.has(safe))
+        )
+          throw new CodingClientError("PROTOCOL_INCOMPATIBLE", mutation);
         if (AUTH.has(safe)) this.#invalidate(safe);
         throw new CodingClientError(safe, mutation && !PRE_ADMISSION.has(safe));
       }
-      if (response.status !== 200 || !("result" in envelope))
+      if (
+        response.status !== 200 ||
+        envelope.id !== id ||
+        !("result" in envelope)
+      )
         throw new CodingClientError("PROTOCOL_INCOMPATIBLE", mutation);
       return envelope.result;
     } catch (error) {
