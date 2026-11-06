@@ -383,9 +383,7 @@ public final class RunWorkingSetSource {
             }
             Optional<SessionMessageSource.Selection> retained = Optional.empty();
             if (reusable && relationship.equals("CONTINUE") && !steered) {
-                retained = retain(run, previous, head, hardBudget)
-                        .filter(candidate -> currentOnlyPrefix == null
-                                || requiresHistoryDataRule(run.id(), candidate.items()) == includesHistory);
+                retained = retain(run, previous, head, hardBudget);
                 rows += retained.map(s -> s.items().size()).orElse(0);
             }
             long keepTokens = retained.map(SessionMessageSource.Selection::estimatedSessionTokens)

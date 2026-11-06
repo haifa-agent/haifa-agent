@@ -29,9 +29,10 @@ For a follow-up with the Run working set enabled, an exact path named in the req
 priority within the bounded history candidates. It remains optional quoted data and uses the same access checks
 and versioned readback as other excerpts.
 
-Unified working-set requests with only current Run messages omit the historical-data instruction.
-The instruction remains for saved excerpts, summaries and history reader calls. Cache decisions
-compare the prefix for the selected data boundary, including when retaining a previous window.
+Without an explicit cache contract, unified working-set requests with only current Run messages omit
+the historical-data instruction. The instruction remains for saved excerpts, summaries and history
+reader calls. A cache contract keeps it in the fixed prefix from warmup onward so it can be reused
+when history is selected.
 
 `model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
 call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted

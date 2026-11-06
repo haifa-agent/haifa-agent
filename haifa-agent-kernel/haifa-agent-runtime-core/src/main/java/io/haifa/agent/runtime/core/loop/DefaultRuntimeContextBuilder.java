@@ -99,13 +99,14 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         List<SkillActivation> activations = addSkillPrompts(run, middlewareContext);
         List<ModelToolSpecification> effectiveTools = skillTools(model, activations);
         boolean workingSet = sessionMessages.workingSetEnabled(run);
-        boolean unified = workingSet
-                && RuntimeControlOptions.unifiedContextBudget(
-                        model.configuration().modelRequestOptions());
-        boolean finalizeOnly = RuntimeControlOptions.finalizeOnly(
-                model.configuration().modelRequestOptions(), run.usage().toolCalls());
+        var options = model.configuration().modelRequestOptions();
+        boolean unified = workingSet && RuntimeControlOptions.unifiedContextBudget(options);
+        boolean finalizeOnly =
+                RuntimeControlOptions.finalizeOnly(options, run.usage().toolCalls());
+        // An explicit reuse contract needs the same prefix during warmup and historical selection.
         boolean selectHistoryRule = unified
                 && !finalizeOnly
+                && !options.containsKey(RuntimeControlOptions.WORKING_SET_CACHE)
                 && !RunWorkingSetSource.requiresHistoryDataRule(run.id(), middlewareContext.contextItems());
         if (workingSet && !selectHistoryRule) middlewareContext.addPrompt(HISTORY_DATA_RULE);
         if (finalizeOnly) {
