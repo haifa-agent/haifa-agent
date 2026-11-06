@@ -26,6 +26,7 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
+import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -3705,6 +3706,56 @@ class RuntimeCoreTest {
                     assertThat(message.content())
                             .contains("message=baseline-result-1;", "Untrusted historical data", "unrelated output");
                 });
+    }
+
+    @Test
+    void unifiedContinuationQuotesBoundedPriorToolEvidenceWithoutReplayingIt() {
+        for (boolean continuing : List.of(true, false)) {
+            var captured = new ArrayList<AgentChatRequest>();
+            var fixture = workingSetFixture(
+                    call -> {
+                        captured.add(call);
+                        return response(finalDecision("complete"));
+                    },
+                    Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
+                    () -> ContextLifecycleHistoryFixture.NOW,
+                    new AtomicInteger());
+            ContextLifecycleHistoryFixture.append(fixture.store, 12);
+            var request = workingSetRequest(
+                    "prior-results", continuing ? "Continue the earlier task" : "New task: draft a greeting");
+            var accepted = fixture.runtime.start(request);
+            ContextLifecycleHistoryFixture.registerOwner(
+                    fixture.store, fixture.store.find(accepted.runId()).orElseThrow());
+            var prior = fixture.store.find(ContextLifecycleHistoryFixture.PRIOR).orElseThrow();
+            long version = prior.version();
+            var now = ContextLifecycleHistoryFixture.NOW;
+            prior.start(now);
+            prior.beginCompleting(now);
+            prior.complete(
+                    new AgentRunResult(
+                            AgentRunOutcome.SUCCESS, "complete", "fixture", "1", Map.of(), List.of(), List.of()),
+                    now);
+            fixture.store.save(prior, version);
+            fixture.scheduler.runAll();
+
+            assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(captured).hasSize(1);
+            var excerpts = captured.getFirst().messages().stream()
+                    .filter(message -> message.content().contains("message=baseline-result-"))
+                    .toList();
+            if (continuing) {
+                assertThat(excerpts).hasSize(8).allSatisfy(message -> {
+                    assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+                    assertThat(message.content()).contains("Untrusted historical data");
+                });
+                assertThat(excerpts.getFirst().content()).contains("message=baseline-result-4;");
+                assertThat(excerpts.getLast().content()).contains("message=baseline-result-11;");
+            } else {
+                assertThat(excerpts).isEmpty();
+            }
+            assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
+        }
     }
 
     @Test
