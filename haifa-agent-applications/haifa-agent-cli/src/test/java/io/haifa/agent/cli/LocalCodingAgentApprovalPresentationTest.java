@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.credential.core.DefaultSecretRedactor;
 import io.haifa.agent.runtime.api.ApprovalPresentation;
 import io.haifa.agent.runtime.api.ApprovalPrompt;
+import io.haifa.coding.host.internal.LocalCodingAgent;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 

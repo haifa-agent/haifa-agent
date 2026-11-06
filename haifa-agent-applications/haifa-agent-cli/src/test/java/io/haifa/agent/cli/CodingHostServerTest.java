@@ -10,6 +10,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.coding.host.internal.ApprovalMode;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;

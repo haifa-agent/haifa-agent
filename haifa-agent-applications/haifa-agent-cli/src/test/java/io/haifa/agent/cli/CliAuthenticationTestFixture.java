@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.InMemoryWindowsCredentialManagerClient;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
+import io.haifa.coding.host.internal.CliCodingAuthenticationClient;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;

@@ -1,5 +1,7 @@
 package io.haifa.agent.cli;
 
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliConfigurationLoader;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.Optional;

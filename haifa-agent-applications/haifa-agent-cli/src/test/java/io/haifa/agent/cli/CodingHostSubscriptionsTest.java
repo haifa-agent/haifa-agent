@@ -11,6 +11,8 @@ import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import io.haifa.coding.host.internal.CodingHostException;
+import io.haifa.coding.host.internal.CodingHostSubscriptions;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.time.Instant;

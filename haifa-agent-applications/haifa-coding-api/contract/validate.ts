@@ -45,7 +45,7 @@ function checkCommand(value: unknown): boolean {
   if (!commandSchema(value)) return false;
   const c = value as Command;
   if (!c.clientRequestId.trim()) return false;
-  if (!["create", "resourcesReload", "workspaceRevoke"].includes(c.operation) && !c.target.sessionId?.trim()) return false;
+  if (!["create", "resourcesReload", "workspaceRevoke", "logout"].includes(c.operation) && !c.target.sessionId?.trim()) return false;
   if (["cancel", "steer", "followUp", "respond", "allowForSession", "prepareApproval"].includes(c.operation) && !c.target.runId?.trim()) return false;
   if (["respond", "allowForSession", "prepareApproval"].includes(c.operation) && (!c.target.interactionId?.trim() || c.target.targetRevision === null)) return false;
   if (["rename", "archive", "delete", "restore", "selectModel"].includes(c.operation) && c.target.targetRevision === null) return false;
@@ -70,9 +70,16 @@ for (const fixture of extras) {
   const checker = ajv.getSchema("https://haifa.agent/contracts/coding-presentation-v1#/$defs/" + fixture.schema)!;
   if (Boolean(checker(fixture.value)) !== fixture.valid) throw new Error("Extra fixture mismatch: " + fixture.schema);
 }
+const productFixtures: Array<{schema: string; valid: boolean; value: unknown}> = JSON.parse(readFileSync(new URL("fixtures/product.json", root), "utf8"));
+for (const fixture of productFixtures) {
+  const checker = ajv.getSchema("https://haifa.agent/contracts/coding-presentation-v1#/$defs/" + fixture.schema)!;
+  let valid = Boolean(checker(fixture.value));
+  if (valid && fixture.schema === "CommandRequest") valid = checkCommand((fixture.value as {command: unknown}).command);
+  if (valid !== fixture.valid) throw new Error("Product fixture mismatch: " + fixture.schema);
+}
 const initial = JSON.parse(readFileSync(new URL("fixtures/snapshot.json", root), "utf8")) as Snapshot;
 const update = JSON.parse(readFileSync(new URL("fixtures/update.json", root), "utf8")) as Update;
 if (apply(initial, update).revision !== 1 || apply(update.replacement, update) !== update.replacement) throw new Error("Atomic reducer failed");
 try { apply(initial, {...update, baseRevision: 2, revision: 3, replacement: {...update.replacement, revision: 3}}); throw new Error("gap accepted"); }
 catch (e) { if (!(e instanceof Error) || e.message !== "VIEW_GAP_RESYNC") throw e; }
-console.log(`Verified ${fixtures.length} shared fixtures, 3 command fixtures and atomic reducer behavior.`);
+console.log(`Verified ${fixtures.length} shared fixtures, 3 command fixtures, ${productFixtures.length} product fixtures and atomic reducer behavior.`);

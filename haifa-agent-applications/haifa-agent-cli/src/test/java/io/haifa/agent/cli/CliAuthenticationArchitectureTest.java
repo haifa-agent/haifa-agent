@@ -13,7 +13,7 @@ class CliAuthenticationArchitectureTest {
     void localAuthenticationEntryCannotAssembleRuntimePersistenceExecutionOrRemoteClients() {
         var classes = new ClassFileImporter()
                 .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent.cli");
+                .importPackages("io.haifa.agent.cli", "io.haifa.coding.host");
         noClasses()
                 .that()
                 .haveNameMatching(".*(CodingAuthCommand.*|CliLocalModelAuth).*")

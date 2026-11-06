@@ -5,6 +5,8 @@ import io.haifa.agent.application.coding.terminal.application.CodingTerminalStar
 import io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.LocalGitBranchResolver;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Path;

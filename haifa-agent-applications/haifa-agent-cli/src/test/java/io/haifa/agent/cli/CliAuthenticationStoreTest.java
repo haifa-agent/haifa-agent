@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
+import io.haifa.coding.host.internal.LocalCodingAgent;
 import org.junit.jupiter.api.Test;
 
 class CliAuthenticationStoreTest {

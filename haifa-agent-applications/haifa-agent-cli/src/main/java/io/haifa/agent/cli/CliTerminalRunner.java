@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.coding.host.internal.CliConfiguration;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.function.Consumer;

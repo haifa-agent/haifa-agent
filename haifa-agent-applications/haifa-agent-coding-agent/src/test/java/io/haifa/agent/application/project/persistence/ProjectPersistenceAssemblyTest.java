@@ -444,6 +444,23 @@ class ProjectPersistenceAssemblyTest {
             var changes = new java.util.concurrent.atomic.AtomicInteger();
             var observation = coding.observeChanges(sessionId, changes::incrementAndGet);
             runtime.settle(firstRunId);
+            var readOnlyClient = new io.haifa.agent.application.project.product.coding.client.LocalCodingSessionClient(
+                    fixture.projectId, coding, runtime, ids, TIME);
+            readOnlyClient.history(sessionId, 10);
+            readOnlyClient.history(sessionId, 10, 10);
+            readOnlyClient.restorableMessages(sessionId, 10);
+            // This minimal binding has no Shell capability. Even an unavailable fact read must not reconcile.
+            assertThatThrownBy(() -> readOnlyClient.shellExecutions(sessionId))
+                    .isInstanceOf(java.util.NoSuchElementException.class);
+            assertThatThrownBy(() -> readOnlyClient.shellExecution(sessionId, "unavailable"))
+                    .isInstanceOf(java.util.NoSuchElementException.class);
+            coding.listSessionsForRecovery(fixture.projectId, CodingSessionQuery.firstPage(10));
+            assertThat(coding.snapshotSession(sessionId)
+                            .activeRun()
+                            .orElseThrow()
+                            .runId())
+                    .isEqualTo(firstRunId);
+            assertThat(changes).hasValue(0);
             var reconciled = coding.reconcileSession(sessionId);
             assertThat(changes).hasValue(1);
             assertThat(reconciled.activeRun()).isPresent();

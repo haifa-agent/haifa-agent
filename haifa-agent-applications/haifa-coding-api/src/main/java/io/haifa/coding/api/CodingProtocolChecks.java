@@ -60,7 +60,7 @@ public final class CodingProtocolChecks {
     public static void command(Command command) {
         if (command.clientRequestId().isBlank()) fail("REQUEST_ID_REQUIRED");
         var target = command.target();
-        if (!Set.of("create", "resourcesReload", "workspaceRevoke").contains(command.operation())
+        if (!Set.of("create", "resourcesReload", "workspaceRevoke", "logout").contains(command.operation())
                 && blank(target.sessionId())) fail("SESSION_REQUIRED");
         if (Set.of("cancel", "steer", "followUp", "respond", "allowForSession", "prepareApproval")
                         .contains(command.operation())

@@ -1,0 +1,190 @@
+[
+  {
+    "schema": "Query",
+    "value": {
+      "operation": "sessions",
+      "target": {
+        "projectId": null,
+        "sessionId": null,
+        "runId": null,
+        "interactionId": null,
+        "targetRevision": null
+      },
+      "search": null,
+      "limit": 32,
+      "executionId": null
+    },
+    "valid": true
+  },
+  {
+    "schema": "Query",
+    "value": {
+      "operation": "arbitrary-operation",
+      "target": {
+        "projectId": null,
+        "sessionId": null,
+        "runId": null,
+        "interactionId": null,
+        "targetRevision": null
+      },
+      "search": null,
+      "limit": 32,
+      "executionId": null
+    },
+    "valid": false
+  },
+  {
+    "schema": "Query",
+    "value": {
+      "operation": "sessions",
+      "target": {
+        "projectId": null,
+        "sessionId": null,
+        "runId": null,
+        "interactionId": null,
+        "targetRevision": null
+      },
+      "search": null,
+      "limit": 1.5,
+      "executionId": null
+    },
+    "valid": false
+  },
+  {
+    "schema": "CommandRequest",
+    "value": {
+      "command": {
+        "kind": "command",
+        "operation": "create",
+        "clientRequestId": "request",
+        "idempotencyKey": "key",
+        "target": {
+          "projectId": null,
+          "sessionId": null,
+          "runId": null,
+          "interactionId": null,
+          "targetRevision": null
+        },
+        "text": "synthetic input",
+        "optionId": null,
+        "executionId": null,
+        "selections": []
+      },
+      "options": {
+        "approved": false,
+        "includeInContext": false,
+        "answers": []
+      }
+    },
+    "valid": true
+  },
+  {
+    "schema": "CommandRequest",
+    "value": {
+      "command": {
+        "kind": "command",
+        "operation": "create",
+        "clientRequestId": " ",
+        "idempotencyKey": "key",
+        "target": {
+          "projectId": null,
+          "sessionId": null,
+          "runId": null,
+          "interactionId": null,
+          "targetRevision": null
+        },
+        "text": "synthetic input",
+        "optionId": null,
+        "executionId": null,
+        "selections": []
+      },
+      "options": {
+        "approved": false,
+        "includeInContext": false,
+        "answers": []
+      }
+    },
+    "valid": false
+  },
+  {
+    "schema": "CommandRequest",
+    "value": {
+      "command": {
+        "kind": "command",
+        "operation": "create",
+        "clientRequestId": "request",
+        "idempotencyKey": "key",
+        "target": {
+          "projectId": null,
+          "sessionId": null,
+          "runId": null,
+          "interactionId": null,
+          "targetRevision": null
+        },
+        "text": "synthetic input",
+        "optionId": null,
+        "executionId": null,
+        "selections": []
+      },
+      "options": {
+        "approved": false,
+        "includeInContext": false,
+        "answers": [],
+        "script": "must-not-execute"
+      }
+    },
+    "valid": false
+  },
+  {
+    "schema": "CommandResult",
+    "value": {
+      "receipt": {
+        "clientRequestId": "request",
+        "disposition": "unknown",
+        "operationId": null,
+        "runId": null,
+        "reasonCode": "COMMAND_OUTCOME_UNKNOWN"
+      },
+      "session": null,
+      "queuedMessage": null,
+      "restoredMessage": null,
+      "shellPlan": null,
+      "shellExecution": null,
+      "shellResult": null,
+      "compaction": null,
+      "export": null,
+      "modelSelection": null,
+      "interactionReceipt": null,
+      "interaction": null
+    },
+    "valid": true
+  },
+  {
+    "schema": "BrowserGrant",
+    "value": {
+      "grant": "synthetic-proof-not-real",
+      "clientId": "browser-client",
+      "hostIncarnation": "host-one",
+      "expiresAtEpochMillis": 1000
+    },
+    "valid": true
+  },
+  {
+    "schema": "BrowserGrant",
+    "value": {
+      "grant": "synthetic-proof-not-real",
+      "clientId": "browser-client",
+      "hostIncarnation": "host-one",
+      "expiresAtEpochMillis": 0
+    },
+    "valid": false
+  },
+  {
+    "schema": "PairingRequest",
+    "value": {
+      "challenge": "synthetic-proof-not-real",
+      "hostIncarnation": "host-one"
+    },
+    "valid": true
+  }
+]

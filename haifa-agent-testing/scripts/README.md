@@ -112,3 +112,22 @@ Manifest。
 ./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --build
 ./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --approval=ask
 ```
+
+## Coding SDK B2 外部消费与真实浏览器
+
+`coding-sdk-b2-acceptance.py` 复制两个最小 Java 样例到全新的仓库外目录，使用产品预览仓中的
+真实 JAR/POM 构建独立 Host/Client JVM。Python Playwright 驱动已安装 Chromium 的同源 fetch/SSE；
+独立本地 Provider Stub 覆盖 exact approval、已接纳 Run 在撤销后继续、已建 SSE 撤销/绝对过期、
+同端口重启拒绝旧 grant，以及页面内存凭据。owner challenge 的私有控制管道不会写入证据。
+
+```bash
+python3 haifa-agent-testing/scripts/coding-sdk-b2-acceptance.py \
+  --run-root /tmp/coding-sdk-b2-001 \
+  --preview-repository /absolute/isolated-preview-repository \
+  --version 0.1.5-feat-example-SNAPSHOT \
+  --expected-sha <published-source-sha> \
+  --chromium /absolute/path/to/chromium
+```
+
+需要 Java 21、Maven、Python Playwright 和实际 Chromium；不会下载浏览器、调用真实 Provider、
+构建正式 Web 或放行 B3/B4。输出 manifest 只记录结构化事实、制品清单与布尔断言。

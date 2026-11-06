@@ -15,6 +15,8 @@
         <haifa.cli.shade.skip>false</haifa.cli.shade.skip>
     </properties>
     <dependencies>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-client</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-host</artifactId></dependency>
         <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-common</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-core</artifactId></dependency>

@@ -27,6 +27,10 @@ import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationPro
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import io.haifa.agent.store.jsonl.JsonlTranscriptReader;
+import io.haifa.coding.host.internal.ApprovalMode;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.LocalCodingAgent;
+import io.haifa.coding.host.internal.LocalWorkspaceIdentity;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.net.URI;

@@ -2,6 +2,8 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliExecutionEnvironment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;

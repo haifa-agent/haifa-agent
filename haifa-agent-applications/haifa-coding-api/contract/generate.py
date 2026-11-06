@@ -42,12 +42,17 @@ for name,spec in schema['$defs'].items():
         elif typ=='long': j+=[prefix+'if ('+k+' < '+str(actual.get('minimum',0))+'L || '+k+' > '+str(actual.get('maximum',9007199254740991))+'L) throw new IllegalArgumentException("Invalid '+k+'");']
         elif typ.startswith('List<'):
             j+=[prefix+k+' = List.copyOf('+k+');',prefix+'if ('+k+'.size() > '+str(actual['maxItems'])+') throw new IllegalArgumentException("'+k+' exceeds budget");']
+            if actual['items'].get('type') == 'string' and 'maxLength' in actual['items']:
+                j += [prefix+'if ('+k+'.stream().anyMatch(item -> item.codePointCount(0, item.length()) > '+str(actual['items']['maxLength'])+')) throw new IllegalArgumentException("'+k+' item exceeds budget");']
         elif typ!='boolean':j+=[prefix+'Objects.requireNonNull('+k+', "'+k+'");']
         if 'const' in actual:
             test=(k+'.equals('+json.dumps(actual['const'])+')') if typ=='String' else k+' == '+str(actual['const'])
             j+=[prefix+'if (!('+test+')) throw new IllegalArgumentException("Invalid '+k+'");']
         if optional:j+=['            }']
-    j+=['        }','    }'];t+=['}>;']
+    j+=['        }']
+    if any(prop.get('$comment', '').startswith('Sensitive proof;') for prop in props.values()):
+        j += ['        @Override public String toString() { return "'+name+'[redacted]"; }']
+    j+=['    }'];t+=['}>;']
 j+=['    public sealed interface Envelope permits Snapshot, Update, Resync {}','}'];t+=['export type CodingEnvelope = Snapshot | Update | Resync;']
 outputs={root.parent/'src/main/java/io/haifa/coding/api/CodingProtocol.java':'\n'.join(j)+'\n',root/'generated.ts':'\n'.join(t)+'\n'}
 def java_tokens(source):
