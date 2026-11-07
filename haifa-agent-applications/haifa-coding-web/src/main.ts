@@ -10,7 +10,12 @@ import {
   type SessionSummary,
   type Preview,
 } from "@haifa-agent/coding-client";
-import { reanchorHistory, WorkspaceState, type CachedHistory } from "./state";
+import {
+  orderTranscriptEntries,
+  reanchorHistory,
+  WorkspaceState,
+  type CachedHistory,
+} from "./state";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -511,7 +516,7 @@ function renderTranscript() {
         transcript.append(renderEntry(entry, true));
         activeIds.add(entry.id);
       }
-  for (const entry of view.snapshot.entries)
+  for (const entry of orderTranscriptEntries(snapshot.entries))
     transcript.append(renderEntry(entry));
   const live = view.snapshot.live;
   if (live) {

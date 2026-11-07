@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { reanchorHistory, WorkspaceState } from "../src/state.ts";
+import {
+  orderTranscriptEntries,
+  reanchorHistory,
+  WorkspaceState,
+} from "../src/state.ts";
 test("switching preserves drafts, caret and reading position without sharing them", () => {
   const state = new WorkspaceState();
   state.select("A");
@@ -81,4 +85,28 @@ test("an advancing live window invalidates stale pages and reopens pagination", 
   assert.deepEqual(reanchorHistory(cached, { ...unchanged, beforeSequence: 11 }), {
     pages: [], cursor: 11, liveBefore: 11, hasEarlier: true, shifted: true,
   });
+});
+
+test("a final reply follows its transient tools without reordering durable history", () => {
+  const entries = [
+    { id: "input", kind: "message", role: "user", runId: "old", sequence: 1 },
+    { id: "saved-tool", kind: "tool", runId: "old", sequence: 2 },
+    {
+      id: "final", kind: "message", role: "assistant", status: "FINAL",
+      runId: "old", sequence: 3,
+    },
+    { id: "next", kind: "message", role: "user", runId: "new", sequence: 4 },
+    { id: "tool-1", kind: "tool", runId: "old", sequence: null },
+    { id: "tool-2", kind: "tool", runId: "old", sequence: null },
+    { id: "current-tool", kind: "tool", runId: "new", sequence: null },
+  ];
+  assert.deepEqual(orderTranscriptEntries(entries).map((entry) => entry.id), [
+    "input",
+    "saved-tool",
+    "tool-1",
+    "tool-2",
+    "final",
+    "next",
+    "current-tool",
+  ]);
 });

@@ -1,4 +1,4 @@
-import type { History, HistoryPage } from "@haifa-agent/coding-client";
+import type { Entry, History, HistoryPage } from "@haifa-agent/coding-client";
 
 /** Local UI state, never authority or a durable send queue. All data disappears on page reload. */
 export type CachedHistory = {
@@ -26,6 +26,36 @@ export function reanchorHistory(
     hasEarlier: live.hasEarlier,
     shifted: true,
   };
+}
+
+/** Tool cards in the live window precede the durable answer for the same Run. */
+export function orderTranscriptEntries(entries: readonly Entry[]): Entry[] {
+  const finalByRun = new Map<string, string>();
+  for (const entry of entries)
+    if (
+      entry.kind === "message" &&
+      entry.role === "assistant" &&
+      entry.status === "FINAL" &&
+      entry.runId
+    )
+      finalByRun.set(entry.runId, entry.id);
+
+  const toolsByFinal = new Map<string, Entry[]>();
+  const remaining = entries.filter((entry) => {
+    const finalId =
+      entry.kind === "tool" && entry.sequence === null && entry.runId
+        ? finalByRun.get(entry.runId)
+        : undefined;
+    if (!finalId) return true;
+    const tools = toolsByFinal.get(finalId) ?? [];
+    tools.push(entry);
+    toolsByFinal.set(finalId, tools);
+    return false;
+  });
+  return remaining.flatMap((entry) => [
+    ...(toolsByFinal.get(entry.id) ?? []),
+    entry,
+  ]);
 }
 
 export type Draft = Readonly<{
