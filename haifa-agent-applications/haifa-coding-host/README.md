@@ -28,7 +28,8 @@ Web mode is disabled unless the trusted owner supplies `BrowserOptions(assetRoot
 Assets must be packaged trusted application code, outside owner/workspace data; traversal, escaped
 traversal and symlinks outside the root are refused. Responses use CSP `default-src 'self'`,
 `connect-src 'self'`, `nosniff`, `no-referrer` and `no-store`. The Host serves no arbitrary workspace
-file endpoint. There is no BFF or external-origin deployment in this preview.
+file endpoint. The default browser mode is local. For an explicitly configured, single-operator
+HTTPS origin, see [the Nginx ingress profile](../../docs/applications/coding-nginx/README.md).
 
 | Endpoint | Behavior |
 | --- | --- |

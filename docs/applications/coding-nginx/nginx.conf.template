@@ -1,0 +1,67 @@
+worker_processes 1;
+pid nginx.pid;
+error_log error.log crit;
+
+events {
+    worker_connections 128;
+}
+
+http {
+    log_format coding '$request_method $uri $status $request_time';
+    access_log access.log coding;
+    client_body_temp_path client-body;
+    proxy_temp_path proxy-body;
+
+    map $http_host $coding_host_ok {
+        default 0;
+        "{{PUBLIC_AUTHORITY}}" 1;
+    }
+
+    server {
+        listen {{LISTEN}} ssl default_server;
+        ssl_reject_handshake on;
+        return 421;
+    }
+
+    server {
+        listen {{LISTEN}} ssl;
+        server_name {{PUBLIC_HOST}};
+        ssl_certificate "{{CERTIFICATE}}";
+        ssl_certificate_key "{{CERTIFICATE_KEY}}";
+        ssl_protocols TLSv1.2 TLSv1.3;
+        if ($coding_host_ok = 0) { return 421; }
+
+        client_max_body_size 256k;
+        proxy_http_version 1.1;
+        proxy_pass_request_headers off;
+        proxy_set_header Host "127.0.0.1:{{HOST_PORT}}";
+        proxy_set_header Connection "";
+        proxy_set_header Origin $http_origin;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-CA-Client-ID $http_x_ca_client_id;
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header Accept $http_accept;
+        include "{{PROXY_PROOF_INCLUDE}}";
+        proxy_next_upstream off;
+        proxy_intercept_errors off;
+        proxy_cache off;
+
+        {{GATEWAY_SESSION_INCLUDE}}
+
+        location = /browser/ { proxy_pass http://127.0.0.1:{{HOST_PORT}}; }
+        location ^~ /browser/assets/ { proxy_pass http://127.0.0.1:{{HOST_PORT}}; }
+        location = /browser/v1/info { proxy_pass http://127.0.0.1:{{HOST_PORT}}; }
+        location = /browser/v1/pair { proxy_pass http://127.0.0.1:{{HOST_PORT}}; }
+        location = /browser/v1/rpc { proxy_pass http://127.0.0.1:{{HOST_PORT}}; }
+        location = /browser/v1/events {
+            proxy_pass http://127.0.0.1:{{HOST_PORT}};
+            proxy_buffering off;
+            proxy_ignore_headers X-Accel-Buffering;
+            proxy_ignore_client_abort off;
+            proxy_read_timeout 15s;
+            send_timeout 15s;
+            gzip off;
+        }
+        location / { return 404; }
+    }
+}

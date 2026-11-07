@@ -40,6 +40,7 @@ export type BrowserClientOptions = Readonly<{
   origin?: string;
   fetch?: typeof globalThis.fetch;
   requestTimeoutMs?: number;
+  gatewaySession?: boolean;
 }>;
 export type ActionInput = Readonly<{
   text?: string;
@@ -67,6 +68,7 @@ const AUTH = new Set([
   "BROWSER_AUTH_EXPIRED",
   "BROWSER_ORIGIN_REJECTED",
   "BROWSER_HOST_REJECTED",
+  "BROWSER_PROXY_REJECTED",
   "CLIENT_CONTEXT_EXPIRED",
   "CLIENT_CONTEXT_REQUIRED",
 ]);
@@ -129,6 +131,7 @@ export class CodingBrowserClient {
   #fetch: typeof globalThis.fetch;
   #origin: string;
   #timeout: number;
+  #credentials: "same-origin" | "omit";
   #listeners = new Set<() => void>();
   #controllers = new Set<AbortController>();
   #views = new Set<SessionView>();
@@ -155,6 +158,10 @@ export class CodingBrowserClient {
     if (!globalThis.crypto?.randomUUID) fail("BROWSER_CRYPTO_REQUIRED");
     this.#origin = origin.origin;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+    if (options.gatewaySession === true && origin.protocol !== "https:")
+      fail("GATEWAY_HTTPS_REQUIRED");
+    this.#credentials =
+      options.gatewaySession === true ? "same-origin" : "omit";
     this.#timeout = options.requestTimeoutMs ?? 30000;
     if (
       !Number.isSafeInteger(this.#timeout) ||
@@ -272,7 +279,9 @@ export class CodingBrowserClient {
     for (const controller of this.#controllers) controller.abort();
     for (const view of [...this.#views]) view.terminate(reason);
     this.#status(
-      AUTH.has(reason) || reason === "GRANT_EXPIRED"
+      AUTH.has(reason) ||
+        reason === "GRANT_EXPIRED" ||
+        reason === "GATEWAY_SESSION_REQUIRED"
         ? "pairing-required"
         : "incompatible",
       reason,
@@ -283,6 +292,17 @@ export class CodingBrowserClient {
     if (this.#grant && Date.now() >= this.#expires)
       this.#invalidate("GRANT_EXPIRED");
     if (!this.#grant) fail("PAIRING_REQUIRED");
+  }
+  #checkGatewaySession(response: Response): void {
+    if (
+      this.#credentials === "same-origin" &&
+      response.status === 401 &&
+      response.headers.get("X-Haifa-Gateway-Session") === "required"
+    ) {
+      void response.body?.cancel().catch(() => {});
+      this.#invalidate("GATEWAY_SESSION_REQUIRED");
+      throw new CodingClientError("GATEWAY_SESSION_REQUIRED");
+    }
   }
   async #request(
     path: string,
@@ -309,11 +329,12 @@ export class CodingBrowserClient {
         headers,
         body,
         cache: "no-store",
-        credentials: "omit",
+        credentials: this.#credentials,
         redirect: "error",
         referrerPolicy: "no-referrer",
         signal: controller.signal,
       });
+      this.#checkGatewaySession(response);
       if (
         !response.headers
           .get("Content-Type")
@@ -621,12 +642,13 @@ export class CodingBrowserClient {
             Accept: "text/event-stream",
           },
           cache: "no-store",
-          credentials: "omit",
+          credentials: this.#credentials,
           redirect: "error",
           referrerPolicy: "no-referrer",
           signal: controller.signal,
         },
       );
+      this.#checkGatewaySession(response);
       if (response.status === 401 || response.status === 403) {
         void response.body?.cancel();
         this.#invalidate("BROWSER_AUTH_REQUIRED");

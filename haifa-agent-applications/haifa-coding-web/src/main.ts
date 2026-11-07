@@ -85,6 +85,8 @@ function explain(error: unknown): string {
     error instanceof CodingClientError ? error.code : "CONNECTION_UNAVAILABLE";
   if (["PAIRING_REJECTED", "PAIRING_RESPONSE_INVALID"].includes(code))
     return "配对码无效、已使用或已过期。请从可信的 Host 启动器重新生成。";
+  if (code === "GATEWAY_SESSION_REQUIRED")
+    return "网关会话已失效。请重新登录网关，再重新配对并核对任务状态。";
   if (
     [
       "PAIRING_REQUIRED",
@@ -992,7 +994,9 @@ $("pair-form").addEventListener("submit", (event) => {
       view = null;
       stopPreview();
       if (client) await client.close();
-      const paired = await CodingBrowserClient.pair(challenge);
+      const paired = await CodingBrowserClient.pair(challenge, {
+        gatewaySession: import.meta.env.VITE_HAIFA_CODING_GATEWAY_SESSION === "true",
+      });
       if (pairGeneration !== connectionGeneration) {
         await paired.close();
         return;

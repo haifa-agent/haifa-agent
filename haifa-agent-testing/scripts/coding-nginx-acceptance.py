@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Exercise the packed Coding Web through a disposable HTTPS Nginx and real Host."""
+
+import argparse
+import base64
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import secrets
+import shutil
+import socket
+import ssl
+import subprocess
+import threading
+import time
+from contextlib import ExitStack
+from http.client import HTTPSConnection, HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from playwright.sync_api import sync_playwright
+
+spec = importlib.util.spec_from_file_location(
+    "coding_b2", Path(__file__).with_name("coding-sdk-b2-acceptance.py")
+)
+b2 = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(b2)
+TEMPLATES = b2.ROOT / "docs/applications/coding-nginx"
+
+
+def port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def render(template, destination, values):
+    source = (TEMPLATES / template).read_text(encoding="utf-8")
+    for key, value in values.items():
+        source = source.replace("{{" + key + "}}", str(value))
+    b2.require("{{" not in source, "UNRESOLVED_NGINX_TEMPLATE")
+    destination.write_text(source, encoding="utf-8")
+
+
+def run(command, **kwargs):
+    result = subprocess.run(command, capture_output=True, timeout=30, **kwargs)
+    b2.require(result.returncode == 0, "FIXTURE_COMMAND_FAILED")
+    return result.stdout
+
+
+def digest_assets(root):
+    return {p.relative_to(root).as_posix(): b2.sha(p) for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+class Gateway:
+    def __init__(self):
+        self.cookie = secrets.token_urlsafe(32)
+        self.expiry = time.monotonic() + 300
+        gateway = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_GET(self):
+                authorized = (
+                    self.path == "/verify"
+                    and time.monotonic() < gateway.expiry
+                    and self.headers.get("Cookie") == "coding_gateway=" + gateway.cookie
+                    and self.headers.get("Authorization") is None
+                )
+                self.send_response(204 if authorized else 401)
+                self.end_headers()
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def write_stub_config(root, stub):
+    config = root / "trusted.yaml"
+    database = (root / "unused-owner-path.sqlite").as_posix().replace("'", "''")
+    config.write_text(f"""models:
+  default: external-fixture
+  providers:
+    - id: deepseek
+      displayName: Local acceptance Stub
+      endpoint: http://127.0.0.1:{stub.server.server_port}/v1
+      credentialRef: env://HFA_FIXTURE_KEY
+      nativeStreaming: false
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: deepseek-openai-chat
+      models:
+        - id: external-fixture
+          providerModelId: deepseek-flash
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING]
+          contextWindow: 32768
+          maxOutputTokens: 1024
+tools:
+  enabled: [file_stat, file_read, file_create, file_write]
+approval:
+  mode: ask
+  threshold: low
+persistence:
+  mode: SQLITE
+  databasePath: '{database}'
+  protection: NONE
+execution:
+  provider: host-guarded
+  shell: auto
+""", encoding="utf-8")
+    return config
+
+
+def stage_nginx(root, args, external, listen_port, host_port, proxy_proof, gateway):
+    root.joinpath("logs").mkdir()
+    root.joinpath("temp").mkdir()
+    cert = root / "local.crt"
+    key = root / "local.key"
+    run([args.openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+         "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+         "-keyout", str(key), "-out", str(cert)])
+    public_key = run([args.openssl, "x509", "-in", str(cert), "-pubkey", "-noout"])
+    der = run([args.openssl, "pkey", "-pubin", "-outform", "DER"], input=public_key)
+    pin = base64.b64encode(hashlib.sha256(der).digest()).decode("ascii")
+    proof_include = root / "proxy-proof.conf"
+    proof_include.write_text('proxy_set_header X-Haifa-Proxy-Proof "' + proxy_proof + '";\n', encoding="ascii")
+    gateway_include = ""
+    if gateway:
+        render("gateway-session.conf.template", root / "gateway.conf", {"AUTH_PORT": gateway.server.server_port})
+        gateway_include = "include gateway.conf;"
+    render("nginx.conf.template", root / "nginx.conf", {
+        "LISTEN": f"127.0.0.1:{listen_port}",
+        "PUBLIC_AUTHORITY": external.removeprefix("https://"),
+        "PUBLIC_HOST": "localhost",
+        "CERTIFICATE": cert.as_posix(),
+        "CERTIFICATE_KEY": key.as_posix(),
+        "HOST_PORT": host_port,
+        "PROXY_PROOF_INCLUDE": proof_include.as_posix(),
+        "GATEWAY_SESSION_INCLUDE": gateway_include,
+    })
+    command = [args.nginx, "-p", root.as_posix() + "/", "-c", "nginx.conf"]
+    run([*command, "-t"])
+    return command, cert, pin
+
+
+def stop_nginx(command, process):
+    if process.poll() is None:
+        subprocess.run([*command, "-s", "stop"], capture_output=True, timeout=10)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.wait(timeout=5)
+
+
+def status(client_type, hostname, target_port, path, headers=None, body=None, **kwargs):
+    client = client_type(hostname, target_port, timeout=6, **kwargs)
+    try:
+        client.request("GET" if body is None else "POST", path, body=body, headers=headers or {})
+        return client.getresponse().status
+    finally:
+        client.close()
+
+
+WATCH_STREAMS = """(() => {
+  const request = window.fetch.bind(window);
+  window.acceptanceStreams = [];
+  window.fetch = async (...args) => {
+    const response = await request(...args);
+    if (!response.ok || !String(args[0]).includes('/browser/v1/events?')) return response;
+    const state = {beats: [], frames: [], closed: false};
+    window.acceptanceStreams.push(state);
+    const reader = response.clone().body.getReader();
+    void (async () => {
+      const decoder = new TextDecoder();
+      let pending = '';
+      try {
+        for (;;) {
+          const part = await reader.read();
+          if (part.done) break;
+          pending += decoder.decode(part.value, {stream:true});
+          let end;
+          while ((end = pending.indexOf('\\n\\n')) >= 0) {
+            const frame = pending.slice(0, end);
+            const samples = frame.startsWith(':') ? state.beats : state.frames;
+            if (samples.length < 100) samples.push(performance.now());
+            pending = pending.slice(end + 2);
+          }
+        }
+      } catch {} finally {
+        state.closed = true;
+        reader.releaseLock();
+      }
+    })();
+    return response;
+  };
+})();"""
+
+
+def pair(page, owner):
+    challenge = owner.command("pair", "pairing")
+    page.locator("#pair-code").fill(challenge["challenge"])
+    page.locator("#pair-button").click()
+    page.wait_for_function("document.querySelector('#pairing').hidden")
+
+
+def browser_flow(page, owner, stub, root, evidence):
+    evidence["browserStage"] = "pair"
+    pair(page, owner)
+    evidence["browserStage"] = "approval"
+    page.locator("#draft").fill("Create the acceptance fixture after explicit approval.")
+    page.locator("#send").click()
+    interaction = page.locator(".interaction-form")
+    approve = interaction.get_by_role("button", name="批准执行", exact=True)
+    approve.wait_for()
+    page.wait_for_function(
+        "acceptanceStreams.some(s => s.frames.length && s.beats.length >= 9 && !s.closed)",
+        timeout=30000,
+    )
+    b2.require(not (root / "workspace/approved.txt").exists(), "EFFECT_BEFORE_APPROVAL")
+    interaction.get_by_role("checkbox", name="我已核对本次工具操作的内容和作用范围").check()
+    approve.click()
+    page.get_by_text("external-safe-completion", exact=True).wait_for()
+    b2.require((root / "workspace/approved.txt").read_text() == "external-approved-content", "APPROVAL_EFFECT")
+    streams = page.evaluate("acceptanceStreams.map(({beats,frames}) => ({beats,frames}))")
+    evidence["firstEventBeforeCompletion"] = any(
+        stream["frames"] and len(stream["beats"]) >= 9 for stream in streams
+    )
+    b2.require(evidence["firstEventBeforeCompletion"], "NO_INCREMENTAL_EVENTS")
+    evidence["streamTimingMs"] = streams
+    evidence["checks"].append("packed-web-approval-incremental-final")
+
+    evidence["browserStage"] = "reload-history"
+    page.reload()
+    page.locator("#pair-code").wait_for()
+    b2.require(page.evaluate("localStorage.length === 0 && sessionStorage.length === 0"), "PERSISTED_BROWSER_GRANT")
+    pair(page, owner)
+    page.locator("#session-list button").first.click()
+    page.get_by_text("external-safe-completion", exact=True).wait_for()
+    evidence["checks"].append("reload-repair-history")
+
+    if stub.calls != 2:
+        raise RuntimeError("UNEXPECTED_STUB_CALL_COUNT")
+
+
+def gateway_expiry(page, owner, gateway, evidence):
+    page.evaluate(b2.PROBE)
+    bound = page.evaluate("(proof) => probe.pair(proof)", owner.command("pair", "pairing"))
+    b2.result(page.evaluate("""() => probe.rpc("initialize", {protocolVersion:"1",
+        clientInfo:{name:"gateway-expiry-probe",version:"1"}, optionalCapabilities:
+        ["coding-product-v1","session-presentation-v1","session-consent-v1"]})"""))
+    subscription = b2.result(page.evaluate(
+        "(id) => probe.rpc('presentation/subscribe',{sessionId:id})", get_session(page)
+    ))
+    sub_id = subscription["subscriptionId"]
+    page.evaluate("(id) => probe.attach(id)", sub_id)
+    page.wait_for_function("probe.stream()?.bytes > 0")
+    before = page.evaluate("probe.stream().bytes")
+    gateway.expiry = time.monotonic()
+    denied = page.evaluate("""async id => {
+        const rpc = await fetch('/browser/v1/rpc',{method:'POST',credentials:'same-origin',
+            headers:{'Content-Type':'application/json'},body:'{}'});
+        const sse = await fetch('/browser/v1/events?subscriptionId='+encodeURIComponent(id),
+            {credentials:'same-origin'});
+        return [rpc.status,sse.status,rpc.headers.get('X-Haifa-Gateway-Session'),
+            sse.headers.get('X-Haifa-Gateway-Session')];
+    }""", sub_id)
+    b2.require(denied == [401, 401, "required", "required"], "GATEWAY_EXPIRY")
+    page.wait_for_function("before => probe.stream()?.bytes > before && !probe.stream().closed", arg=before)
+    page.evaluate("window.dispatchEvent(new Event('online'))")
+    page.get_by_text("网关会话已失效。请重新登录网关，再重新配对并核对任务状态。", exact=True).wait_for()
+    owner.command("revoke " + bound["clientId"], "revoked")
+    page.wait_for_function("probe.stream()?.closed")
+    evidence["checks"].append("gateway-expiry-denies-new-streams-host-revoke-closes-existing")
+
+
+def get_session(page):
+    reply = b2.result(page.evaluate("""() => probe.rpc("product/query", {
+        operation:"sessions",target:{projectId:null,sessionId:null,runId:null,interactionId:null,
+        targetRevision:null},search:null,limit:4,cursor:null})"""))
+    return reply["sessions"][0]["sessionId"]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("run-root", "assets", "preview-repository"):
+        parser.add_argument("--" + name, type=Path, required=True)
+    for name in ("version", "expected-sha", "chromium", "nginx", "openssl"):
+        parser.add_argument("--" + name, required=True)
+    parser.add_argument("--gateway", action="store_true")
+    parser.add_argument("--classpath-file", type=Path,
+                        help="Reuse a previously built external Host for this exact source and preview manifest")
+    args = parser.parse_args()
+    root = args.run_root.resolve()
+    b2.require(not root.exists() and not root.is_relative_to(b2.ROOT), "NEW_EXTERNAL_RUN_ROOT_REQUIRED")
+    revision = run(["git", "rev-parse", "HEAD"], cwd=b2.ROOT).decode().strip()
+    b2.require(revision == args.expected_sha, "SOURCE_PROVENANCE")
+    manifest = (args.preview_repository / "io/haifa/haifa-coding-host" / args.version
+                / "haifa-coding-product-preview-manifest.json").resolve()
+    release = json.loads(manifest.read_text(encoding="utf-8"))
+    b2.require(release["state"] == "complete" and release["sourceSha"] == revision, "PREVIEW_PROVENANCE")
+    for entry in release["artifacts"]:
+        artifact = args.preview_repository / entry["relativePath"]
+        b2.require(b2.sha(artifact) == entry["sha256"], "PREVIEW_HASH")
+    root.mkdir(parents=True, mode=0o700)
+    evidence = {"status": "FAIL", "sourceSha": revision, "gateway": args.gateway,
+                "mavenManifestSha256": b2.sha(manifest), "platform": platform.system(), "checks": []}
+    stage = "prepare"
+    try:
+        root.joinpath("workspace").mkdir()
+        shutil.copytree(args.assets, root / "assets")
+        evidence["assets"] = digest_assets(root / "assets")
+        if args.classpath_file:
+            classpath = json.loads(args.classpath_file.read_text(encoding="utf-8"))
+            b2.require(classpath["sourceSha"] == revision
+                       and classpath["manifestSha256"] == evidence["mavenManifestSha256"],
+                       "EXTERNAL_CLASSPATH_PROVENANCE")
+            for jar in classpath["jars"]:
+                b2.require(b2.sha(Path(jar["path"])) == jar["sha256"], "EXTERNAL_CLASSPATH_HASH")
+            cp = os.pathsep.join(jar["path"] for jar in classpath["jars"])
+        else:
+            cp, _ = b2.build_example("host", root, args.preview_repository.resolve(), args.version)
+            classpath = {"sourceSha": revision, "manifestSha256": evidence["mavenManifestSha256"],
+                         "jars": [{"path": path, "sha256": b2.sha(Path(path))} for path in cp.split(os.pathsep)]}
+            (root / "host-classpath.json").write_text(json.dumps(classpath), encoding="utf-8")
+        listen_port, host_port = port(), port()
+        while listen_port == host_port:
+            host_port = port()
+        external = f"https://localhost:{listen_port}"
+        proof = secrets.token_hex(32)
+        with ExitStack() as stack:
+            for name in ("proxy-proof.txt", "proxy-proof.conf", "local.key"):
+                stack.callback(root.joinpath(name).unlink, missing_ok=True)
+            gateway = Gateway() if args.gateway else None
+            if gateway:
+                stack.callback(gateway.close)
+            nginx, cert, pin = stage_nginx(root, args, external, listen_port, host_port, proof, gateway)
+            evidence["nginx"] = subprocess.run([args.nginx, "-v"], capture_output=True, check=True).stderr.decode().strip()
+            nginx_process = subprocess.Popen([*nginx, "-g", "daemon off;"], stdout=subprocess.DEVNULL,
+                                             stderr=subprocess.DEVNULL)
+            stack.callback(stop_nginx, nginx, nginx_process)
+            stub = b2.Stub(root / "workspace")
+            stack.callback(stub.close)
+            root.joinpath("proxy-proof.txt").write_text(proof + "\n", encoding="ascii")
+            os.environ.update(HAIFA_CODING_EXTERNAL_ORIGIN=external,
+                              HAIFA_CODING_PROXY_PROOF_FILE=str(root / "proxy-proof.txt"))
+            owner = b2.Owner(cp, root, write_stub_config(root, stub), host_port, 120)
+            stack.callback(owner.close)
+            stage = "https-route"
+            tls = ssl.create_default_context(cafile=str(cert))
+            for path in ("/v1/rpc", "/v1/events", "/health", "/__haifa_gateway", "/browser/v1/unknown"):
+                b2.require(status(HTTPSConnection, "localhost", listen_port, path, context=tls) == 404, "PUBLIC_ROUTE")
+            b2.require(status(HTTPSConnection, "localhost", listen_port, "/browser/",
+                              {"Host": "wrong.example"}, context=tls) == 421, "WRONG_EXTERNAL_HOST")
+            challenge = owner.command("pair", "pairing")
+            wrong_origin = {"Origin": "https://evil.example", "X-Forwarded-Host": f"localhost:{listen_port}",
+                            "X-Forwarded-Proto": "https", "X-Haifa-Proxy-Proof": "forged",
+                            "Content-Type": "application/json"}
+            if gateway:
+                wrong_origin["Cookie"] = "coding_gateway=" + gateway.cookie
+            b2.require(status(HTTPSConnection, "localhost", listen_port, "/browser/v1/pair", wrong_origin,
+                              json.dumps({"challenge": challenge["challenge"],
+                                          "hostIncarnation": challenge["hostIncarnation"]}), context=tls) == 403,
+                       "FORWARDED_ORIGIN_BYPASS")
+            b2.require(status(HTTPConnection, "127.0.0.1", host_port, "/browser/v1/info",
+                              {"X-Forwarded-Host": f"localhost:{listen_port}", "X-Haifa-Proxy-Proof": "forged"}) == 403,
+                       "DIRECT_BROWSER_UPSTREAM")
+            evidence["checks"].append("tls-and-restricted-routes")
+            stage = "browser"
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(executable_path=args.chromium, headless=True,
+                    args=["--no-sandbox", "--no-proxy-server", "--ignore-certificate-errors-spki-list=" + pin])
+                evidence["browser"] = browser.version
+                context = browser.new_context()
+                if gateway:
+                    context.add_cookies([{"name":"coding_gateway","value":gateway.cookie,"url":external,
+                                          "secure":True,"httpOnly":True,"sameSite":"Strict"}])
+                page = context.new_page()
+                page.set_default_timeout(20000)
+                page.add_init_script(WATCH_STREAMS)
+                page.goto(external + "/browser/")
+                b2.require(page.evaluate("isSecureContext"), "NO_SECURE_BROWSER_CONTEXT")
+                browser_flow(page, owner, stub, root, evidence)
+                if gateway:
+                    stage = "gateway-expiry"
+                    gateway_expiry(page, owner, gateway, evidence)
+                browser.close()
+            evidence.pop("browserStage", None)
+        evidence["status"] = "PASS"
+    except Exception as failure:
+        evidence["failure"] = type(failure).__name__
+        if isinstance(failure, RuntimeError) and str(failure).replace("_", "").isalnum():
+            evidence["failureCode"] = str(failure)
+        evidence["stage"] = stage
+    finally:
+        (root / "manifest.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    print(f'CODING_NGINX={evidence["status"]} evidence={root / "manifest.json"}')
+    return 0 if evidence["status"] == "PASS" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

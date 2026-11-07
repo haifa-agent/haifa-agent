@@ -10,6 +10,8 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.coding.host.BrowserIngress;
+import io.haifa.coding.host.BrowserOptions;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
@@ -44,6 +46,8 @@ public final class CodingHostServer implements AutoCloseable {
     private final String displayName;
     private final java.net.URI endpoint;
     private final CodingBrowserAccess browserAccess;
+    private static final String PROXY_PROOF_HEADER = "X-Haifa-Proxy-Proof";
+    private final Optional<BrowserIngress> browserIngress;
     private final java.util.concurrent.ScheduledExecutorService browserExpiry;
     private final java.util.concurrent.ConcurrentHashMap<String, io.haifa.coding.api.CodingClient> productClients =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -176,11 +180,15 @@ public final class CodingHostServer implements AutoCloseable {
         if (host.contains(":")) host = "[" + host + "]";
         this.endpoint =
                 java.net.URI.create("http://" + host + ":" + server.getAddress().getPort());
+        this.browserIngress = browserOptions.flatMap(BrowserOptions::ingress);
         this.browserAccess = browserOptions
                 .map(options -> new CodingBrowserAccess(
                         options,
                         incarnation,
-                        endpoint.toString(),
+                        browserIngress
+                                .map(BrowserIngress::externalOrigin)
+                                .orElse(endpoint)
+                                .toString(),
                         local.identifiers()::nextValue,
                         this::closeProductClient))
                 .orElse(null);
@@ -511,9 +519,23 @@ public final class CodingHostServer implements AutoCloseable {
             writeError(exchange, null, 404, -32601, "BROWSER_DISABLED", "Browser mode is disabled");
             return false;
         }
-        if (!endpoint.getRawAuthority().equals(exchange.getRequestHeaders().getFirst("Host"))) {
+        var headers = exchange.getRequestHeaders();
+        if (!List.of(endpoint.getRawAuthority()).equals(headers.get("Host"))) {
             writeError(exchange, null, 403, -32000, "BROWSER_HOST_REJECTED", "Invalid browser Host");
             return false;
+        }
+        if (headers.getOrDefault("Origin", List.of()).size() > 1) {
+            writeError(exchange, null, 403, -32000, "BROWSER_ORIGIN_REJECTED", "Invalid browser Origin");
+            return false;
+        }
+        if (browserIngress.isPresent()) {
+            var proof = headers.getOrDefault(PROXY_PROOF_HEADER, List.of());
+            if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()
+                    || proof.size() != 1
+                    || !browserIngress.orElseThrow().matchesProxyProof(proof.getFirst())) {
+                writeError(exchange, null, 403, -32000, "BROWSER_PROXY_REJECTED", "Invalid browser proxy");
+                return false;
+            }
         }
         return true;
     }
@@ -776,7 +798,8 @@ public final class CodingHostServer implements AutoCloseable {
     }
 
     private void handleRpc(HttpExchange exchange) throws IOException {
-        if (rejectBrowserOrigin(exchange) || rejectPath(exchange, "/v1/rpc") || rejectMethod(exchange, "POST")) return;
+        if (rejectBrowserProvenance(exchange) || rejectPath(exchange, "/v1/rpc") || rejectMethod(exchange, "POST"))
+            return;
         if (!isJsonContentType(exchange)) {
             writeError(exchange, null, 415, -32600, "UNSUPPORTED_MEDIA_TYPE", "application/json is required");
             return;
@@ -909,7 +932,7 @@ public final class CodingHostServer implements AutoCloseable {
     }
 
     private void handleEvents(HttpExchange exchange) throws IOException {
-        if (rejectBrowserOrigin(exchange) || rejectPath(exchange, "/v1/events") || rejectMethod(exchange, "GET"))
+        if (rejectBrowserProvenance(exchange) || rejectPath(exchange, "/v1/events") || rejectMethod(exchange, "GET"))
             return;
         String subscriptionId = query(exchange.getRequestURI()).get("subscriptionId");
         if (subscriptionId == null || subscriptionId.isBlank()) {
@@ -973,7 +996,8 @@ public final class CodingHostServer implements AutoCloseable {
     }
 
     private void handleHealth(HttpExchange exchange) throws IOException {
-        if (rejectBrowserOrigin(exchange) || rejectPath(exchange, "/health") || rejectMethod(exchange, "GET")) return;
+        if (rejectBrowserProvenance(exchange) || rejectPath(exchange, "/health") || rejectMethod(exchange, "GET"))
+            return;
         try (exchange) {
             byte[] payload = json.writeValueAsBytes(
                     Map.of("status", "ok", "protocolVersion", "1", "host", "ca-host", "previewAvailable", false));
@@ -997,8 +1021,9 @@ public final class CodingHostServer implements AutoCloseable {
         return true;
     }
 
-    private boolean rejectBrowserOrigin(HttpExchange exchange) throws IOException {
-        if (exchange.getRequestHeaders().getFirst("Origin") == null) return false;
+    private boolean rejectBrowserProvenance(HttpExchange exchange) throws IOException {
+        var headers = exchange.getRequestHeaders();
+        if (!headers.containsKey("Origin") && !headers.containsKey(PROXY_PROOF_HEADER)) return false;
         writeError(exchange, null, 403, -32000, "BROWSER_ORIGIN_REJECTED", "Browser origins are not accepted");
         return true;
     }

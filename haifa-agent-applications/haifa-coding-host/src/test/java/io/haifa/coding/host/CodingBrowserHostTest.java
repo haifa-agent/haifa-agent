@@ -29,6 +29,65 @@ class CodingBrowserHostTest {
     }
 
     @Test
+    void ingressRequiresLoopbackProofAndRealOriginWithoutEnablingNativeRoutes() throws Exception {
+        String external = "https://coding.example.test:8443";
+        String proof = "1".repeat(64);
+        String header = "X-Haifa-Proxy-Proof";
+        var ingress = new BrowserIngress(URI.create(external), proof);
+        try (var fixture = new CodingHostFixture(directory);
+                var host = fixture.start(Optional.of(new BrowserOptions(
+                        fixture.assets,
+                        "index.html",
+                        Duration.ofMinutes(2),
+                        Duration.ofMinutes(15),
+                        Duration.ofSeconds(90),
+                        4,
+                        5,
+                        Optional.of(ingress))))) {
+            var info = host.endpoint().resolve("/browser/v1/info");
+            assertThat(status(HttpRequest.newBuilder(info).header("X-Forwarded-Host", "coding.example.test")))
+                    .isEqualTo(403);
+            assertThat(status(HttpRequest.newBuilder(info).header(header, "2".repeat(64))))
+                    .isEqualTo(403);
+            assertThat(status(HttpRequest.newBuilder(info).header(header, proof).header(header, proof)))
+                    .isEqualTo(403);
+            assertThat(status(HttpRequest.newBuilder(info).header(header, proof)))
+                    .isEqualTo(200);
+            assertThat(status(HttpRequest.newBuilder(host.endpoint().resolve("/health"))
+                            .header(header, proof)))
+                    .isEqualTo(403);
+            assertThat(status(HttpRequest.newBuilder(host.endpoint().resolve("/health"))))
+                    .isEqualTo(200);
+
+            var challenge = host.newPairingChallenge();
+            var body = CodingHostFixture.JSON.writeValueAsBytes(
+                    Map.of("challenge", challenge.value(), "hostIncarnation", challenge.hostIncarnation()));
+            var pair = host.endpoint().resolve("/browser/v1/pair");
+            for (String origin : List.of(host.endpoint().toString(), "null", "https://other.example.test")) {
+                assertThat(status(HttpRequest.newBuilder(pair)
+                                .header(header, proof)
+                                .header("Origin", origin)
+                                .header("X-Forwarded-Proto", "https")
+                                .header("X-Forwarded-Host", "coding.example.test:8443")
+                                .header("Content-Type", "application/json")
+                                .POST(HttpRequest.BodyPublishers.ofByteArray(body))))
+                        .isEqualTo(403);
+            }
+            assertThat(status(HttpRequest.newBuilder(pair)
+                            .header(header, proof)
+                            .header("Origin", external)
+                            .header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(body))))
+                    .isEqualTo(200);
+        }
+    }
+
+    private int status(HttpRequest.Builder request) throws Exception {
+        return http.send(request.timeout(Duration.ofSeconds(10)).build(), HttpResponse.BodyHandlers.discarding())
+                .statusCode();
+    }
+
+    @Test
     void symbolicLinkCannotExposeWorkspace() throws Exception {
         try (var fixture = new CodingHostFixture(directory)) {
             Files.writeString(fixture.workspace.resolve("private.txt"), "workspace-only");

@@ -25,6 +25,10 @@ Fresh builds use the committed lockfiles. The tarball itself is ignored, reprodu
 is not a public npm release. A compatible trusted Host owner can later supply `dist` through its
 public `BrowserOptions`.
 
+The optional [Nginx ingress profile](../../docs/applications/coding-nginx/README.md) uses the
+same `/browser/` base. Build with `VITE_HAIFA_CODING_GATEWAY_SESSION=true` only when the
+HTTPS ingress checks a same-origin gateway session.
+
 The prepared UI includes session search/list/create/open, ordinary input, Markdown replies and live
 output, exact-target approval/structured clarification/cancellation, bounded independent
 history, connection/recovery status and Host/workspace/model context. Approval requires explicit review;

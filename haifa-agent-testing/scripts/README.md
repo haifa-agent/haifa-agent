@@ -150,3 +150,22 @@ python3 haifa-agent-testing/scripts/coding-browser-b3-preparation.py \
 Playwright 和实际 Chromium。运行根必须位于仓库外且尚不存在。manifest 明确标记
 `INDEPENDENT_PREPARATION_ONLY_NO_REAL_HOST`，记录版本/hash/断言，不保存 proof/请求正文。
 真正独立 Host + 本地 Provider Stub 和 Windows Chrome/Edge 的验收仍须在 B2 门禁闭合后进行。
+
+## Coding Web Nginx 同源验收
+
+从干净 feature worktree 发布 Coding SDK 预览，并从锁定 tarball 构建 Web。准备 Nginx、
+OpenSSL、Java 21、Maven、Python Playwright 和 Chromium。使用全新的仓库外运行根。
+
+```bash
+python3 haifa-agent-testing/scripts/coding-nginx-acceptance.py \
+  --run-root /tmp/coding-nginx-001 --assets /absolute/path/to/web/dist \
+  --preview-repository /absolute/path/to/preview-repository \
+  --version <preview-version> --expected-sha <exact-source-sha> \
+  --chromium /absolute/path/to/chromium --nginx nginx --openssl openssl
+```
+
+对按 `VITE_HAIFA_CODING_GATEWAY_SESSION=true` 构建的制品加 `--gateway`，验网关会话过期。
+探针启动仅监听 loopback 的隔离 Nginx、真实 Host 与本地 Stub，使用临时 TLS 证书。
+Python HTTPS 客户端验证证书及主机名，浏览器仅信任本轮证书的公钥 pin。
+manifest 记录源码、制品、平台、断言与 SSE 时间样本。配置入口见
+[Nginx 同源模板](../../docs/applications/coding-nginx/README.md)。

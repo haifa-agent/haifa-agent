@@ -43,6 +43,11 @@ again and inspect authoritative sessions/history. There is no persistent send qu
 `origin` must match the page origin; the optional standard `fetch` adapter supports controlled browser
 embedding and deterministic tests, not a Node transport or an origin proxy.
 
+An HTTPS deployment using the optional Nginx session gate can pass `gatewaySession: true` to
+`pair`. This includes same-origin gateway cookies on RPC and SSE; the Host grant remains in
+page memory and is still sent as a Bearer header. A marked gateway 401 requires login and
+pairing again. The default transport omits cookies.
+
 `execute` sends a command once and returns accepted/rejected/unknown. Accepted means admission,
 not successful completion. Invalid/lost/stalled replies preserve unknown. Reusing a tracked request ID
 is refused. `inspectRequest` can associate an exact already-known Run fact; it never infers that an
