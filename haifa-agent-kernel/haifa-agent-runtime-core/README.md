@@ -36,7 +36,8 @@ and body, and is revalidated independently. A saved Tool excerpt is marked full 
 beginning and neither the stored source nor the selected window is truncated.
 Without an explicit cache contract, historical-only selections share coordinate column names across adjacent
 excerpts with simple identifiers and explain when full saved evidence can be reused for a source the current request
-confirms unchanged. Current Run checkpoints retain the continuation instructions.
+confirms unchanged. A full row names the message and version and represents the entire source from offset zero;
+partial rows carry their explicit offset and window. Current Run checkpoints retain the continuation instructions.
 
 Without an explicit cache contract, unified working-set requests with only current Run messages omit
 the historical-data instruction. The instruction remains for saved excerpts, summaries and history

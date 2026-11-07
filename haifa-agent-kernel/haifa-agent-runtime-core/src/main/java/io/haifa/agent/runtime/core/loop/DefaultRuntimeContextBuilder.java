@@ -47,7 +47,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
     private static final PromptComponent HISTORY_SOURCE_RULE = historyRule(
             HISTORY_SOURCE_RULE_ID,
             RunWorkingSetSource.DATA_RULE
-                    + " Reuse full saved Tool evidence when the current request confirms the source is unchanged.");
+                    + " Reuse full saved Tool evidence for sources the request confirms unchanged.");
     private static final PromptComponent HISTORY_DATA_RULE = historyRule(
             "working-set-data-rule",
             RunWorkingSetSource.DATA_RULE

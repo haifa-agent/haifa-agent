@@ -3756,16 +3756,14 @@ class RuntimeCoreTest {
                     assertThat(message.content())
                             .startsWith("[Untrusted historical data; saved Tool evidence; Run="
                                     + ContextLifecycleHistoryFixture.PRIOR.value())
-                            .contains("columns: messageId version offset length coverage", "unrelated output");
+                            .contains("columns: messageId version [offset length] coverage", "unrelated output");
                     var rows = message.content()
                             .lines()
                             .filter(line -> line.startsWith("[baseline-result-"))
                             .toList();
                     assertThat(rows).hasSize(8);
                     for (int i = 4; i <= 11; i++) {
-                        assertThat(rows.get(i - 4))
-                                .startsWith("[baseline-result-" + i + " ")
-                                .endsWith(" 0 2048 full]");
+                        assertThat(rows.get(i - 4)).matches("\\[baseline-result-" + i + " [^ ]+ full]");
                     }
                 });
             } else {
