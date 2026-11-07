@@ -19,6 +19,9 @@ import java.util.function.Supplier;
 public final class CodingPresentationObservation implements CodingPresentationSubscription {
     private static final int SNAPSHOT_BYTES = 256 * 1024;
     private static final int UPDATE_BYTES = 64 * 1024;
+    // A subscription can replay the Runtime's full transient output window synchronously.
+    private static final int PENDING_OUTPUT_EVENTS = 4096;
+    private static final int PENDING_OUTPUT_CHARACTERS = 512 * 1024;
     private static final Set<String> TERMINAL_TOOL_STATUSES = Set.of(
             "COMPLETED",
             "SUCCEEDED",
@@ -53,6 +56,8 @@ public final class CodingPresentationObservation implements CodingPresentationSu
     private final AtomicBoolean refreshPending = new AtomicBoolean();
     private final CompletableFuture<Snapshot> initial = new CompletableFuture<>();
     private final ArrayDeque<Envelope> outgoing = new ArrayDeque<>();
+    private final ArrayDeque<AgentRunOutputEvent> pendingOutput = new ArrayDeque<>();
+    private int pendingOutputCharacters;
     private final Map<String, Entry> tools = new LinkedHashMap<>();
     private static final int DELIVERY_LIMIT = 8;
     private static final String DELIVERY_WINDOW_NOTICE = "Earlier delivery events may be outside the view window.";
@@ -706,57 +711,93 @@ public final class CodingPresentationObservation implements CodingPresentationSu
             if (closed()) closeHandle(newEvents);
             else events = newEvents;
         }
-        AutoCloseable newOutput = client.subscribeOutput(run, RunOutputCursor.BEFORE_FIRST, event -> {
-            if (event.textDelta().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 32 * 1024) {
-                resync("SOURCE_CHUNK_BUDGET");
-                return;
-            }
-            enqueue(() -> {
-                if (!event.runId().equals(run)) {
-                    resync("SOURCE_SCOPE_MISMATCH");
-                    return;
-                }
-                if (!run.equals(watched) || savedRuns.contains(run) || event.sequence() <= outputSequence) return;
-                boolean gap = event.sequence() > outputSequence + 1;
-                outputSequence = event.sequence();
-                if (!generation.equals(event.generationId())
-                        || !modelCall.equals(event.modelCallId())
-                        || physicalAttempt != event.physicalAttempt()) {
-                    generation = event.generationId();
-                    modelCall = event.modelCallId();
-                    physicalAttempt = event.physicalAttempt();
-                    liveText = "";
-                    liveTruncated = gap;
-                    liveRedaction = redactor instanceof io.haifa.agent.credential.core.DefaultSecretRedactor supported
-                            ? supported.openStream(4096)
-                            : null;
-                    liveDisplay = new CodingPresentationText.Stream();
-                }
-                liveTruncated |= gap;
-                if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED
-                        || event.type() == AgentRunOutputEventType.RUN_OUTPUT_FAILED
-                        || event.type() == AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED) {
-                    liveText = "";
-                    generation = "";
-                    liveRedaction = null;
-                }
-                if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
-                    String fragment = liveDisplay.accept(event.textDelta()).replace("\r", "\n");
-                    String display = liveRedaction == null ? "" : liveRedaction.accept(fragment);
-                    if (liveRedaction == null) liveTruncated = true;
-                    String combined = liveText + display;
-                    liveTruncated |= combined.codePointCount(0, combined.length()) > 8000;
-                    liveText = head(combined, 8000);
-                }
-                if (current != null) {
-                    if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED) publish();
-                    else publishLive();
-                }
-            });
-        });
+        AutoCloseable newOutput =
+                client.subscribeOutput(run, RunOutputCursor.BEFORE_FIRST, event -> queueOutput(run, event));
         synchronized (handleLock) {
             if (closed()) closeHandle(newOutput);
             else output = newOutput;
+        }
+    }
+
+    private void queueOutput(AgentRunId run, AgentRunOutputEvent event) {
+        if (closed()) return;
+        if (event.textDelta().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 32 * 1024) {
+            resync("SOURCE_CHUNK_BUDGET");
+            return;
+        }
+        if (!event.runId().equals(run)) {
+            resync("SOURCE_SCOPE_MISMATCH");
+            return;
+        }
+        int characters = event.textDelta().length();
+        boolean schedule;
+        boolean overflow;
+        synchronized (pendingOutput) {
+            if (closed()) return;
+            schedule = pendingOutput.isEmpty();
+            overflow = pendingOutput.size() >= PENDING_OUTPUT_EVENTS
+                    || pendingOutputCharacters + characters > PENDING_OUTPUT_CHARACTERS;
+            if (!overflow) {
+                pendingOutput.addLast(event);
+                pendingOutputCharacters += characters;
+            }
+        }
+        if (overflow) resync("SOURCE_QUEUE_OVERFLOW");
+        else if (schedule) enqueue(this::publishOutput);
+    }
+
+    private void publishOutput() {
+        List<AgentRunOutputEvent> batch;
+        synchronized (pendingOutput) {
+            batch = List.copyOf(pendingOutput);
+            pendingOutput.clear();
+            pendingOutputCharacters = 0;
+        }
+        boolean changed = false;
+        boolean committed = false;
+        for (var event : batch) {
+            if (!event.runId().equals(watched) || savedRuns.contains(watched) || event.sequence() <= outputSequence)
+                continue;
+            acceptOutput(event);
+            changed = true;
+            committed |= event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED;
+        }
+        if (current == null || !changed) return;
+        if (committed) publish();
+        else publishLive();
+    }
+
+    private void acceptOutput(AgentRunOutputEvent event) {
+        boolean gap = event.sequence() > outputSequence + 1;
+        outputSequence = event.sequence();
+        if (!generation.equals(event.generationId())
+                || !modelCall.equals(event.modelCallId())
+                || physicalAttempt != event.physicalAttempt()) {
+            generation = event.generationId();
+            modelCall = event.modelCallId();
+            physicalAttempt = event.physicalAttempt();
+            liveText = "";
+            liveTruncated = gap;
+            liveRedaction = redactor instanceof io.haifa.agent.credential.core.DefaultSecretRedactor supported
+                    ? supported.openStream(4096)
+                    : null;
+            liveDisplay = new CodingPresentationText.Stream();
+        }
+        liveTruncated |= gap;
+        if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED
+                || event.type() == AgentRunOutputEventType.RUN_OUTPUT_FAILED
+                || event.type() == AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED) {
+            liveText = "";
+            generation = "";
+            liveRedaction = null;
+        }
+        if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
+            String fragment = liveDisplay.accept(event.textDelta()).replace("\r", "\n");
+            String display = liveRedaction == null ? "" : liveRedaction.accept(fragment);
+            if (liveRedaction == null) liveTruncated = true;
+            String combined = liveText + display;
+            liveTruncated |= combined.codePointCount(0, combined.length()) > 8000;
+            liveText = head(combined, 8000);
         }
     }
 
@@ -1296,6 +1337,10 @@ public final class CodingPresentationObservation implements CodingPresentationSu
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
+        synchronized (pendingOutput) {
+            pendingOutput.clear();
+            pendingOutputCharacters = 0;
+        }
         closeHandle(sessionHandle);
         synchronized (handleLock) {
             closeHandle(events);

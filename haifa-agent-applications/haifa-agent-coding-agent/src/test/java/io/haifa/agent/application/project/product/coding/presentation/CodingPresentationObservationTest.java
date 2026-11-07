@@ -72,6 +72,51 @@ class CodingPresentationObservationTest {
     }
 
     @Test
+    void activeOutputReplayCanExceedPublisherQueueAndStillDeliverTheFinalAnswer() throws Exception {
+        Fixture f = new Fixture();
+        f.outputReplayCount = 2048;
+        try (var observation = f.observe("client", "browser")) {
+            var initial = observation.initial();
+            var update = (Update) observation.poll(Duration.ofSeconds(5));
+            var live = CodingPresentationReducer.apply(initial, update);
+            assertThat(live.live().sequence()).isEqualTo(2048);
+            assertThat(live.live().text()).startsWith("fragment 1 fragment 2 ");
+
+            f.history.set(new CodingSessionHistoryPage(
+                    f.session,
+                    List.of(new CodingSessionHistoryItem(
+                            "saved-message",
+                            CodingSessionHistoryItem.Kind.ASSISTANT,
+                            "Assistant",
+                            "complete reply from history",
+                            "FINAL",
+                            1,
+                            Instant.EPOCH,
+                            Optional.of(f.run.value()),
+                            false)),
+                    false,
+                    OptionalLong.empty()));
+            f.output
+                    .get()
+                    .onOutput(new AgentRunOutputEvent(
+                            f.run,
+                            "model-call",
+                            "generation",
+                            1,
+                            2049,
+                            AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED,
+                            "",
+                            Instant.EPOCH));
+            var completed = CodingPresentationReducer.apply(live, (Update) observation.poll(Duration.ofSeconds(5)));
+            assertThat(completed.live()).isNull();
+            assertThat(completed.entries()).singleElement().satisfies(entry -> {
+                assertThat(entry.status()).isEqualTo("FINAL");
+                assertThat(entry.text()).isEqualTo("complete reply from history");
+            });
+        }
+    }
+
+    @Test
     void oversizedBrowserUpdateKeepsLiveOutputAndAnEarlierHistoryCursor() throws Exception {
         Fixture f = new Fixture();
         List<CodingSessionHistoryItem> items = new ArrayList<>();
@@ -575,6 +620,7 @@ class CodingPresentationObservationTest {
         final AtomicReference<AgentRunOutputListener> output = new AtomicReference<>();
         final AtomicInteger reads = new AtomicInteger();
         final AtomicInteger closes = new AtomicInteger();
+        int outputReplayCount;
         final AtomicReference<CodingSessionHistoryPage> history =
                 new AtomicReference<>(CodingSessionHistoryPage.empty(session));
 
@@ -631,6 +677,7 @@ class CodingPresentationObservationTest {
                     }
                     case "subscribeOutput" -> {
                         output.set((AgentRunOutputListener) args[2]);
+                        for (int i = 1; i <= outputReplayCount; i++) emit(i, "fragment " + i + " ");
                         yield new RunOutputSubscription() {
                             public boolean closed() {
                                 return false;

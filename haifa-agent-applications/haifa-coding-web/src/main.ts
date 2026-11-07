@@ -161,6 +161,25 @@ function renderList() {
     button.onclick = () => void selectSession(session.sessionId);
     list.append(button);
   }
+  renderSelectedSessionStatus();
+}
+function renderSelectedSessionStatus() {
+  const snapshot = view?.state === "live" ? view.snapshot : null;
+  if (
+    snapshot?.hydration !== "ready" ||
+    snapshot.scope.sessionId !== state.selected
+  )
+    return;
+  const row = $("session-list").querySelector('[aria-current="page"]');
+  if (!row) return;
+  const runStatus = snapshot.session.run?.status;
+  const label = row.querySelector(".session-row-meta")!;
+  const icon = row.querySelector(".session-icon")!;
+  const status = runStatus ?? snapshot.session.status;
+  if (label.textContent !== status) {
+    label.textContent = status;
+    icon.textContent = runStatus === "RUNNING" ? "◌" : "◇";
+  }
 }
 function fact(term: string, value: string) {
   const list = $("context");
@@ -599,6 +618,7 @@ function render() {
     button.onclick = () => void perform(reset);
     toolbar.append(button);
   }
+  renderSelectedSessionStatus();
   renderTranscript();
   renderContext();
   startPreview();
