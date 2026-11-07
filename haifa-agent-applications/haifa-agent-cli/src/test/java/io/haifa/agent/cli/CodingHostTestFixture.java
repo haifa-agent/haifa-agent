@@ -8,6 +8,8 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import io.haifa.coding.host.internal.ApprovalMode;
+import io.haifa.coding.host.internal.CliConfiguration;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.file.Path;

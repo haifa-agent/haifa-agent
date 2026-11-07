@@ -608,7 +608,8 @@ class CodingTerminalLifecycleTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         assertThat(client.opened).containsExactly(SESSION_ID);
-        assertThat(controller.state().session()).contains(client.view);
+        assertThat(controller.state().session())
+                .contains(io.haifa.agent.application.coding.terminal.state.TerminalSessionView.fromLegacy(client.view));
         assertThat(controller.state().selector()).isEmpty();
     }
 
@@ -670,7 +671,8 @@ class CodingTerminalLifecycleTest {
         assertThat(client.listCalls).isEqualTo(1);
         assertThat(client.listLimit).isEqualTo(1);
         assertThat(client.opened).containsExactly(SESSION_ID);
-        assertThat(controller.state().session()).contains(client.view);
+        assertThat(controller.state().session())
+                .contains(io.haifa.agent.application.coding.terminal.state.TerminalSessionView.fromLegacy(client.view));
         assertThat(controller.state().editorBuffer()).isEqualTo("draft while loading");
     }
 

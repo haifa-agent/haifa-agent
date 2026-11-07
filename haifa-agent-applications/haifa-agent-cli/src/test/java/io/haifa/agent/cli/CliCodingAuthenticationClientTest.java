@@ -14,6 +14,7 @@ import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoEndpoints;
 import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoTokenClient;
+import io.haifa.coding.host.internal.CliCodingAuthenticationClient;
 import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;

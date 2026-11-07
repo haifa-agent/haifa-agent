@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliWebPlatform;
 import org.junit.jupiter.api.Test;
 
 class CliWebPlatformTest {

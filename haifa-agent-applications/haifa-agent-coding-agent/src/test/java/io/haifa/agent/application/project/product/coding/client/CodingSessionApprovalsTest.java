@@ -84,6 +84,26 @@ class CodingSessionApprovalsTest {
     }
 
     @Test
+    void preparingAnExactRequestCannotApplyConsentToItsSuccessor() {
+        var f = new Fixture();
+        var original = f.pending;
+        f.states.put(original.requestId(), InteractionState.APPLIED);
+        f.approvals.approve(original, submission(original));
+        assertThat(f.approvals.state(original.sessionId())).isEqualTo(CodingSessionApprovalStatus.State.ACTIVE);
+        f.next("session-1", "run-1", "file_write", Map.of());
+
+        assertThat(f.approvals.prepare(original, CodingSessionApprovalsTest::submission))
+                .isEmpty();
+        assertThat(f.submissions).hasSize(1);
+
+        f.states.put(f.pending.requestId(), InteractionState.APPLIED);
+        assertThat(f.approvals.prepare(f.pending, CodingSessionApprovalsTest::submission))
+                .isEmpty();
+        assertThat(f.submissions).hasSize(2);
+        assertThat(f.submissions.getLast().requestId()).isEqualTo(f.pending.requestId());
+    }
+
+    @Test
     void contentOnlyTruncationDoesNotInvalidateACompleteWriteTarget() {
         var f = new Fixture();
         f.states.put(f.pending.requestId(), InteractionState.APPLIED);

@@ -2157,7 +2157,8 @@ class Tui4jTerminalViewTest {
                 TerminalFooter.empty(),
                 120,
                 30,
-                Optional.of(sessionWithTask),
+                Optional.of(io.haifa.agent.application.coding.terminal.state.TerminalSessionView.fromLegacy(
+                        sessionWithTask)),
                 Optional.of(new AgentRunId("r-1")),
                 Optional.empty(),
                 java.util.Set.of(),
@@ -2194,7 +2195,8 @@ class Tui4jTerminalViewTest {
                 TerminalFooter.empty(),
                 120,
                 30,
-                Optional.of(settledSession),
+                Optional.of(io.haifa.agent.application.coding.terminal.state.TerminalSessionView.fromLegacy(
+                        settledSession)),
                 Optional.empty(),
                 Optional.empty(),
                 java.util.Set.of(),

@@ -1,5 +1,25 @@
 # Haifa Agent CLI
 
+## Experimental native presentation
+
+`haifa host --presentation` explicitly enables the optional `session-presentation-v1` capability.
+It is off by default. Native v1 clients must offer that capability in `initialize`; the Host selects
+it only when enabled. Programmatic Host composition has an equivalent explicit boolean overload.
+This switch does not serve Web assets or allow browser Origin requests.
+
+After initialization, `presentation/subscribe {sessionId}` returns `{subscriptionId, snapshot}`.
+Attach `/v1/events?subscriptionId=...` using the same `X-CA-Client-ID`; updates accepted before attach
+are already buffered. `presentation/history {sessionId, limit?, beforeSequence?}` returns a separate
+bounded product history page. `presentation/close {subscriptionId}` closes only that client's
+observation. Snapshot/update/resync payloads use the
+[shared product contract](../haifa-coding-api/README.md); consumers resubscribe on gaps or resync.
+
+The engine owns fact mapping, redaction, bounds and publication ordering; Host owns negotiation,
+native context checks and SSE attachment. Session consent remains separately negotiated with
+`session-consent-v1` and scoped to each client. SSE polling does not renew its lease or client lifetime.
+Existing native methods and legacy capability booleans remain unchanged; no new Client/browser SDK,
+browser authorization or TUI migration is included in this experimental extension.
+
 ## Policy / Approval
 
 CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVER` 风险阈值表达实际审批策略。产品提供 immutable `PolicyRuleSet`，Decision 是瞬时结果；需要等待的审批只由 Runtime Interaction 持久化和恢复，不创建 Policy Snapshot、Decision、Evidence 或 Grant。CLI 不提供企业审批路由、待办或业务单据提交能力。

@@ -1,5 +1,25 @@
 # Haifa Coding Agent
 
+## Experimental bounded presentation
+
+The product owns `coding.presentation.CodingPresentationObservation` and
+`CodingPresentationHistory`, mapping authoritative Session/Run/Interaction/history facts into the
+JDK-only [Coding contract](../haifa-coding-api/README.md). `CodingSessionService.observeChanges`
+registers a bounded, process-local Session invalidation. Named mutations and owner reconciliation
+notify independently of receipt delivery. Observations register before reading, serialize snapshot and
+updates, deduplicate source cursors and close their own handles without cancelling execution.
+
+`presentationSnapshot`/`snapshotSession` are pure authority reads: the Host owner, rather than an
+observer, remains responsible for reconciliation and follow-up dispatch. History carries source Run
+identity and explicit truncation while the legacy Host wire keeps its original fields. No new durable
+store, persistence owner or Run lifecycle is introduced. The publisher folds live output and replay in
+bounded batches, preserving cursor and redaction order without reloading the Session on each fragment.
+An assistant commit refreshes authoritative history. Exact final-message correlation controls
+live-to-history handoff; unavailable review data disables approval. Active Run delivery events produce
+bounded notice cards with the source Run,
+reason and safe display facts. The event tail provides recovery and the view reports when earlier
+delivery events may be omitted. The contract README records budgets and compatibility bindings.
+
 ## Product client API
 
 `io.haifa.agent.application.project.product.coding.client.CodingSessionClient` 是 Coding Agent 的稳定产品

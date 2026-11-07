@@ -11,6 +11,7 @@ import io.haifa.agent.application.project.product.coding.client.CodingSessionCli
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.execution.api.ToolOutputPreviewPublisher;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.coding.api.CodingClient;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -147,6 +148,34 @@ public final class CodingTerminalApplication {
                 TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace),
                 connectionOptions);
         controller.attachToolOutputPreviewPublisher(previewPublisher);
+        run(controller, pump, startup, terminalIo);
+    }
+
+    /** Starts the product terminal without constructing or receiving a legacy transport. */
+    public static void runProduct(
+            CodingClient product,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo,
+            TerminalWorkspaceContext workspace,
+            CodingAuthenticationClient authentication,
+            CodingTerminalConnectionOptions options) {
+        var pump = new TerminalEventPump(ACTION_QUEUE_CAPACITY);
+        var controller = CodingTerminalController.product(
+                new ProjectId(product.connection().projectId()),
+                product,
+                authentication,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace),
+                options);
+        run(controller, pump, startup, terminalIo);
+    }
+
+    private static void run(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo) {
         try (controller) {
             controller.start(startup);
             new Tui4jCodingTerminal(controller, pump, terminalIo).run();

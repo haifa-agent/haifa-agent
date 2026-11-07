@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
+import io.haifa.coding.host.internal.CodingHostClients;
+import io.haifa.coding.host.internal.CodingHostException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -11,6 +13,24 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class CodingHostClientsTest {
+    @Test
+    void observationChecksDoNotRenewAnExpiredLogicalClient() {
+        var now = new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.EPOCH);
+        var expired = new java.util.ArrayList<String>();
+        var clients = new CodingHostClients(
+                new io.haifa.agent.common.id.UuidV7IdentifierGenerator(),
+                now::get,
+                java.time.Duration.ofMinutes(1),
+                4,
+                expired::add);
+        String id = clients.initialize();
+        now.set(java.time.Instant.EPOCH.plusSeconds(59));
+        clients.requireObservation(id);
+        now.set(java.time.Instant.EPOCH.plusSeconds(61));
+        assertThatThrownBy(() -> clients.requireObservation(id)).isInstanceOf(CodingHostException.class);
+        assertThat(expired).containsExactly(id);
+    }
+
     @Test
     void optionalPreviewIsBoundToTheLogicalClientAndDoesNotTransferOnRenewal() {
         var now = new AtomicReference<>(Instant.EPOCH);

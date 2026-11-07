@@ -6,6 +6,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ToolOutputPreview;
+import io.haifa.coding.host.internal.CodingHostPreviewStream;
 import org.junit.jupiter.api.Test;
 
 class CodingHostPreviewStreamTest {

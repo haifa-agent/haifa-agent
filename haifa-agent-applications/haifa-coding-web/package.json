@@ -1,0 +1,24 @@
+{
+  "name": "@haifa-agent/coding-web",
+  "version": "0.1.5-b3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 20044 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test --experimental-test-isolation=none test/*.test.mjs",
+    "build": "npm run typecheck && vite build"
+  },
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
+  },
+  "dependencies": {
+    "@haifa-agent/coding-client": "file:../haifa-coding-browser-client/artifacts/haifa-agent-coding-client-0.1.5-b3.0.tgz",
+    "markdown-it": "15.0.3"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "8.1.5"
+  }
+}

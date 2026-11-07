@@ -11,13 +11,51 @@ import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
+import io.haifa.coding.api.CodingProtocol.Entry;
+import io.haifa.coding.api.CodingProtocol.Live;
 import java.util.List;
 import java.util.Optional;
 
 public sealed interface TerminalUiAction {
-    record SessionLoaded(CodingSessionView view, List<String> resources) implements TerminalUiAction {}
+    record SessionLoaded(
+            io.haifa.agent.application.coding.terminal.state.TerminalSessionView view,
+            List<String> resources,
+            boolean product)
+            implements TerminalUiAction {
+        public SessionLoaded(CodingSessionView view, List<String> resources) {
+            this(
+                    io.haifa.agent.application.coding.terminal.state.TerminalSessionView.fromLegacy(view),
+                    resources,
+                    false);
+        }
+    }
 
     record HistoryLoaded(CodingSessionHistoryPage history) implements TerminalUiAction {}
+
+    record ProductToolsChanged(List<Entry> entries) implements TerminalUiAction {
+        public ProductToolsChanged {
+            entries = List.copyOf(entries);
+        }
+    }
+
+    record ProductDeliveryChanged(List<Entry> entries, List<String> notices) implements TerminalUiAction {
+        public ProductDeliveryChanged {
+            entries = List.copyOf(entries);
+            notices = List.copyOf(notices);
+        }
+    }
+
+    record ProductHistoryUpdated(List<Entry> entries, Live live) implements TerminalUiAction {
+        public ProductHistoryUpdated {
+            entries = List.copyOf(entries);
+        }
+    }
+
+    record ProductHistoryLoaded(List<Entry> entries, boolean earlier) implements TerminalUiAction {
+        public ProductHistoryLoaded {
+            entries = List.copyOf(entries);
+        }
+    }
 
     record SessionCleared(String status) implements TerminalUiAction {}
 
@@ -77,7 +115,12 @@ public sealed interface TerminalUiAction {
         }
     }
 
-    record RunEventReceived(AgentRunEvent event, long selectionGeneration) implements TerminalUiAction {
+    record RunEventReceived(AgentRunEvent event, long selectionGeneration, boolean renderTool)
+            implements TerminalUiAction {
+        public RunEventReceived(AgentRunEvent event, long selectionGeneration) {
+            this(event, selectionGeneration, true);
+        }
+
         /** Unscoped actions remain supported for reducers and direct tests. */
         public RunEventReceived(AgentRunEvent event) {
             this(event, 0L);
@@ -107,6 +150,27 @@ public sealed interface TerminalUiAction {
             this(interaction, false);
         }
     }
+
+    record ProductSessionChanged(
+            io.haifa.agent.application.coding.terminal.state.TerminalSessionView view,
+            List<io.haifa.agent.application.coding.terminal.state.PendingMessage> pending)
+            implements TerminalUiAction {
+        public ProductSessionChanged {
+            pending = List.copyOf(pending);
+        }
+    }
+
+    record ProductRunSelected(io.haifa.coding.api.CodingProtocol.Run run) implements TerminalUiAction {}
+
+    record ProductActivityChanged(java.util.List<io.haifa.coding.api.CodingProtocol.Entry> entries)
+            implements TerminalUiAction {}
+
+    record InteractionCardChanged(
+            String id,
+            String status,
+            boolean clarification,
+            io.haifa.agent.application.coding.terminal.state.ApprovalDetails details)
+            implements TerminalUiAction {}
 
     record InteractionReceiptReceived(InteractionResponseReceipt receipt) implements TerminalUiAction {}
 

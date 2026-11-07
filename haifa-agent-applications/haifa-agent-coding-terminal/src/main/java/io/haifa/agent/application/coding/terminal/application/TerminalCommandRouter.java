@@ -18,6 +18,7 @@ public final class TerminalCommandRouter {
         return switch (command) {
             case "/new" -> TerminalCommand.NEW;
             case "/resume" -> TerminalCommand.RESUME;
+            case "/history" -> TerminalCommand.HISTORY;
             case "/name", "/rename" -> TerminalCommand.RENAME;
             case "/archive" -> TerminalCommand.ARCHIVE;
             case "/delete" -> TerminalCommand.DELETE;

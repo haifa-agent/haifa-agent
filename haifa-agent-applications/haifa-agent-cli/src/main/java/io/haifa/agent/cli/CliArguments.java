@@ -1,5 +1,7 @@
 package io.haifa.agent.cli;
 
+import io.haifa.coding.host.internal.ApprovalMode;
+import io.haifa.coding.host.internal.ConfigurationInput;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -20,7 +22,8 @@ record CliArguments(
         boolean terminal,
         boolean quiet,
         boolean verbose,
-        boolean help) {
+        boolean help)
+        implements ConfigurationInput {
 
     static CliArguments parse(String[] arguments) {
         Objects.requireNonNull(arguments, "arguments must not be null");

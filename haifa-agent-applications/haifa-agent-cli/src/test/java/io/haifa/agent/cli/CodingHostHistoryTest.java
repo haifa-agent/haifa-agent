@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.coding.host.internal.CodingHostHistory;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.IntStream;

@@ -78,3 +78,7 @@ Core、Runtime、SDK 与 Capability API 保持 Pure Java。
 已删除的实验和 Superseded Design 不属于 Public Baseline。
 
 尤其，当前代码没有把 Graph / Workflow Orchestration 暴露为受支持 Runtime Capability。
+
+Coding 产品的 `haifa-coding-api` 不依赖 Runtime；轻量 `haifa-coding-client` 不依赖 engine/Host/SQLite。
+`haifa-coding-host` 复用既有 engine/基础设施装配且不依赖 CLI/TUI，只有其 owner 关闭共享 Runtime/Store。
+浏览器 grant/client/view/consent 生命周期独立于已接纳执行；见 [Host SDK](../../haifa-agent-applications/haifa-coding-host/README.md)。
