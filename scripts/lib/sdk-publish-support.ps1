@@ -237,6 +237,10 @@ function Get-ReactorModuleClassification {
     )
 
     $productModuleDirs = @(
+        'haifa-agent-applications\haifa-coding-api',
+        'haifa-agent-applications\haifa-coding-host',
+        'haifa-agent-applications\haifa-coding-client',
+        'haifa-agent-integrations\haifa-agent-local-model-auth-opencode',
         'haifa-agent-applications\haifa-agent-cli',
         'haifa-agent-applications\haifa-agent-coding-agent',
         'haifa-agent-applications\haifa-agent-coding-terminal',

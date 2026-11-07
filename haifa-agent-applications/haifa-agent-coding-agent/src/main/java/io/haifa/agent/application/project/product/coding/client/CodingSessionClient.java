@@ -52,6 +52,11 @@ public interface CodingSessionClient {
 
     CodingSessionView open(AgentSessionId sessionId);
 
+    /** Optional in-process source read; unlike legacy open/reconcile it cannot dispatch a successor. */
+    default CodingSessionView presentationSnapshot(AgentSessionId sessionId) {
+        throw new UnsupportedOperationException("Read-only presentation source is unavailable");
+    }
+
     CodingSessionView reconcile(AgentSessionId sessionId);
 
     /** Finds an authoritative Run snapshot, including terminal Runs, within this product client's project scope. */

@@ -21,6 +21,7 @@ import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
+import io.haifa.coding.client.CodingClients;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -317,6 +318,45 @@ class RemoteCodingSessionClientTest {
                         .hasSize(renewal ? 2 : 3);
                 assertThat(initializations).hasValue(2);
             }
+        }
+    }
+
+    @Test
+    void productTransportRenewsWithoutOpeningACompatibilityClient() throws Exception {
+        var initializations = new java.util.concurrent.atomic.AtomicInteger();
+        var expired = new java.util.concurrent.atomic.AtomicBoolean();
+        try (FakeCodingHost host = FakeCodingHost.start(call -> {
+            if ("initialize".equals(call.method())) {
+                initializations.incrementAndGet();
+                expired.set(false);
+            }
+            String id = "client-" + initializations.get();
+            var metadata = new LinkedHashMap<>(FakeCodingHost.initializeResult(id, "project-1", true));
+            metadata.put("hostIncarnation", "owner-1");
+            metadata.put("displayName", "Fixture Host");
+            metadata.put(
+                    "optionalCapabilities",
+                    List.of("coding-product-v1", "session-presentation-v1", "session-consent-v1"));
+            return switch (call.method()) {
+                case "initialize", "client/info" -> FakeCodingHost.Reply.result(metadata);
+                case "client/renew" ->
+                    expired.get()
+                            ? FakeCodingHost.Reply.error("CLIENT_CONTEXT_REQUIRED")
+                            : FakeCodingHost.Reply.result(map("renewed", true));
+                case "client/close" -> FakeCodingHost.Reply.result(map("closed", true));
+                default -> FakeCodingHost.Reply.error("REMOTE_METHOD_UNSUPPORTED");
+            };
+        })) {
+            try (var product = CodingClients.connect(host.uri())) {
+                assertThat(initializations).hasValue(1);
+                expired.set(true);
+                assertThat(product.renew()).isTrue();
+                assertThat(product.connection().clientId()).isEqualTo("client-2");
+                assertThat(initializations).hasValue(2);
+                assertThat(host.calls("client/close")).isEmpty();
+            }
+            assertThat(host.calls("client/info")).isEmpty();
+            assertThat(host.calls("client/close")).hasSize(1);
         }
     }
 

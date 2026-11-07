@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.coding.host.internal.CliCodingShellService;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;

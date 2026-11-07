@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "python3 generate.py generate",
+    "contract:check": "python3 generate.py check && tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions generated.ts invariants.ts validate.ts && node --experimental-strip-types validate.ts"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1",
+    "typescript": "5.9.3",
+    "@types/node": "22.19.1"
+  }
+}

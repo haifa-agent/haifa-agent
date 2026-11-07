@@ -165,7 +165,10 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
         params.put("protocolVersion", PROTOCOL_VERSION);
         params.put("clientInfo", clientInfo);
         params.put("optionalCapabilities", OPTIONAL_CAPABILITIES);
-        JsonNode result = transport.call("initialize", params, false);
+        installContext(transport.call("initialize", params, false), OPTIONAL_CAPABILITIES);
+    }
+
+    private void installContext(JsonNode result, Set<String> allowedCapabilities) {
         decode(() -> {
             RemoteWireCodec.requireObject(result, "initialize result");
             String version = RemoteWireCodec.requiredText(result, "protocolVersion");
@@ -214,12 +217,12 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             localManagementCommand = command;
             JsonNode selected = result.get("optionalCapabilities");
             if (selected != null) {
-                if (!selected.isArray() || selected.size() > OPTIONAL_CAPABILITIES.size()) {
+                if (!selected.isArray() || selected.size() > allowedCapabilities.size()) {
                     throw RemoteRpcTransport.protocolIncompatible();
                 }
                 for (JsonNode item : selected) {
                     if (!item.isTextual()
-                            || !OPTIONAL_CAPABILITIES.contains(item.textValue())
+                            || !allowedCapabilities.contains(item.textValue())
                             || !optional.add(item.textValue())) throw RemoteRpcTransport.protocolIncompatible();
                 }
             }
@@ -1270,7 +1273,9 @@ public final class RemoteCodingSessionClient implements CodingSessionClient, Aut
             subscription.close();
         }
         try {
-            if (info != null && info.optionalCapabilities().contains("session-consent-v1")) transport.releaseContext();
+            if (info != null && info.optionalCapabilities().contains("session-consent-v1")) {
+                transport.releaseContext();
+            }
         } finally {
             transport.close();
             executor.shutdownNow();

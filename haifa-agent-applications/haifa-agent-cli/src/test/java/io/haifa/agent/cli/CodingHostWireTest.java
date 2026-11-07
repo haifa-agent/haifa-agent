@@ -11,6 +11,7 @@ import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.model.api.ImageInputProfile;
 import io.haifa.agent.model.api.ModelImageDetail;
 import io.haifa.agent.model.api.ModelImageSource;
+import io.haifa.coding.host.internal.CodingHostWire;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
 import io.haifa.agent.auth.localmodel.LocalModelConnectionView;
+import io.haifa.coding.host.internal.CodingAuthenticationMapper;
 import java.util.Optional;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;

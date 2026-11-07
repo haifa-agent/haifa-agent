@@ -9,6 +9,8 @@ import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliExecutionPlatform;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;

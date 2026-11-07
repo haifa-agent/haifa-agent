@@ -8,6 +8,9 @@ import io.haifa.agent.application.project.persistence.ProjectPersistenceProtecti
 import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
+import io.haifa.coding.host.internal.ApprovalMode;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliConfigurationLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;

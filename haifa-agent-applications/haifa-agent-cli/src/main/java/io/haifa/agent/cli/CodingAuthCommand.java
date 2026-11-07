@@ -2,6 +2,8 @@ package io.haifa.agent.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.*;
+import io.haifa.coding.host.internal.CliCodingAuthenticationClient;
+import io.haifa.coding.host.internal.CliLocalModelAuth;
 import java.io.PrintStream;
 import java.net.http.HttpClient;
 import java.util.*;

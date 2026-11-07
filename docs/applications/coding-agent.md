@@ -160,6 +160,18 @@ Cancellation is a request until the broker reports the actual process outcome. H
 Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
 Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.
 
+## Coding product SDK, Web and Terminal preview
+
+The [browser SDK](../../haifa-agent-applications/haifa-coding-browser-client/README.md) uses the shared
+product contract. [Coding Web](../../haifa-agent-applications/haifa-coding-web/README.md) and the
+[independent UI example](../../examples/coding-browser-ui/README.md) consume its npm tarball and connect
+directly to the same-origin Host. Node is used at build time.
+
+The opt-in [Terminal product path](../../haifa-agent-applications/haifa-agent-coding-terminal/README.md)
+uses the Java product client in remote and embedded mode. The existing native entry remains the default.
+See the [Java SDK examples](../../examples/coding-product-sdk/README.md) for explicit Host ownership
+and standalone Client consumption.
+
 ## Opt-in context selection and rollback
 
 The default remains legacy. Coding can explicitly enable `context.policy: unified-context-v1` with

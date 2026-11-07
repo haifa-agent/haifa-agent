@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.coding.host.internal.CliConfiguration;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -107,8 +108,6 @@ class CodingContextLifecycleTest {
         var enabled = CliConfigurationBuilder.from(base)
                 .context(new CliConfiguration.Context("unified-context-v1", 4096, true, false))
                 .build();
-        assertThat(LocalCodingAgent.effectiveProjectTools(enabled))
-                .containsExactlyInAnyOrder("file_read", "history_search", "history_read");
         var calls = new AtomicInteger();
         var requests = new java.util.concurrent.CopyOnWriteArrayList<io.haifa.agent.model.api.AgentChatRequest>();
         var secondCall = new CountDownLatch(1);

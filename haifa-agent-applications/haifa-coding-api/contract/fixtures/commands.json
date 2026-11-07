@@ -1,0 +1,62 @@
+[
+  {
+    "valid": true,
+    "command": {
+      "kind": "command",
+      "operation": "cancel",
+      "clientRequestId": "request-1",
+      "idempotencyKey": "cancel-key",
+      "target": {
+        "projectId": null,
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "interactionId": null,
+        "targetRevision": null
+      },
+      "text": null,
+      "optionId": null,
+      "executionId": null,
+      "selections": []
+    }
+  },
+  {
+    "valid": false,
+    "command": {
+      "kind": "command",
+      "operation": "cancel",
+      "clientRequestId": "request-1",
+      "idempotencyKey": "cancel-key",
+      "target": {
+        "projectId": null,
+        "sessionId": "session-1",
+        "runId": null,
+        "interactionId": null,
+        "targetRevision": null
+      },
+      "text": null,
+      "optionId": null,
+      "executionId": null,
+      "selections": []
+    }
+  },
+  {
+    "valid": false,
+    "command": {
+      "kind": "command",
+      "operation": "respond",
+      "clientRequestId": "request-1",
+      "idempotencyKey": "cancel-key",
+      "target": {
+        "projectId": null,
+        "sessionId": "session-1",
+        "runId": "run-1",
+        "interactionId": "interaction-1",
+        "targetRevision": null
+      },
+      "text": null,
+      "optionId": null,
+      "executionId": null,
+      "selections": []
+    }
+  }
+]

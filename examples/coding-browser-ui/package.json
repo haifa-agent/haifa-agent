@@ -1,0 +1,1 @@
+{"name":"coding-browser-ui-example","version":"0.1.0","private":true,"type":"module","scripts":{"build":"tsc --noEmit && vite build"},"dependencies":{"@haifa-agent/coding-client":"file:vendor/haifa-agent-coding-client-0.1.5-b3.0.tgz"},"devDependencies":{"typescript":"5.9.3","vite":"8.1.5"}}

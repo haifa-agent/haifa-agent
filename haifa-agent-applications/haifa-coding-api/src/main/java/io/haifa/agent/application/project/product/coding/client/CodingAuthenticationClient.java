@@ -1,0 +1,153 @@
+package io.haifa.agent.application.project.product.coding.client;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
+
+/**
+ * Trusted local authentication interactions supplied by the application assembly.
+ *
+ * <p>Login, cancellation, authorization URLs and credential input are process-local calls. Execute
+ * blocking interactions off the UI thread. This interface is separate from the Coding wire protocol.
+ */
+public interface CodingAuthenticationClient {
+    /** Optional runnable instruction for the Host's trusted-local credential manager; never contains a secret. */
+    default java.util.Optional<String> localManagementCommand() {
+        return java.util.Optional.empty();
+    }
+
+    default boolean connectionRequired() {
+        return false;
+    }
+
+    default String apiKeyProviderId() {
+        return "openai";
+    }
+
+    default List<String> supportedApiKeyProviders() {
+        return List.of("deepseek", "aliyun-bailian", "zhipu", "kimi", "siliconflow");
+    }
+
+    default boolean apiKeyConnectionSupported() {
+        return true;
+    }
+
+    default boolean codexConnectionSupported() {
+        return false;
+    }
+
+    default boolean antigravityConnectionSupported() {
+        return false;
+    }
+
+    /** Safe provider list for the connection center. Unknown implementations expose no providers. */
+    default List<CodingAuthenticationProviderView> providers() {
+        return List.of();
+    }
+
+    List<CodingAuthenticationView> connections();
+
+    CodingAuthenticationView loginCodexBrowser();
+
+    default CodingAuthenticationView loginCodexBrowser(Consumer<CodingBrowserLoginView> instructions) {
+        return loginCodexBrowser();
+    }
+
+    default CodingAuthenticationView loginCodexBrowser(
+            Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        return loginCodexBrowser(instructions);
+    }
+
+    default CodingAuthenticationView loginCodexDevice(Consumer<CodingDeviceLoginView> instructions) {
+        throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE");
+    }
+
+    default CodingAuthenticationView loginCodexDevice(
+            Consumer<CodingDeviceLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        return loginCodexDevice(instructions);
+    }
+
+    default CodingAuthenticationView loginAntigravityBrowser(
+            Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        throw new IllegalStateException("AUTH_LOGIN_METHOD_UNAVAILABLE");
+    }
+
+    /**
+     * Authorization-code sign-in for any registered device-login provider. Unknown providers or drivers that
+     * cannot offer the mode fail with a stable code instead of opening a browser.
+     */
+    default CodingAuthenticationView loginDevice(
+            String providerId,
+            Consumer<CodingDeviceLoginView> instructions,
+            Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(providerId, "providerId must not be null");
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE");
+    }
+
+    CodingAuthenticationView saveApiKey(String providerId, char[] apiKey);
+
+    default CodingAuthenticationView saveApiKey(
+            String providerId, char[] apiKey, java.util.Map<String, String> attributes) {
+        return saveApiKey(providerId, apiKey);
+    }
+
+    default java.util.Optional<java.util.Map<String, String>> providerAttributes(String providerId) {
+        return java.util.Optional.empty();
+    }
+
+    /**
+     * Requests cancellation of the currently running interactive login. Only the waiting-user phase is
+     * cancellable; implementations return {@code false} once credential exchange or storage has started.
+     */
+    default boolean cancelLogin() {
+        return false;
+    }
+
+    /** Reopens a still-valid browser authorization URL. Implementations must not block the UI thread. */
+    default boolean openAuthorization(java.net.URI authorizationUri) {
+        return false;
+    }
+
+    boolean logout(String connectionId);
+
+    static CodingAuthenticationClient unavailable() {
+        return Unavailable.INSTANCE;
+    }
+
+    enum Unavailable implements CodingAuthenticationClient {
+        INSTANCE;
+
+        @Override
+        public List<CodingAuthenticationView> connections() {
+            return List.of();
+        }
+
+        @Override
+        public CodingAuthenticationView loginCodexBrowser() {
+            throw new IllegalStateException("AUTH_EXTERNAL_APPROVAL_REQUIRED");
+        }
+
+        @Override
+        public CodingAuthenticationView loginCodexDevice(Consumer<CodingDeviceLoginView> instructions) {
+            throw new IllegalStateException("AUTH_EXTERNAL_APPROVAL_REQUIRED");
+        }
+
+        @Override
+        public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+            throw new IllegalStateException("AUTH_SECURE_INPUT_UNAVAILABLE");
+        }
+
+        @Override
+        public boolean logout(String connectionId) {
+            return false;
+        }
+    }
+}

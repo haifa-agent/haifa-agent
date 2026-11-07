@@ -116,6 +116,7 @@ final class RemoteRpcTransport {
     }
 
     private JsonNode call(String method, Map<String, Object> params, boolean mutation, Duration timeout) {
+        String contextId = clientId;
         if (closed) {
             throw unavailable();
         }
@@ -140,9 +141,8 @@ final class RemoteRpcTransport {
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(payload));
-        String activeClientId = clientId;
-        if (activeClientId != null) {
-            builder.header("X-CA-Client-ID", activeClientId);
+        if (contextId != null) {
+            builder.header("X-CA-Client-ID", contextId);
         }
         HttpResponse<InputStream> response;
         try {

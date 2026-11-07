@@ -2,6 +2,11 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Add preview Coding product contracts, a lightweight Java Client and Host, a packed browser SDK,
+  and same-origin Web. Add isolated preview publishing and independent Maven and npm consumer examples.
+- Route the opt-in Terminal through product observation, history, and exact commands while retaining
+  trusted local sign-in and legacy native rollback. Keep browser grants separate from local credentials.
+
 - Keep complete saved results readable when refreshing bounded history previews, and account for documented
   OpenCode Go DeepSeek Flash input/cache lanes without counting cache tokens twice.
 
@@ -9,6 +14,10 @@
 
 - Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
   new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.
+
+- Add an experimental, opt-in Coding Session presentation contract with shared Java/TypeScript fixtures,
+  bounded snapshot/update observation and exact message-to-Run association. Native Host enables it only
+  with `host --presentation` and explicit capability negotiation; browser access remains disabled.
 
 - Keep Coding Terminal tool-row geometry stable when a call settles, including its metadata column and following rows.
 - Restore Ctrl+C selection copying when a remote terminal delivers a console interrupt, while preserving Host-owned Runs on client termination.

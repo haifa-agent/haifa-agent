@@ -7,6 +7,7 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.project.core.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.coding.host.internal.LocalFileToolOperations;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

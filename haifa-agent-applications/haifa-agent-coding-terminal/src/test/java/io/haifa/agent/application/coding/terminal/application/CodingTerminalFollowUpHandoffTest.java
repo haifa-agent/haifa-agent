@@ -35,8 +35,8 @@ class CodingTerminalFollowUpHandoffTest {
         assertThat(controller
                         .state()
                         .session()
-                        .flatMap(CodingSessionView::activeRun)
-                        .map(AgentRunSnapshot::runId))
+                        .flatMap(value -> value.activeRun())
+                        .map(value -> value.runId()))
                 .contains(new AgentRunId("run-2"));
     }
 

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.coding.host.internal.CliShellExecutions;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;

@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.coding.host.internal.LocalWorkspacePathCatalog;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;

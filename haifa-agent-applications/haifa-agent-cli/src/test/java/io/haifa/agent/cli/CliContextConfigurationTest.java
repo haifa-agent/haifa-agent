@@ -3,6 +3,8 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliConfigurationLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
