@@ -29,6 +29,7 @@ The prepared UI includes session search/list/create/open, ordinary input, safe p
 facts and live output, exact-target approval/structured clarification/cancellation, bounded independent
 history, connection/recovery status and Host/workspace/model context. Approval requires explicit review;
 an active session consent lease can handle eligible new approvals once per exact target. Revoke it in the session toolbar to return to per-call confirmation.
+The selected row takes its Run status from the same confirmed observation as the conversation.
 Unknown interaction types are unavailable. The Web UI has no editor/file tree/PTY, model-key form or arbitrary
 HTML/Markdown execution. Trusted incoming text uses DOM textContent, never payload HTML.
 
