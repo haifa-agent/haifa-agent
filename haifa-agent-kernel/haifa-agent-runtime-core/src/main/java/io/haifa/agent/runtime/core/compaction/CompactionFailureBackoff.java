@@ -15,8 +15,9 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 
-/** Transient suppression of one unchanged failed prefix; no transcript bodies or durable state. */
+/** Transient suppression of a failed prefix; no transcript bodies or durable state. */
 final class CompactionFailureBackoff {
     record Scope(
             AgentSessionId session,
@@ -45,7 +46,7 @@ final class CompactionFailureBackoff {
         }
     }
 
-    private record Failure(long through, int count, String digest, long expiresAt, boolean exact) {}
+    private record Failure(long through, int count, String digest, long expiresAt, OptionalLong retryAtTokens) {}
 
     private final TimeProvider time;
     private final long ttlMillis;
@@ -59,10 +60,14 @@ final class CompactionFailureBackoff {
         this.capacity = capacity;
     }
 
-    synchronized boolean contains(Scope scope, List<AgentMessage> active) {
+    boolean contains(Scope scope, List<AgentMessage> active) {
+        return contains(scope, active, OptionalLong.empty());
+    }
+
+    synchronized boolean contains(Scope scope, List<AgentMessage> active, OptionalLong removablePrefixTokens) {
         expire();
         Failure failure = failures.get(scope);
-        if (failure == null || (failure.exact() && active.size() != failure.count())) return false;
+        if (failure == null) return false;
         List<AgentMessage> prefix = active.stream()
                 .takeWhile(m -> m.sequence() <= failure.through())
                 .toList();
@@ -70,18 +75,21 @@ final class CompactionFailureBackoff {
             failures.remove(scope);
             return false;
         }
-        return true;
+        return failure.retryAtTokens().isEmpty()
+                || (removablePrefixTokens.isPresent()
+                        && removablePrefixTokens.getAsLong()
+                                < failure.retryAtTokens().getAsLong());
     }
 
     synchronized void record(Scope scope, List<AgentMessage> source) {
-        record(scope, source, false);
+        record(scope, source, OptionalLong.empty());
     }
 
-    synchronized void recordExact(Scope scope, List<AgentMessage> source) {
-        record(scope, source, true);
+    synchronized void recordNoReduction(Scope scope, List<AgentMessage> source, long retryAtPrefixTokens) {
+        record(scope, source, OptionalLong.of(retryAtPrefixTokens));
     }
 
-    private void record(Scope scope, List<AgentMessage> source, boolean exact) {
+    private void record(Scope scope, List<AgentMessage> source, OptionalLong retryAtPrefixTokens) {
         expire();
         if (source.isEmpty()) return;
         failures.put(
@@ -91,7 +99,7 @@ final class CompactionFailureBackoff {
                         source.size(),
                         digest(source),
                         Math.addExact(time.now().toEpochMilli(), ttlMillis),
-                        exact));
+                        retryAtPrefixTokens));
         while (failures.size() > capacity)
             failures.remove(failures.keySet().iterator().next());
     }

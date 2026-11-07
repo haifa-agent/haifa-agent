@@ -63,6 +63,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -656,11 +657,13 @@ public final class SemanticCompactionCoordinator {
         }
 
         boolean softComplete = completeSource && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
+        long prefixTokens = softComplete ? estimateGroups(activeGroups.subList(0, safeSplit), resolver) : 0L;
+        int minSaving = softComplete
+                ? io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.contextMinSavingTokens(
+                        binding.configuration().modelRequestOptions())
+                : 0;
         if (softComplete) {
-            long prefixTokens = estimateGroups(activeGroups.subList(0, safeSplit), resolver);
-            if (prefixTokens
-                    < io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.contextMinSavingTokens(
-                            binding.configuration().modelRequestOptions())) {
+            if (prefixTokens < minSaving) {
                 // Even a zero-token summary could not make the removable prefix worth a soft compaction.
                 return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
             }
@@ -681,7 +684,11 @@ public final class SemanticCompactionCoordinator {
                 .flatMap(List::stream)
                 .toList();
         var backoffScope = CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion, reason);
-        if (softComplete && failureBackoff.contains(backoffScope, sourceToCompact)) {
+        if (softComplete
+                && failureBackoff.contains(
+                        backoffScope,
+                        sourceToCompact,
+                        selectedInputFits ? OptionalLong.of(prefixTokens) : OptionalLong.empty())) {
             invoker.checkControl(run);
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
@@ -945,10 +952,12 @@ public final class SemanticCompactionCoordinator {
         SemanticConversationSummaryV1 candidate = workingSemantic.orElseThrow();
         int summaryTokens =
                 Math.max(1, HeuristicTokenEstimator.tokens(SemanticSummaryRenderer.renderMarkdown(candidate)));
-        if (softComplete && selectedInputFits && summaryTokens + retainedTailTokens >= initialEstimatedTokens) {
-            // A soft checkpoint must shrink the history it replaces when the current input already fits.
+        long historyGrowth = summaryTokens + retainedTailTokens - initialEstimatedTokens;
+        if (softComplete && selectedInputFits && historyGrowth >= 0) {
+            // Try again once the removable prefix can absorb the observed excess and has grown meaningfully.
             invoker.checkControl(run);
-            failureBackoff.recordExact(backoffScope, sourceToCompact);
+            long requiredGrowth = Math.max(minSaving, historyGrowth + 1);
+            failureBackoff.recordNoReduction(backoffScope, sourceToCompact, prefixTokens + requiredGrowth);
             return recoveryOutcome(
                     run,
                     evaluationId,
