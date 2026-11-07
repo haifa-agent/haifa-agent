@@ -39,8 +39,10 @@ class CompactionFailureBackoffTest {
         var config = store.configuration(first.configurationSnapshot()).orElseThrow();
         var binding = new FrozenModelBinding(config, request -> null, List.of());
         var policy = CompressionPolicy.defaults();
-        var scope = CompactionFailureBackoff.Scope.of(first, binding, policy, 0);
-        var same = CompactionFailureBackoff.Scope.of(second, binding, policy, 0);
+        var scope = CompactionFailureBackoff.Scope.of(
+                first, binding, policy, 0, CompactionTriggerReason.ACTIVE_HISTORY_BUDGET);
+        var same = CompactionFailureBackoff.Scope.of(
+                second, binding, policy, 0, CompactionTriggerReason.ACTIVE_HISTORY_BUDGET);
         assertThat(same).isEqualTo(scope);
         List<AgentMessage> source = store.messagesAfter(first.sessionId(), MessageCursor.BEFORE_FIRST, 1);
         var now = new AtomicReference<>(Instant.parse("2026-07-21T00:00:00Z"));
@@ -61,6 +63,8 @@ class CompactionFailureBackoffTest {
                         0),
                 scope(scope.session(), scope.tenant(), scope.principal(), "new-binding", scope, 0),
                 scope(scope.session(), scope.tenant(), scope.principal(), scope.bindingHash(), scope, 1),
+                CompactionFailureBackoff.Scope.of(
+                        first, binding, policy, 0, CompactionTriggerReason.SOFT_TOKEN_THRESHOLD),
                 new CompactionFailureBackoff.Scope(
                         scope.session(),
                         scope.tenant(),
@@ -68,7 +72,8 @@ class CompactionFailureBackoffTest {
                         scope.bindingHash(),
                         scope.modelDigest(),
                         policy.withTailTokenBounds(5, 50),
-                        0));
+                        0,
+                        scope.reason()));
         var changedModel = new CompactionFailureBackoff.Scope(
                 scope.session(),
                 scope.tenant(),
@@ -76,7 +81,8 @@ class CompactionFailureBackoffTest {
                 scope.bindingHash(),
                 "changed-model-digest",
                 policy,
-                0);
+                0,
+                scope.reason());
         assertThat(cache.contains(changedModel, source)).isFalse();
         alternatives.forEach(other -> assertThat(cache.contains(other, source)).isFalse());
         assertThat(new CompactionFailureBackoff(now::get, 60_000, 2).contains(scope, source))
@@ -101,6 +107,6 @@ class CompactionFailureBackoffTest {
             CompactionFailureBackoff.Scope base,
             long version) {
         return new CompactionFailureBackoff.Scope(
-                session, tenant, principal, binding, base.modelDigest(), base.policy(), version);
+                session, tenant, principal, binding, base.modelDigest(), base.policy(), version, base.reason());
     }
 }

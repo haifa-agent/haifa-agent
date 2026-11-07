@@ -1,5 +1,6 @@
 package io.haifa.agent.runtime.core.loop;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.CURRENT_RUN_SUMMARY;
 import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.DATA;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -273,7 +274,11 @@ public final class SessionMessageSource {
     }
 
     MeasuredSelection selectMeasured(AgentRun run, long sessionTokenBudget, String prefix) {
-        if (workingSetEnabled(run)) return workingSets.select(run, sessionTokenBudget, prefix);
+        return selectMeasured(run, sessionTokenBudget, prefix, null);
+    }
+
+    MeasuredSelection selectMeasured(AgentRun run, long sessionTokenBudget, String prefix, String currentOnlyPrefix) {
+        if (workingSetEnabled(run)) return workingSets.select(run, sessionTokenBudget, prefix, currentOnlyPrefix);
         Objects.requireNonNull(run, "run must not be null");
         if (sessionTokenBudget < 1) {
             throw new IllegalArgumentException("sessionTokenBudget must be positive");
@@ -732,6 +737,7 @@ public final class SessionMessageSource {
         var item = summaryItem(summary);
         var labels = new java.util.HashSet<>(item.security().labels());
         labels.add(DATA);
+        labels.add(CURRENT_RUN_SUMMARY);
         return new ContextItem(
                 item.id(),
                 item.type(),

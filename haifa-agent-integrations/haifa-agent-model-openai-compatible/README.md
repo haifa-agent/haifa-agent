@@ -15,8 +15,10 @@ all lanes are present. Explicit zeros are known; missing write fields remain unk
 is not added again. This does not establish a Provider cache TTL or make the rounded monetary cost a token price.
 
 For Go summary calls, the existing non-standard dialect sends `response_format: json_object` plus the frozen
-JSON Schema as a system instruction, with thinking disabled unless explicitly frozen otherwise. This is
-not a native strict-schema guarantee. Local contracts distinguish malformed structured content from an empty
+JSON Schema as a system instruction. The exact DeepSeek V4.1 Flash binding explicitly sends
+`thinking.type=disabled` when the frozen mode is disabled, for both ordinary and summary calls. This is
+not a native strict-schema guarantee. Local contracts distinguish malformed structured content, including nested
+null values, from an empty
 response; valid JSON still requires the Runtime semantic validator before coverage can be committed.
 
 ## Profile factory

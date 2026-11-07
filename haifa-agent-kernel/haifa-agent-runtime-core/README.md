@@ -20,6 +20,30 @@ and standard immutable Tool-result assets; arbitrary asset or Artifact bodies ha
 no automatic post-terminal summary owner or budget. Terminal Run usage remains immutable and
 model calls stay outside persistence transactions.
 
+`history_search` combines filters with AND. Search pathless checks by `toolName` and file evidence by exact saved
+path. Keyword searches scoped to an exact Run or message can scan multiple text windows within the same
+`scanLimit`. When the response includes `nextCursor`, continue the search with the same filters.
+Search results supply the versioned reference for `history_read`. Its `paths` field carries up to eight
+saved paths or artifact labels of at most 256 characters each. For another page, preserve the reference and
+`fromLine` and pass `nextOffset` as `offset`.
+
+For a follow-up with the Run working set enabled, an exact path named in the request gives the saved Tool result
+priority within the bounded history candidates. It remains optional quoted data and uses the same access checks
+and versioned readback as other excerpts.
+Consecutive unified excerpts from one saved Run share its Run identifier in the request. Adjacent saved Tool
+excerpts from that Run share one untrusted data message. Each excerpt keeps its message identifier, version, range
+and body, and is revalidated independently. A saved Tool excerpt is marked full only when it starts at the
+beginning and neither the stored source nor the selected window is truncated.
+Without an explicit cache contract, historical-only selections share coordinate column names across adjacent
+excerpts with simple identifiers and explain when full saved evidence can be reused for a source the current request
+confirms unchanged. A full row names the message and version and represents the entire source from offset zero;
+partial rows carry their explicit offset and window. Current Run checkpoints retain the continuation instructions.
+
+Without an explicit cache contract, unified working-set requests with only current Run messages omit
+the historical-data instruction. The instruction remains for saved excerpts, summaries and history
+reader calls. A cache contract keeps it in the fixed prefix from warmup onward so it can be reused
+when history is selected.
+
 `model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
 call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted
 input defaults to `UNAVAILABLE`. Frozen `haifa.runtime.input_price_ratios` may provide exact
@@ -71,17 +95,34 @@ contiguous source plus the previous valid summary and retains its validation, re
 Complete-source summaries may split a long single Run between completed atomic Tool groups. Existing cutoff
 validation still keeps each call/result pair together; the summary's versioned source label allows snapshot
 rebuilds to retain that valid assistant-led tail. Unreadable or unprocessable groups never authorize coverage.
+For the unified soft threshold, a removable prefix smaller than the configured minimum saving waits
+for more eligible source. Complete-source batching checks the full rendered request, including the
+previous summary and carry-forward items, before dispatch. Source-only estimates do not reserve a
+fixed fraction of the window for those fields.
 When a valid summary covers the current Run, its full semantic representation is required input, even for
 an objective beginning with `New task` or a retained tail larger than the working-set target. It stays in the
 untrusted data lane and participates in hard admission; an optional cross-Run handoff cannot replace it.
 Unrelated new Runs retain the existing sparse-history policy. Summary authorization checks every bounded
 source reference, using the active compaction window bound rather than the smaller handoff candidate limit.
 
+If a complete-source soft compaction has already called the model and a later batch cannot fit, the unchanged
+prefix backs off within the existing time bound. When the ordinary input fits, a validated soft checkpoint
+that would leave the estimated active history unchanged or larger does not advance coverage. During the
+existing backoff window, a matching prefix can retry once its removable history grows by at least the
+configured minimum saving and enough to exceed the observed excess. Hard capacity recovery can still
+evaluate these sources immediately.
+
 Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
 `SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain
 unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that
 compaction fails explicitly. Only physical model calls consume model-call accounting.
 
+Compaction calls use the semantic summary schema in place of the Run's ordinary response format.
+The model request labels a required summary covering the current Run as a checkpoint for continuation.
+Runtime instructions tell the model how to use recorded successful reads to resume unfinished work.
+Cross-Run handoffs retain their separate historical-data annotation.
+When the ordinary request fits, complete-source soft compaction can defer a short opening before a
+single oversized retained group, so it can summarize that opening with the group in one call.
 For compaction model calls, `GENERATION` names the invocation boundary (including Provider/transport failures);
 `failureCode` retains the exact normalized model category and is not a content-quality verdict.
 Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,
@@ -106,6 +147,8 @@ a valid summary covers them. Actual current/recovery Tool protocol remains group
 Prior sparse text/JSON is a versioned, revalidated USER data excerpt, never protected continuation replay.
 Continue, follow-up, new-task, ambiguous input and checkpoint recovery have deterministic handling;
 old pending plans are recorded handoff data and never become completed because they were omitted.
+With the unified policy, a continuation can reuse up to eight recent Tool results from the immediately prior
+terminal Run. These are optional, versioned excerpts within the same selection budget and are never replayed as Tools.
 Quoted next steps do not authorize work outside the current request; already authorized pending work may resume within that scope. Products must freeze read-only scope
 with the existing Run profile Tool allowlist; selection does not infer permissions from natural language.
 Summary handoff is a bounded inferred view (up to 64 source identities, four entries per section), separate from verified original Tool evidence; larger source sets are omitted conservatively.

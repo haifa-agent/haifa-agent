@@ -1,5 +1,8 @@
 package io.haifa.agent.runtime.core.loop;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.CURRENT_RUN_SUMMARY;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.HISTORY_SOURCE_RULE_ID;
+
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
@@ -41,6 +44,27 @@ import java.util.Objects;
 /** Builds trusted Context IR from frozen run state and persisted facts. */
 public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder {
     private static final int MAX_SKILL_DESCRIPTION_CHARS = 240;
+    private static final PromptComponent HISTORY_SOURCE_RULE = historyRule(
+            HISTORY_SOURCE_RULE_ID,
+            RunWorkingSetSource.DATA_RULE
+                    + " Reuse full saved Tool evidence for sources the request confirms unchanged.");
+    private static final PromptComponent HISTORY_DATA_RULE = historyRule(
+            "working-set-data-rule",
+            RunWorkingSetSource.DATA_RULE
+                    + " After a current Run checkpoint, resume at the first unfinished step. Count its recorded "
+                    + "successful reads as completed inspection steps. Read again only if the current request requires it, "
+                    + "the source changed, or exact evidence is missing.");
+
+    private static PromptComponent historyRule(String id, String text) {
+        return new PromptComponent(
+                new PromptComponentId(id),
+                RunWorkingSetSource.VERSION,
+                PromptLayer.TOOL_PROTOCOL,
+                PromptRole.RUNTIME,
+                text,
+                true,
+                java.util.Set.of("working-set", "data-boundary"));
+    }
 
     private final RuntimeStateRepository state;
     private final AgentRuntimeMiddlewareChain middleware;
@@ -90,17 +114,18 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
         List<SkillActivation> activations = addSkillPrompts(run, middlewareContext);
         List<ModelToolSpecification> effectiveTools = skillTools(model, activations);
-        if (sessionMessages.workingSetEnabled(run))
-            middlewareContext.addPrompt(new PromptComponent(
-                    new PromptComponentId("working-set-data-rule"),
-                    RunWorkingSetSource.VERSION,
-                    PromptLayer.TOOL_PROTOCOL,
-                    PromptRole.RUNTIME,
-                    RunWorkingSetSource.DATA_RULE,
-                    true,
-                    java.util.Set.of("working-set", "data-boundary")));
-        if (RuntimeControlOptions.finalizeOnly(
-                model.configuration().modelRequestOptions(), run.usage().toolCalls())) {
+        boolean workingSet = sessionMessages.workingSetEnabled(run);
+        var options = model.configuration().modelRequestOptions();
+        boolean unified = workingSet && RuntimeControlOptions.unifiedContextBudget(options);
+        boolean finalizeOnly =
+                RuntimeControlOptions.finalizeOnly(options, run.usage().toolCalls());
+        // An explicit reuse contract needs the same prefix during warmup and historical selection.
+        boolean selectHistoryRule = unified
+                && !finalizeOnly
+                && !options.containsKey(RuntimeControlOptions.WORKING_SET_CACHE)
+                && !RunWorkingSetSource.requiresHistoryDataRule(run.id(), middlewareContext.contextItems());
+        if (workingSet && !selectHistoryRule) middlewareContext.addPrompt(HISTORY_DATA_RULE);
+        if (finalizeOnly) {
             effectiveTools = List.of();
             middlewareContext.addPrompt(new PromptComponent(
                     new PromptComponentId("runtime-finalize-only"),
@@ -119,12 +144,11 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 model.configuration().model().contextWindow(), loopContext.forcedContextRebuildAttempts() > 0);
         TokenBudget budget = TokenBudget.forModel(
                 model.configuration().model(), model.configuration().model().maxOutputTokens(), safetyMargin);
-        boolean unified = sessionMessages.workingSetEnabled(run)
-                && RuntimeControlOptions.unifiedContextBudget(
-                        model.configuration().modelRequestOptions());
         long fixedTokens =
                 middlewareContext.prompts().stream().mapToLong(budget::estimate).sum()
                         + effectiveTools.stream().mapToLong(budget::estimate).sum();
+        // Preserve the budget reserved for the data rule while selection determines if it is needed.
+        if (selectHistoryRule) fixedTokens += budget.estimate(HISTORY_DATA_RULE);
         if (unified)
             fixedTokens += model.configuration()
                     .structuredOutput()
@@ -148,13 +172,26 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                         memorySource.select(run, model, loopContext), budget.availableInputTokens() - requiredTokens);
         long memoryTokens = memoryItems.stream().mapToLong(budget::estimate).sum();
         long sessionTokenBudget = positiveBudget(budget.availableInputTokens() - requiredTokens - memoryTokens);
-        SessionMessageSource.MeasuredSelection measuredSelection = sessionMessages.selectMeasured(
-                run,
-                sessionTokenBudget,
-                io.haifa.agent.runtime.core.model.ModelInputAccounting.expectedPrefix(
-                        model, middlewareContext.prompts(), effectiveTools));
+        var prompts = middlewareContext.prompts();
+        String expectedPrefix =
+                io.haifa.agent.runtime.core.model.ModelInputAccounting.expectedPrefix(model, prompts, effectiveTools);
+        String currentOnlyPrefix = null;
+        if (selectHistoryRule) {
+            currentOnlyPrefix = expectedPrefix;
+            var historyPrompts = new ArrayList<>(prompts);
+            historyPrompts.add(HISTORY_SOURCE_RULE);
+            expectedPrefix = io.haifa.agent.runtime.core.model.ModelInputAccounting.expectedPrefix(
+                    model, historyPrompts, effectiveTools);
+        }
+        SessionMessageSource.MeasuredSelection measuredSelection =
+                sessionMessages.selectMeasured(run, sessionTokenBudget, expectedPrefix, currentOnlyPrefix);
         selectionMetrics = selectionMetrics.plus(measuredSelection.metrics());
         SessionMessageSource.Selection selection = measuredSelection.selection();
+        if (selectHistoryRule && RunWorkingSetSource.requiresHistoryDataRule(run.id(), selection.items())) {
+            boolean hasCheckpoint = selection.items().stream()
+                    .anyMatch(item -> item.security().labels().contains(CURRENT_RUN_SUMMARY));
+            middlewareContext.addPrompt(hasCheckpoint ? HISTORY_DATA_RULE : HISTORY_SOURCE_RULE);
+        }
         if (unified)
             return buildUnified(
                     run,

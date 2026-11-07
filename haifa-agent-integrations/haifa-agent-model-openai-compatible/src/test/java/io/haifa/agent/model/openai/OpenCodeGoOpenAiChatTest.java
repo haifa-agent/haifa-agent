@@ -73,7 +73,7 @@ class OpenCodeGoOpenAiChatTest {
     }
 
     @Test
-    void summaryRequestUsesJsonObjectAndTheFrozenSchemaWithoutThinkingOptions() throws Exception {
+    void summaryRequestUsesJsonObjectAndTheFrozenSchemaWithThinkingDisabled() throws Exception {
         String content = "{\"schemaVersion\":\"v1\",\"language\":\"en\",\"goals\":[],\"constraints\":[],"
                 + "\"progress\":{\"completed\":[],\"active\":[],\"blocked\":[]},\"decisions\":[],\"nextSteps\":[],"
                 + "\"criticalContext\":[],\"unresolvedQuestions\":[]}";
@@ -84,8 +84,8 @@ class OpenCodeGoOpenAiChatTest {
                 .hasValueSatisfying(output -> assertThat(output).containsEntry("schemaVersion", "v1"));
         var body = readRequestBody();
         assertThat(body.path("response_format").path("type").asText()).isEqualTo("json_object");
-        assertThat(body.has("thinking") || body.has("reasoning_effort") || body.has("tools"))
-                .isFalse();
+        assertThat(body.path("thinking").path("type").asText()).isEqualTo("disabled");
+        assertThat(body.has("reasoning_effort") || body.has("tools")).isFalse();
         String contract = body.path("messages")
                 .get(body.path("messages").size() - 1)
                 .path("content")
@@ -97,9 +97,10 @@ class OpenCodeGoOpenAiChatTest {
     }
 
     @Test
-    void summaryParseFailureAndEmptyResponseKeepDistinctNormalizedErrors() {
-        for (String content : List.of("not-json", "[]", "")) {
-            responseBody.set(syncBody(content));
+    void summaryParseFailureAndEmptyResponseKeepDistinctNormalizedErrors() throws Exception {
+        for (String content : List.of("not-json", "[]", "{\"progress\":{\"completed\":[null]}}", "")) {
+            String encoded = json.writeValueAsString(content);
+            responseBody.set(syncBody(encoded.substring(1, encoded.length() - 1)));
             assertThatThrownBy(() -> model().invoke(summaryRequest()))
                     .isInstanceOfSatisfying(io.haifa.agent.model.api.ModelInvocationException.class, failure -> {
                         assertThat(failure.category())
@@ -239,7 +240,7 @@ class OpenCodeGoOpenAiChatTest {
     void sendsTheThinkingContractOnlyWhenReasoningIsEnabled() {
         responseBody.set(syncBody("quiet"));
         model().invoke(request(RUN_ID, Map.of("thinking", "disabled")));
-        assertThat(readRequestBody().has("thinking")).isFalse();
+        assertThat(readRequestBody().path("thinking").path("type").asText()).isEqualTo("disabled");
 
         responseBody.set(syncBody("thinking"));
         model().invoke(request(RUN_ID, Map.of("thinking", "enabled", "reasoning_effort", "high")));

@@ -19,6 +19,8 @@ import java.util.*;
 public final class HistoryToolProvider implements ToolProvider {
     public static final ToolProviderId ID = new ToolProviderId("haifa-runtime-history");
     private static final String SOURCES = "historySources";
+    private static final int SEARCH_WINDOW_CHARACTERS = 4096;
+    private static final int MAX_SCOPED_SEARCH_WINDOWS = 8;
     private final RuntimePersistencePorts ports;
     private final RunAccessValidator access;
 
@@ -51,12 +53,17 @@ public final class HistoryToolProvider implements ToolProvider {
         return List.of(
                 definition(
                         "history_search",
-                        "Locate persisted history in the current Session. Filters are exact Run/Tool/path or literal keyword. Follow nextCursor until searchComplete; never treat an unfinished scan as no match.",
+                        "Locate persisted history in the current Session. Filters combine with AND. Use exact saved paths "
+                                + "for file evidence and toolName without path for checks or other tools with no saved path. "
+                                + "Keyword matches literal saved text. Read a matching reference directly. If more matches are needed, "
+                                + "keep the same filters and follow nextCursor until searchComplete.",
                         common,
                         List.of()),
                 definition(
                         "history_read",
-                        "Read untrusted historical data using the exact Run, message and version returned by history_search. Optional ToolCallId selects a persisted occurrence. Character offsets and fromLine address the stable history-text-v1 representation, not the current workspace. Unavailable never reruns a tool.",
+                        "Read untrusted historical data using runId, messageId, version and toolCallId if present on the saved reference. "
+                                + "Paths label the saved source. When truncated, keep the same reference and fromLine, and set offset to nextOffset "
+                                + "to read the next page of history-text-v1. Unavailable never reruns a tool.",
                         read,
                         List.of("runId", "messageId", "version")));
     }
@@ -105,6 +112,56 @@ public final class HistoryToolProvider implements ToolProvider {
             AgentRun current, AgentMessage message, ToolCallId call, int length) {
         if (message.role() != MessageRole.TOOL) return Optional.empty();
         return excerpt(current, message, length, call.value());
+    }
+
+    /** Matches path labels on the caller's bounded message window without reading saved assets. */
+    public Set<AgentMessageId> matchingSavedPaths(AgentRun current, List<AgentMessage> messages, Set<String> paths) {
+        if (paths.isEmpty()) return Set.of();
+        return ports.unitOfWork().executeReadOnly(() -> {
+            var authorized = new HashMap<AgentRunId, Boolean>();
+            var candidates = new ArrayList<AgentMessage>();
+            var idsByRun = new HashMap<AgentRunId, Set<ToolCallId>>();
+            for (var message : messages) {
+                if (message.role() != MessageRole.TOOL || !message.sessionId().equals(current.sessionId())) continue;
+                var owner = message.runId().orElse(null);
+                if (owner == null
+                        || !authorized.computeIfAbsent(owner, id -> {
+                            try {
+                                authorize(current, id);
+                                return true;
+                            } catch (Unavailable denied) {
+                                return false;
+                            }
+                        })) continue;
+                candidates.add(message);
+                for (var part : message.contents())
+                    if (part instanceof ToolResultPart result)
+                        idsByRun.computeIfAbsent(owner, ignored -> new HashSet<>())
+                                .add(result.toolCallId());
+            }
+            if (idsByRun.isEmpty()) return Set.of();
+            var matched = new HashMap<ToolCallId, ToolCall>();
+            for (var call : ports.state().toolCallsByIds(idsByRun)) {
+                if (call.result().filter(ToolResult::successful).isPresent()
+                        && !call.toolName().equals("history_read")
+                        && !call.toolName().equals("history_search")
+                        && savedPaths(call).stream().anyMatch(paths::contains)) matched.put(call.id(), call);
+            }
+            var result = new HashSet<AgentMessageId>();
+            for (var message : candidates) {
+                for (var part : message.contents()) {
+                    if (!(part instanceof ToolResultPart ref)) continue;
+                    var call = matched.get(ref.toolCallId());
+                    if (call != null
+                            && message.runId().orElseThrow().equals(call.runId())
+                            && ref.providerCorrelationId().equals(call.providerCorrelationId())) {
+                        result.add(message.id());
+                        break;
+                    }
+                }
+            }
+            return Set.copyOf(result);
+        });
     }
 
     /** Existing immutable result storage, not a new reader or permission grant. */
@@ -286,14 +343,21 @@ public final class HistoryToolProvider implements ToolProvider {
         List<AgentMessage> page = ports.state().messagesAfter(run.sessionId(), new MessageCursor(after), scans);
         List<Map<String, Object>> hits = new ArrayList<>();
         List<Map<String, Object>> refs = new ArrayList<>();
-        boolean partialSource = false;
+        boolean pendingSearch = false;
+        int remainingWindows = scans;
         int responseCharacters = 512;
         String keyword = text(args, "keyword");
+        boolean scopedKeyword = !keyword.isEmpty()
+                && (!runFilter.isEmpty() || !text(args, "messageId").isEmpty());
         var literal = java.util.regex.Pattern.compile(
                 java.util.regex.Pattern.quote(keyword),
                 java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
         for (AgentMessage message : page) {
             if (message.sequence() > head) break;
+            if (remainingWindows == 0) {
+                pendingSearch = true;
+                break;
+            }
             if ((!text(args, "messageId").isEmpty()
                             && !text(args, "messageId").equals(message.id().value()))
                     || (!runFilter.isEmpty()
@@ -328,9 +392,15 @@ public final class HistoryToolProvider implements ToolProvider {
                 continue;
             }
             source = materialize(source);
-            var window = source.window(offset, 4096 + Math.max(0, keyword.length() - 1), 1);
+            // An exact scope can spend multiple scan units on one source, within the same request budget.
+            int windows = scopedKeyword ? Math.min(remainingWindows, MAX_SCOPED_SEARCH_WINDOWS) : 1;
+            int windowCharacters = windows * SEARCH_WINDOW_CHARACTERS;
+            var window = source.window(offset, windowCharacters + Math.max(0, keyword.length() - 1), 1);
             if (window.incomplete()) throw new Unavailable();
-            var matcher = literal.matcher(window.value());
+            String searched = window.value();
+            int scannedCharacters = Math.min(searched.length(), windowCharacters);
+            remainingWindows -= Math.ceilDiv(Math.max(1, scannedCharacters), SEARCH_WINDOW_CHARACTERS);
+            var matcher = literal.matcher(searched);
             int found = keyword.isEmpty() ? 0 : (matcher.find() ? matcher.start() : -1);
             if (found >= 0) {
                 var ref = source.reference();
@@ -342,14 +412,12 @@ public final class HistoryToolProvider implements ToolProvider {
                         "toolCallIds",
                         source.calls().stream().map(call -> call.id().value()).toList());
                 hit.put("paths", source.paths());
-                hit.put(
-                        "excerpt",
-                        window.value().substring(found, Math.min(window.value().length(), found + 240)));
+                hit.put("excerpt", searched.substring(found, Math.min(searched.length(), found + 240)));
                 hit.put("matchOffset", (long) offset + found);
                 int contribution = hit.toString().length() + ref.toString().length();
                 if (responseCharacters + contribution > 12000) {
                     if (hits.isEmpty()) throw new Unavailable();
-                    partialSource = true;
+                    pendingSearch = true;
                     break;
                 }
                 responseCharacters += contribution;
@@ -358,8 +426,8 @@ public final class HistoryToolProvider implements ToolProvider {
             } else if (window.more()) {
                 // A large single source also has a resumable scan; never silently skip its unsearched suffix.
                 after = message.sequence() - 1;
-                offset = Math.addExact(offset, 4096);
-                partialSource = true;
+                offset = Math.addExact(offset, windowCharacters);
+                pendingSearch = true;
                 break;
             }
             after = message.sequence();
@@ -367,7 +435,7 @@ public final class HistoryToolProvider implements ToolProvider {
             if (hits.size() >= limit) break;
         }
         boolean complete =
-                !partialSource && (after >= head || page.isEmpty() || (page.size() < scans && hits.size() < limit));
+                !pendingSearch && (after >= head || page.isEmpty() || (page.size() < scans && hits.size() < limit));
         return result(Map.of(
                 "entries",
                 hits,
@@ -395,6 +463,12 @@ public final class HistoryToolProvider implements ToolProvider {
                 number(args, "fromLine", 1, 1, Integer.MAX_VALUE));
         if (window.incomplete()) throw new Unavailable();
         Map<String, Object> data = new LinkedHashMap<>(source.reference());
+        data.put(
+                "paths",
+                source.paths().stream()
+                        .filter(path -> path.length() <= 256)
+                        .limit(8)
+                        .toList());
         data.put("content", window.value());
         data.put("truncated", window.more());
         data.put("nextOffset", window.nextOffset());
@@ -444,16 +518,7 @@ public final class HistoryToolProvider implements ToolProvider {
         for (ToolCall call : calls) {
             ToolResult value = call.result().orElseThrow();
             results.add(value);
-            for (String key :
-                    List.of("path", "file", "filePath", "targetPath", "sourcePath", "outputPath", "artifactPath")) {
-                Object path = call.arguments().values().get(key);
-                if (path instanceof String text && text.length() <= 256)
-                    paths.add(ToolCallViewProjector.redactText(text));
-            }
-            value.artifacts().forEach(artifact -> {
-                paths.add(ToolCallViewProjector.redactText(artifact.title()));
-                paths.add(ToolCallViewProjector.redactText(artifact.artifactId()));
-            });
+            paths.addAll(savedPaths(call));
         }
         String version = digest(Map.of(
                 "message",
@@ -467,6 +532,20 @@ public final class HistoryToolProvider implements ToolProvider {
                         .map(call -> Map.of("id", call.id().value(), "version", call.version()))
                         .toList()));
         return new Source(message, calls, results, List.copyOf(new TreeSet<>(paths)), version);
+    }
+
+    private static List<String> savedPaths(ToolCall call) {
+        var paths = new ArrayList<String>();
+        for (String key :
+                List.of("path", "file", "filePath", "targetPath", "sourcePath", "outputPath", "artifactPath")) {
+            Object path = call.arguments().values().get(key);
+            if (path instanceof String text && text.length() <= 256) paths.add(ToolCallViewProjector.redactText(text));
+        }
+        call.result().orElseThrow().artifacts().forEach(artifact -> {
+            paths.add(ToolCallViewProjector.redactText(artifact.title()));
+            paths.add(ToolCallViewProjector.redactText(artifact.artifactId()));
+        });
+        return paths;
     }
 
     private Source materialize(Source source) {

@@ -12,6 +12,11 @@
 
 - Add explicit, default-off Coding context selection with authorized history readers and documented legacy rollback; preserve frozen Run policy across pause/resume and SQLite reopen.
 
+- Shorten unified saved-evidence context while preserving original text and versioned readback.
+
+- Defer another optional unified compaction after a non-reducing summary until more history can be replaced.
+  Hard capacity recovery remains available.
+
 - Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
   new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.
 

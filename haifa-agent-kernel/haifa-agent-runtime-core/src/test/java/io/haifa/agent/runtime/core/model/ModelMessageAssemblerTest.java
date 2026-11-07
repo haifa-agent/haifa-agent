@@ -18,6 +18,7 @@ import io.haifa.agent.context.item.ContextProvenance;
 import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ContextSecurity;
+import io.haifa.agent.context.item.HistoricalExcerptContent;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
@@ -79,6 +80,23 @@ import org.junit.jupiter.api.Test;
 
 class ModelMessageAssemblerTest {
     private static final AgentRunId RUN_ID = new AgentRunId("run-1");
+
+    @Test
+    void savedToolEvidenceDistinguishesCompleteSourcesFromPartialWindows() {
+        var run = new AgentRunId("saved-run");
+        var message = new AgentMessageId("saved-message");
+        var call = Optional.of(new ToolCallId("saved-call"));
+        var complete = new HistoricalExcerptContent(run, message, "v1", call, 0, 8, "evidence", false, false);
+        assertThat(ModelMessageAssembler.renderSavedToolEvidence(complete))
+                .isEqualTo("message=saved-message; version=v1; offset=0; window=8; full]\nevidence");
+
+        for (var partial : List.of(
+                new HistoricalExcerptContent(run, message, "v1", call, 0, 8, "evidence", true, false),
+                new HistoricalExcerptContent(run, message, "v1", call, 0, 8, "evidence", false, true),
+                new HistoricalExcerptContent(run, message, "v1", call, 1, 8, "evidence", false, false))) {
+            assertThat(ModelMessageAssembler.renderSavedToolEvidence(partial)).endsWith("; partial]\nevidence");
+        }
+    }
 
     @Test
     void preservesPromptAndContextOrder() {

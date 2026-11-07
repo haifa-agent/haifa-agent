@@ -252,14 +252,16 @@ class CodingBrowserHostTest {
                     5);
             try (var host = fixture.start(Optional.of(options));
                     var owner = host.embeddedClient()) {
-                var grant = pair(host, host.newPairingChallenge());
-                result(rpc(
-                        host, grant, "initialize", initialize(), host.endpoint().toString(), null));
                 var created = owner.execute(
                         CodingHostProductTest.create("accepted-create", "accepted-key", "run remains owned"));
                 String session = created.session().sessionId(),
                         run = created.receipt().runId();
                 assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+
+                // Start the short grant lifetime after the independent Run has entered the model.
+                var grant = pair(host, host.newPairingChallenge());
+                result(rpc(
+                        host, grant, "initialize", initialize(), host.endpoint().toString(), null));
                 var sub = result(rpc(host, grant, "presentation/subscribe", Map.of("sessionId", session), null, null));
                 var request = HttpRequest.newBuilder(host.endpoint()
                                 .resolve("/browser/v1/events?subscriptionId="

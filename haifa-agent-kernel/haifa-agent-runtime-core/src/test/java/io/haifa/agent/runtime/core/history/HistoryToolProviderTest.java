@@ -311,11 +311,14 @@ class HistoryToolProviderTest {
         assertThat(first.structuredData())
                 .containsEntry("truncated", true)
                 .containsEntry("sourceTruncated", false)
+                .containsEntry("paths", List.of("same.txt"))
                 .containsEntry("nextOffset", 12L)
                 .containsEntry("content", "stored versi");
         ref.put("fromLine", 3);
         ref.put("length", 11);
-        assertThat(invoke("history_read", ref).structuredData()).containsEntry("content", "second line");
+        assertThat(invoke("history_read", ref).structuredData())
+                .containsEntry("paths", List.of("same.txt"))
+                .containsEntry("content", "second line");
         assertThat(store.message(old.id())).contains(old);
     }
 
@@ -326,14 +329,17 @@ class HistoryToolProviderTest {
                 "output",
                 Map.of("body", "saved metadata"),
                 false,
-                List.of(new io.haifa.agent.core.reference.ArtifactRef(
-                        "deliverables/spec.md", "document", "v1", "Spec")));
+                List.of(
+                        new io.haifa.agent.core.reference.ArtifactRef("deliverables/spec.md", "document", "v1", "Spec"),
+                        new io.haifa.agent.core.reference.ArtifactRef(
+                                "long-label", "document", "v1", "title ".repeat(60))));
         var found = invoke("history_search", Map.of("path", "deliverables/spec.md"));
         assertThat(entries(found)).hasSize(1);
         assertThat(entries(found).getFirst())
                 .containsEntry("messageId", source.id().value());
-        assertThat(invoke("history_read", reference(source)).structuredData().get("content"))
-                .isEqualTo("stored version\nbody: saved metadata");
+        assertThat(invoke("history_read", reference(source)).structuredData())
+                .containsEntry("paths", List.of("Spec", "deliverables/spec.md", "long-label", "output"))
+                .containsEntry("content", "stored version\nbody: saved metadata");
     }
 
     @Test
@@ -359,6 +365,42 @@ class HistoryToolProviderTest {
         assertThat(entries(result)).hasSize(1);
         assertThat(entries(result).getFirst()).containsEntry("excerpt", "needle");
         assertThat(store.latestVersion(run.sessionId())).isZero();
+    }
+
+    @Test
+    void scopedKeywordSearchFindsLateMatchesAndKeepsBoundedPagesResumable() {
+        var longSource = message(run, "a".repeat(21_414) + "needle", MessageVisibility.USER_VISIBLE);
+        var shortSource = message(run, "another needle", MessageVisibility.USER_VISIBLE);
+        var args = new HashMap<String, Object>(Map.of("runId", run.id().value(), "keyword", "NEEDLE"));
+
+        var complete = invoke("history_search", args);
+        assertThat(complete.structuredData()).containsEntry("searchComplete", true);
+        assertThat(entries(complete))
+                .extracting(entry -> entry.get("messageId"))
+                .containsExactly(longSource.id().value(), shortSource.id().value());
+        assertThat(entries(complete).getFirst()).containsEntry("matchOffset", 21_414L);
+
+        // The fixture's initial user message spends one scan unit before the long source.
+        args.put("scanLimit", 6);
+        var partial = invoke("history_search", args);
+        assertThat(entries(partial)).isEmpty();
+        assertThat(partial.structuredData()).containsEntry("searchComplete", false);
+        args.put("cursor", partial.structuredData().get("nextCursor"));
+        var resumed = invoke("history_search", args);
+        assertThat(entries(resumed)).isEqualTo(entries(complete));
+        assertThat(resumed.structuredData()).containsEntry("searchComplete", true);
+
+        args.remove("cursor");
+        args.put("scanLimit", 7);
+        var first = invoke("history_search", args);
+        assertThat(entries(first)).singleElement().satisfies(entry -> assertThat(entry)
+                .containsEntry("messageId", longSource.id().value()));
+        assertThat(first.structuredData()).containsEntry("searchComplete", false);
+        args.put("cursor", first.structuredData().get("nextCursor"));
+        var next = invoke("history_search", args);
+        assertThat(entries(next)).singleElement().satisfies(entry -> assertThat(entry)
+                .containsEntry("messageId", shortSource.id().value()));
+        assertThat(next.structuredData()).containsEntry("searchComplete", true);
     }
 
     @Test

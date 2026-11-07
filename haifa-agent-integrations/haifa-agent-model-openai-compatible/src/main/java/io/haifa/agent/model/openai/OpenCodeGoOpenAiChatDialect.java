@@ -27,7 +27,8 @@ final class OpenCodeGoOpenAiChatDialect implements OpenAiCompatibleDialect {
     /** Stable product identity; the Go channel asks every client to name itself instead of the default JDK agent. */
     static final String USER_AGENT = "haifa-coding-agent/opencode-go";
 
-    private static final Set<String> MODELS = Set.of("deepseek-v4-pro", "deepseek-v4.1-flash", "kimi-k3");
+    private static final String DEEPSEEK_FLASH = "deepseek-v4.1-flash";
+    private static final Set<String> MODELS = Set.of("deepseek-v4-pro", DEEPSEEK_FLASH, "kimi-k3");
     private static final Set<String> HOSTS = Set.of("opencode.ai");
     private static final Set<String> LOOPBACK_HOSTS = Set.of("localhost", "127.0.0.1", "::1");
     private static final String REQUIRED_PATH = "/inference/go/openai/v1";
@@ -59,6 +60,11 @@ final class OpenCodeGoOpenAiChatDialect implements OpenAiCompatibleDialect {
     @Override
     public void applyRequest(AgentChatRequest request, Map<String, Object> body) {
         String thinking = frozen(request, "thinking", "disabled");
+        if ("disabled".equals(thinking) && DEEPSEEK_FLASH.equals(request.model().providerModelId())) {
+            // This Go binding can otherwise use the provider's thinking-on default.
+            body.put("thinking", Map.of("type", "disabled"));
+            return;
+        }
         if (!"enabled".equals(thinking)) return;
         // The channel translates the DeepSeek thinking contract, which rejects sampling and forced tool selection.
         if (request.options().containsKey("temperature")
