@@ -78,7 +78,11 @@ def fixture_snapshot(session,view_id):
     if session=='A':
         source=json.loads((ROOT/'haifa-agent-applications/haifa-coding-api/contract/fixtures/snapshot.json').read_text(encoding='utf-8'))
         message=source['entries'][0]
-        message.update(id='safe-message',text='<img src=x onerror="window.unsafeFixtureExecuted=true"> 中文 😀 \u001b[31m',interactionId=None)
+        message.update(
+            id='safe-message', role='assistant', status='FINAL', interactionId=None,
+            text='## 排查结论\n\n使用 **安全显示**。\n\n'
+                 '<img src=x onerror="window.unsafeFixtureExecuted=true"> 中文 😀 \u001b[31m',
+        )
         value['entries'].append(message)
         interaction=source['entries'][2]
         interaction['interaction'].update(kind='approval',input={'type':'none','maximumCharacters':0,'minimumSelections':0,'maximumSelections':0,'options':[],'questions':[]},review={'purpose':'仅合成夹具审批展示','contentType':'File content','content':'synthetic review content','environment':[],'technical':[],'risk':None,'targetComplete':True,'contentTruncated':False})
@@ -144,7 +148,13 @@ def main():
             else:
                 id_=data['id'];method=data['method'];network.append(method)
                 if method=='initialize':result={'protocolVersion':'1','hostIncarnation':'host-1','clientId':'client-1','projectId':'project-1','displayName':'Synthetic browser fixture','clientSource':'browser','browserAuthorization':'browser-grant-v1','optionalCapabilities':['coding-product-v1','session-presentation-v1','session-consent-v1']}
-                elif method=='product/query':result={'sessions':[fixture_summary(session) for session in ('A', 'B')],'run':None,'outcome':None,'models':[],'queuedMessages':[],'shellExecutions':[],'workspaces':[],'lines':[],'authentication':None,'truncated':False}
+                elif method=='product/query':
+                    result={'sessions':[fixture_summary(session) for session in ('A', 'B')],'run':None,'outcome':None,'models':[],'queuedMessages':[],'shellExecutions':[],'workspaces':[],'lines':[],'authentication':None,'truncated':False}
+                    if data['params']['operation']=='workspaces':
+                        result['workspaces']=[
+                            {'id':'extra','safeDisplayName':'另一个文件夹','mode':'DEVELOP','status':'ACTIVE','revocable':True},
+                            {'id':'primary','safeDisplayName':'示例项目','mode':'READ','status':'ACTIVE','revocable':False},
+                        ]
                 elif method=='presentation/subscribe':
                     subscriptions+=1;result={'subscriptionId':'subscription-'+str(subscriptions),'snapshot':fixture_snapshot(data['params']['sessionId'],'view-'+str(subscriptions))}
                 elif method=='product/command':
@@ -177,8 +187,13 @@ def main():
             page.route('**/browser/v1/**',protocol)
             page.get_by_label('一次性配对码',exact=True).fill('synthetic-challenge-NOT-REAL');page.get_by_role('button',name='连接工作区',exact=False).click()
             expect(page.locator('#pairing')).to_be_hidden();expect(page.locator('#pair-code')).to_have_value('')
+            expect(page.locator('#context .workspace-name')).to_have_text('示例项目')
+            expect(page.locator('#context')).to_contain_text('只读')
             receipt['stage']='synthetic-session-open'
             page.get_by_role('button',name='合成测试会话 A',exact=False).click();expect(page.locator('#session-title')).to_have_text('合成测试会话 A')
+            expect(page.locator('#context')).not_to_contain_text('Synthetic renderer fixture')
+            expect(page.locator('#transcript .reply-markdown h2')).to_have_text('排查结论')
+            expect(page.locator('#transcript .reply-markdown strong')).to_have_text('安全显示')
             expect(page.locator('#transcript img')).to_have_count(0);require(page.evaluate('window.unsafeFixtureExecuted===undefined'),'DISPLAY_TEXT_EXECUTED')
             receipt['stage']='synthetic-approval'
             approve=page.get_by_role('button',name='批准执行',exact=True);expect(approve).to_be_disabled()

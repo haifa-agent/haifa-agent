@@ -9,7 +9,9 @@ import {
   type QuestionAnswer,
   type SessionSummary,
   type Preview,
+  type Workspace,
 } from "@haifa-agent/coding-client";
+import { renderReplyMarkdown } from "./markdown";
 import {
   orderTranscriptEntries,
   reanchorHistory,
@@ -34,7 +36,7 @@ app.innerHTML = `<div class="workspace">
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
       <div class="transcript" id="transcript" tabindex="0" aria-label="会话内容"><section class="welcome" id="welcome"><div class="welcome-symbol" aria-hidden="true">✳</div><h2>把下一步，变成进展。</h2><p>连接工作区后，描述你想完成的事。<br>工具执行、审批与结果，会在同一个会话里呈现。</p><div class="suggestions"><button data-suggestion="帮我理解这个项目的结构和主要入口">理解项目结构 <span>↗</span></button><button data-suggestion="检查现有测试，帮我定位需要修复的问题">排查测试问题 <span>↗</span></button><button data-suggestion="帮我规划下一项功能的实现步骤">规划下一项功能 <span>↗</span></button></div></section></div>
       <div class="composer-wrap"><div id="session-toolbar" class="session-toolbar"></div><form id="compose-form" class="composer"><label for="draft" class="sr-only">描述你的任务</label><textarea id="draft" placeholder="描述你想完成的事…" rows="3" maxlength="16000"></textarea><div class="composer-footer"><span id="compose-hint">先连接工作区，再开始新的会话</span><button class="send" id="send" type="submit" aria-label="发送任务" disabled>↑</button></div></form><p class="composer-note">Agent 的结果需要核对。敏感工具操作将在执行前请求确认。</p></div>
-    </main><aside class="context-panel" aria-label="工作区上下文"><div class="context-title">上下文 <span aria-hidden="true">⌁</span></div><dl id="context"><dt>工作区</dt><dd>等待连接</dd><dt>授权范围</dt><dd>当前页面</dd></dl><div class="context-note"><span aria-hidden="true">◈</span><p>你的执行由 Host 持有。关闭页面会结束观察，已经接收的任务继续运行。</p></div></aside></div>
+    </main><aside class="context-panel" aria-label="工作区信息"><div class="context-title">工作区信息 <span aria-hidden="true">⌁</span></div><dl id="context"></dl><div class="context-note"><span aria-hidden="true">◈</span><p>关闭页面后，已接收的任务仍会在本机继续运行。</p></div></aside></div>
   </div></div>`;
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -45,6 +47,7 @@ let client: CodingBrowserClient | null = null,
   view: CodingObservation | null = null,
   offView: (() => void) | null = null;
 let connectionGeneration = 0;
+let primaryWorkspace: Workspace | null = null;
 let sessions: ReadonlyArray<SessionSummary> = [],
   searchGeneration = 0,
   busy = new Set<string>(),
@@ -193,27 +196,29 @@ function fact(term: string, value: string) {
 function renderContext() {
   const list = $("context");
   list.replaceChildren();
-  if (!client || client.state === "closed") {
+  if (client?.state !== "connected" && client?.state !== "offline") {
     fact("工作区", "等待连接");
-    fact("授权范围", "当前页面");
     return;
   }
-  const info = client.toJSON() as {
-    connection?: {
-      displayName: string;
-      projectId: string;
-      hostIncarnation: string;
-    };
-  };
-  if (info.connection) {
-    fact("Host", info.connection.displayName);
-    fact("项目", info.connection.projectId);
-  }
+  const name = primaryWorkspace?.safeDisplayName;
+  const workspace = el("div", "workspace-fact");
+  workspace.append(
+    el("dt", "", "主工作区"),
+    el(
+      "dd",
+      "workspace-name",
+      name && !/^workspace-[a-f0-9]{12}$/i.test(name) ? name : "本机项目文件夹",
+    ),
+    el("dd", "workspace-source", "由启动 Coding Agent 的本机服务指定"),
+  );
+  list.append(workspace);
+  const mode = primaryWorkspace?.mode;
+  if (mode === "READ" || mode === "DEVELOP")
+    fact("文件访问", mode === "READ" ? "只读" : "可读取和修改");
   if (view) {
     const s = view.snapshot.session;
     fact("模型", s.modelName || s.modelId);
     fact("模型状态", s.modelAvailable ? "可用" : "需要在 Host 端修复后刷新");
-    fact("工作区来源", s.context);
     fact(
       "会话授权",
       view.snapshot.consent.state === "ACTIVE"
@@ -226,6 +231,36 @@ function renderContext() {
     "连接有效至",
     new Date(client.expiresAtEpochMillis).toLocaleTimeString(),
   );
+}
+async function refreshWorkspace(requester: CodingBrowserClient) {
+  const generation = connectionGeneration;
+  let workspace: Workspace | null = null;
+  try {
+    const result = await requester.query({
+      operation: "workspaces",
+      target: {
+        projectId: requester.connection.projectId,
+        sessionId: null,
+        runId: null,
+        interactionId: null,
+        targetRevision: null,
+      },
+      search: null,
+      limit: 100,
+      executionId: null,
+    });
+    workspace = result.workspaces.find((item) => !item.revocable) ?? null;
+  } catch {
+    // Workspace details are optional. Pairing and conversation still work on older Hosts.
+  }
+  if (client !== requester || generation !== connectionGeneration) return;
+  primaryWorkspace = workspace;
+  scheduleRender();
+}
+function reply(text: string) {
+  const body = el("div", "reply-markdown");
+  body.innerHTML = renderReplyMarkdown(text);
+  return body;
 }
 function rememberInput(
   input: HTMLInputElement | HTMLTextAreaElement,
@@ -432,7 +467,11 @@ function renderEntry(entry: Entry, older = false) {
   card.append(heading);
   if (entry.title && entry.kind !== "message")
     card.append(el("h3", "", entry.title));
-  card.append(el("pre", "entry-text", entry.text));
+  card.append(
+    entry.kind === "message" && entry.role === "assistant"
+      ? reply(entry.text)
+      : el("pre", "entry-text", entry.text),
+  );
   if (entry.truncated)
     card.append(el("small", "warning", "展示内容已截断，请核对完整结果。"));
   if (entry.kind === "interaction" && entry.interaction && !older)
@@ -523,7 +562,7 @@ function renderTranscript() {
     const lane = el("article", "entry live-entry");
     lane.append(
       el("div", "entry-role", "Agent · 进行中"),
-      el("pre", "entry-text", live.text),
+      reply(live.text),
     );
     if (live.truncated)
       lane.append(el("small", "warning", "实时正文已截断；请以最终历史为准。"));
@@ -925,8 +964,10 @@ function appendPreview(frame: Preview) {
 }
 async function recover() {
   if (!client) return;
+  const requester = client;
   try {
-    await client.foreground();
+    await requester.foreground();
+    if (client === requester) void refreshWorkspace(requester);
     await refreshList();
     message("已重新核对连接与会话状态。");
   } catch (error) {
@@ -957,6 +998,8 @@ $("pair-form").addEventListener("submit", (event) => {
         return;
       }
       client = paired;
+      primaryWorkspace = null;
+      void refreshWorkspace(paired);
       state.bindWorkspace(paired.connection.projectId);
       history.clear();
       interactionInputs.clear();

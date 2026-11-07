@@ -14,7 +14,8 @@
     "npm": "10.x"
   },
   "dependencies": {
-    "@haifa-agent/coding-client": "file:../haifa-coding-browser-client/artifacts/haifa-agent-coding-client-0.1.5-b3.0.tgz"
+    "@haifa-agent/coding-client": "file:../haifa-coding-browser-client/artifacts/haifa-agent-coding-client-0.1.5-b3.0.tgz",
+    "markdown-it": "15.0.3"
   },
   "devDependencies": {
     "typescript": "5.9.3",

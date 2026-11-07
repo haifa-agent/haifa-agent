@@ -549,11 +549,29 @@ h3 {
   justify-content: space-between;
   font-weight: 550;
   color: #66745e;
-  margin-bottom: 30px;
+  margin-bottom: 18px;
 }
 .context-title span {
   font-size: 18px;
   color: #a1ad98;
+}
+.workspace-fact {
+  padding: 12px;
+  border: 1px solid #e3eadc;
+  border-radius: 8px;
+  background: #f4f8ef;
+}
+.workspace-fact dt {
+  margin: 0 0 4px;
+  color: #536749;
+}
+.workspace-fact .workspace-name {
+  color: #334b29;
+  font-size: 14px;
+  font-weight: 600;
+}
+.workspace-fact .workspace-source {
+  margin-top: 4px;
 }
 dl {
   margin: 0;
@@ -629,6 +647,58 @@ dd {
   font-size: 13px;
   line-height: 1.95;
 }
+.reply-markdown {
+  color: #34452d;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.reply-markdown > :first-child { margin-top: 0; }
+.reply-markdown > :last-child { margin-bottom: 0; }
+.reply-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1em 0 0.5em;
+  line-height: 1.35;
+  letter-spacing: normal;
+}
+.reply-markdown :is(h1, h2) { font-size: 1.35em; }
+.reply-markdown :is(h3, h4, h5, h6) { font-size: 1.12em; }
+.reply-markdown :is(p, ul, ol, blockquote, pre, table) { margin: 0.75em 0; }
+.reply-markdown :is(ul, ol) { padding-inline-start: 1.55em; }
+.reply-markdown blockquote {
+  border-inline-start: 3px solid #b5c5ac;
+  padding-inline-start: 12px;
+  color: #536749;
+}
+.reply-markdown a { color: #325e87; text-decoration: underline; }
+.reply-markdown code {
+  border-radius: 4px;
+  padding: 0.12em 0.3em;
+  background: #edf2e9;
+  font: 0.93em ui-monospace, Consolas, monospace;
+}
+.reply-markdown pre {
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid #e3eadc;
+  border-radius: 8px;
+  background: #f4f7f1;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.reply-markdown pre code { padding: 0; background: none; }
+.reply-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.reply-markdown :is(th, td) {
+  padding: 5px 10px;
+  border: 1px solid #dfe8d7;
+}
+.reply-markdown th { background: #eef3e9; }
+.reply-markdown .align-left { text-align: left; }
+.reply-markdown .align-center { text-align: center; }
+.reply-markdown .align-right { text-align: right; }
 .entry-tool {
   background: #f8faf5;
   padding: 16px;
