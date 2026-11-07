@@ -25,14 +25,18 @@ Fresh builds use the committed lockfiles. The tarball itself is ignored, reprodu
 is not a public npm release. A compatible trusted Host owner can later supply `dist` through its
 public `BrowserOptions`.
 
-The prepared UI includes session search/list/create/open, ordinary input, safe plain-text message/tool
-facts and live output, exact-target approval/structured clarification/cancellation, bounded independent
+The prepared UI includes session search/list/create/open, ordinary input, Markdown replies and live
+output, exact-target approval/structured clarification/cancellation, bounded independent
 history, connection/recovery status and Host/workspace/model context. Approval requires explicit review;
 an active session consent lease can handle eligible new approvals once per exact target. Revoke it in the session toolbar to return to per-call confirmation.
 The selected row takes its Run status from the same confirmed observation as the conversation.
 The transcript places transient tools before their Run's final reply and preserves durable history order.
-Unknown interaction types are unavailable. The Web UI has no editor/file tree/PTY, model-key form or arbitrary
-HTML/Markdown execution. Trusted incoming text uses DOM textContent, never payload HTML.
+The workspace panel uses the primary workspace from the SDK's structured workspace query. The panel
+describes its source and file access in plain language. Opaque workspace labels fall back to a generic
+local project folder label.
+Unknown interaction types are unavailable. The Web UI has no editor/file tree/PTY or model-key form.
+Assistant replies use Markdown with raw HTML disabled, HTTP(S) links only, and image alt text in place
+of media. User input, tool output and approval review continue to render as literal text.
 
 Drafts, caret, reading position and unfinished interaction input remain in page memory across session
 switches. SDK owns confirmed authority/request correlation/recovery; UI owns rendering and selection
