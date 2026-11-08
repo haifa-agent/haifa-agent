@@ -22,7 +22,12 @@ class ProductArchitectureTest {
     @Test
     void publicEntrypointsExposeOnlyJdkAndProductTypes() {
         for (Class<?> type : java.util.List.of(
-                HostOptions.class, BrowserOptions.class, PairingChallenge.class, CodingHost.class, CodingHosts.class)) {
+                HostOptions.class,
+                BrowserOptions.class,
+                BrowserIngress.class,
+                PairingChallenge.class,
+                CodingHost.class,
+                CodingHosts.class)) {
             for (var method : type.getDeclaredMethods())
                 if (java.lang.reflect.Modifier.isPublic(method.getModifiers())) {
                     org.assertj.core.api.Assertions.assertThat(method.toGenericString())

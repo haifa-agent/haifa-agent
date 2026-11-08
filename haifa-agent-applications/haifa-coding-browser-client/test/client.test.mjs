@@ -97,6 +97,8 @@ function changed(view, predicate) {
   return ready.promise;
 }
 class Wire {
+  origin = "http://127.0.0.1:19744";
+  credentials = "omit";
   calls = [];
   subscriptions = 0;
   streams = [];
@@ -120,8 +122,8 @@ class Wire {
     return next.promise;
   }
   fetch = async (url, options = {}) => {
-    assert.equal(new URL(url).origin, "http://127.0.0.1:19744");
-    assert.equal(options.credentials, "omit");
+    assert.equal(new URL(url).origin, this.origin);
+    assert.equal(options.credentials, this.credentials);
     assert.equal(options.redirect, "error");
     assert.equal(new URL(url).searchParams.has("grant"), false);
     if (url.endsWith("/info"))
@@ -199,7 +201,7 @@ class Wire {
   };
   pair(options = {}) {
     return CodingBrowserClient.pair("fixture-challenge-NOT-REAL", {
-      origin: "http://127.0.0.1:19744",
+      origin: this.origin,
       fetch: this.fetch,
       ...options,
     });
@@ -426,6 +428,36 @@ test("automatic network recovery is bounded and does not create a new client or 
     assert.equal(wire.mutations, 0);
   } finally {
     view.close();
+    await client.close();
+  }
+});
+
+test("gateway session is HTTPS opt-in and a marked ingress denial is a known rejection", async () => {
+  const wire = new Wire();
+  await assert.rejects(wire.pair({ gatewaySession: true }), {
+    code: "GATEWAY_HTTPS_REQUIRED",
+  });
+  wire.origin = "https://127.0.0.1:19744";
+  wire.credentials = "same-origin";
+  const client = await wire.pair({ gatewaySession: true });
+  try {
+    const view = await client.observe("session-1");
+    await changed(view, () => wire.calls.includes("events"));
+    wire.onCommand = () => new Response(null, { status: 401 });
+    const unmarked = await client.execute(command("unmarked"));
+    assert.equal(unmarked.receipt.disposition, "unknown");
+    assert.equal(client.state, "connected");
+    wire.onCommand = () =>
+      new Response(null, {
+        status: 401,
+        headers: { "X-Haifa-Gateway-Session": "required" },
+      });
+    const commandResult = await client.execute(command());
+    assert.equal(commandResult.receipt.disposition, "rejected");
+    assert.equal(commandResult.receipt.reasonCode, "GATEWAY_SESSION_REQUIRED");
+    assert.equal(client.state, "pairing-required");
+    assert.equal(wire.mutations, 2);
+  } finally {
     await client.close();
   }
 });

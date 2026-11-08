@@ -25,6 +25,9 @@ PROBE = r'''(() => {
   const r=await fetch('/browser/v1/rpc',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(grant||'')},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
   const body=await r.json(); return {status:r.status,body};
  }
+ function eventResponse(id) {
+  return fetch('/browser/v1/events?subscriptionId='+encodeURIComponent(id),{headers:{'Authorization':'Bearer '+grant}});
+ }
  window.probe={
   async pair(value) {
    const r=await fetch('/browser/v1/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({challenge:value.challenge,hostIncarnation:value.hostIncarnation})});
@@ -32,14 +35,23 @@ PROBE = r'''(() => {
    grant=b.result.grant; current=b.result; return {clientId:current.clientId,hostIncarnation:current.hostIncarnation};
   },
   rpc,
-  async attach(id) {
-   const r=await fetch('/browser/v1/events?subscriptionId='+encodeURIComponent(id),{headers:{'Authorization':'Bearer '+grant}});
+  async inspectEvents(id) {
+   const r=await eventResponse(id);
+   await r.body?.cancel();
+   return {status:r.status,gatewaySession:r.headers.get('X-Haifa-Gateway-Session')};
+  },
+  async attach(id, paused=false) {
+   const r=await eventResponse(id);
    if(r.status!==200)throw Error('SSE attach failed');
-   stream={closed:false,bytes:0}; const state=stream;
-   (async()=>{const reader=r.body.getReader();try {for(;;){const n=await reader.read();if(n.done)break;state.bytes+=n.value.length;}}catch(e){}finally{state.closed=true;reader.releaseLock();}})();
+   stream={closed:false,failed:false,bytes:0,resume:null}; const state=stream;
+   (async()=>{const reader=r.body.getReader();try {
+     if(paused) await new Promise(resolve=>{state.resume=resolve;});
+     for(;;){const n=await reader.read();if(n.done)break;state.bytes+=n.value.length;}
+   }catch(e){state.failed=true;}finally{state.closed=true;reader.releaseLock();}})();
    return r.status;
   },
-  stream(){return stream&&{closed:stream.closed,bytes:stream.bytes};},
+  resume(){stream.resume?.();},
+  stream(){return stream&&{closed:stream.closed,failed:stream.failed,bytes:stream.bytes};},
   storageEmpty(){return localStorage.length===0&&sessionStorage.length===0&&document.cookie==='';}
  };
 })();'''
@@ -58,6 +70,7 @@ class Stub:
     def __init__(self, workspace: Path):
         self.calls = 0
         self.mode = 'approval'
+        self.respond = None
         self.entered = threading.Event()
         self.release = threading.Event()
         owner = self
@@ -66,14 +79,18 @@ class Stub:
                 pass
             def do_POST(self):
                 # Consume synthetic input without retaining prompts or Provider payloads.
-                self.rfile.read(int(self.headers['Content-Length']))
+                request = self.rfile.read(int(self.headers['Content-Length']))
                 owner.calls += 1
                 if owner.mode == 'hold':
                     owner.entered.set()
                     require(owner.release.wait(45), 'STUB_HOLD_TIMEOUT')
                 message = {'role': 'assistant', 'content': 'external-safe-completion'}
                 finish = 'stop'
-                if owner.calls == 1:
+                respond = owner.respond
+                if respond is not None:
+                    message = respond(json.loads(request))
+                    finish = 'tool_calls' if 'tool_calls' in message else 'stop'
+                elif owner.calls == 1:
                     message = {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'external-file-call', 'type': 'function', 'function': {'name': 'file_create', 'arguments': json.dumps({'path': str(workspace / 'approved.txt'), 'content': 'external-approved-content'})}}]}
                     finish = 'tool_calls'
                 body = json.dumps({'id': 'stub', 'object': 'chat.completion', 'created': 0, 'model': 'deepseek-flash', 'choices': [{'index': 0, 'message': message, 'finish_reason': finish}], 'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}).encode()
@@ -81,7 +98,10 @@ class Stub:
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.wfile.write(body)
+                except ConnectionError:
+                    pass  # The exact-cancel probe can interrupt an outstanding request.
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.server.daemon_threads = True
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -109,7 +129,12 @@ class Owner:
                     pass
         self.reader = threading.Thread(target=receive, daemon=True)
         self.reader.start()
-        ready = self.reply('ready')
+        try:
+            ready = self.reply('ready')
+        except BaseException:
+            self.process.kill()
+            self.process.wait(timeout=5)
+            raise
         self.endpoint = ready['endpoint']
         self.project = ready['projectId']
 

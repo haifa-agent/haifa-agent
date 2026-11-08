@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.5-SNAPSHOT
 
+- Add an opt-in Coding Web HTTPS ingress profile for same-origin Nginx, with a trusted proxy
+  boundary and optional gateway session checks for browser RPC and SSE.
+
 - Add preview Coding product contracts, a lightweight Java Client and Host, a packed browser SDK,
   and same-origin Web. Add isolated preview publishing and independent Maven and npm consumer examples.
 - Route the opt-in Terminal through product observation, history, and exact commands while retaining
