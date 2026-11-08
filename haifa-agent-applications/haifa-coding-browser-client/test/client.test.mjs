@@ -443,6 +443,10 @@ test("gateway session is HTTPS opt-in and a marked ingress denial is a known rej
   try {
     const view = await client.observe("session-1");
     await changed(view, () => wire.calls.includes("events"));
+    wire.onCommand = () => new Response(null, { status: 401 });
+    const unmarked = await client.execute(command("unmarked"));
+    assert.equal(unmarked.receipt.disposition, "unknown");
+    assert.equal(client.state, "connected");
     wire.onCommand = () =>
       new Response(null, {
         status: 401,
@@ -452,7 +456,7 @@ test("gateway session is HTTPS opt-in and a marked ingress denial is a known rej
     assert.equal(commandResult.receipt.disposition, "rejected");
     assert.equal(commandResult.receipt.reasonCode, "GATEWAY_SESSION_REQUIRED");
     assert.equal(client.state, "pairing-required");
-    assert.equal(wire.mutations, 1);
+    assert.equal(wire.mutations, 2);
   } finally {
     await client.close();
   }

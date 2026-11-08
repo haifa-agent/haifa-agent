@@ -73,7 +73,8 @@ class Gateway:
                     self.path == "/verify"
                     and time.monotonic() < gateway.expiry
                     and self.headers.get("Cookie") == "coding_gateway=" + gateway.cookie
-                    and self.headers.get("Authorization") is None
+                    and all(self.headers.get(name) is None for name in
+                            ("Authorization", "Origin", "X-Haifa-Proxy-Proof", "X-CA-Client-ID"))
                 )
                 self.send_response(204 if authorized else 401)
                 self.end_headers()
@@ -319,29 +320,36 @@ def browser_flow(page, owner, stub, root, evidence, nginx):
     evidence["checks"].append("dropped-accepted-receipt-unknown-no-replay")
 
 
-def gateway_expiry(page, owner, gateway, evidence):
+def gateway_expiry(page, owner, gateway, stub, evidence):
     bound = initialize_probe(page, owner)
     subscription = subscribe_probe(page, get_session(page))
     sub_id = subscription["subscriptionId"]
     page.evaluate("(id) => probe.attach(id)", sub_id)
     await_page(page, "probe.stream()?.bytes > 0")
     before = page.evaluate("probe.stream().bytes")
-    gateway.expiry = time.monotonic()
-    denied = page.evaluate("""async id => {
-        const rpc = await fetch('/browser/v1/rpc',{method:'POST',credentials:'same-origin',
-            headers:{'Content-Type':'application/json'},body:'{}'});
-        const sse = await fetch('/browser/v1/events?subscriptionId='+encodeURIComponent(id),
-            {credentials:'same-origin'});
-        return [rpc.status,sse.status,rpc.headers.get('X-Haifa-Gateway-Session'),
-            sse.headers.get('X-Haifa-Gateway-Session')];
-    }""", sub_id)
-    b2.require(denied == [401, 401, "required", "required"], "GATEWAY_EXPIRY")
-    await_page(page, f"probe.stream()?.bytes > {before} && !probe.stream().closed")
-    page.evaluate("window.dispatchEvent(new Event('online'))")
+    calls = stub.calls
+    draft = page.locator("#draft")
+    text = "This fixture command must be rejected by the expired gateway."
+    draft.fill(text)
+    await_page(page, "!document.querySelector('#send').disabled")
+    with page.expect_response(lambda response: response.url.endswith("/browser/v1/rpc")
+                              and response.request.post_data_json.get("method") == "product/command") as receipt:
+        gateway.expiry = time.monotonic()
+        page.locator("#send").click()
+    response = receipt.value
+    b2.require(response.status == 401 and response.headers.get("x-haifa-gateway-session") == "required",
+               "GATEWAY_EXPIRY_RPC")
     page.get_by_text("网关会话已失效。请重新登录网关，再重新配对并核对任务状态。", exact=True).wait_for()
+    page.locator("#pairing").wait_for()
+    b2.require(draft.input_value() == text, "GATEWAY_EXPIRY_LOST_DRAFT")
+    denied = page.evaluate("(id) => probe.inspectEvents(id)", sub_id)
+    b2.require(denied == {"status": 401, "gatewaySession": "required"}, "GATEWAY_EXPIRY_SSE")
+    await_page(page, f"probe.stream()?.bytes > {before} && !probe.stream().closed")
     owner.command("revoke " + bound["clientId"], "revoked")
     b2.await_stream_closed(page, 20)
+    b2.require(stub.calls == calls, "EXPIRED_GATEWAY_COMMAND_REACHED_PROVIDER")
     evidence["checks"].append("gateway-expiry-denies-new-streams-host-revoke-closes-existing")
+    evidence["checks"].append("gateway-expired-command-shows-login-retains-draft")
 
 
 def initialize_probe(page, owner):
@@ -531,17 +539,7 @@ def host_grants(context, page, external, owner, restart, host_port, evidence):
     second = context.new_page()
     second.goto(external + "/browser/")
     initialize_probe(second, owner)
-    code = second.evaluate("""async id => {
-        const request = window.fetch;
-        let status;
-        window.fetch = async (...args) => {
-            const response = await request(...args);
-            status = response.status;
-            return response;
-        };
-        try { await probe.attach(id); } catch {} finally { window.fetch = request; }
-        return status;
-    }""", sub_id)
+    code = second.evaluate("(id) => probe.inspectEvents(id)", sub_id)["status"]
     b2.require(code in (403, 404, 409), "CROSS_CLIENT_SUBSCRIPTION")
     b2.result(second.evaluate("() => probe.rpc('client/renew')"))
     owner.command("revoke " + first["clientId"], "revoked")
@@ -644,7 +642,8 @@ def main():
                 return fresh
             stage = "https-route"
             tls = ssl.create_default_context(cafile=str(cert))
-            for path in ("/v1/rpc", "/v1/events", "/health", "/__haifa_gateway", "/browser/v1/unknown"):
+            for path in ("/v1/rpc", "/v1/events", "/health", "/__haifa_gateway", "/browser/v1/unknown",
+                         "/browser/assets/%2e%2e/%2e%2e/v1/rpc"):
                 b2.require(status(HTTPSConnection, "localhost", listen_port, path, context=tls) == 404, "PUBLIC_ROUTE")
             b2.require(status(HTTPSConnection, "localhost", listen_port, "/browser/",
                               {"Host": "wrong.example"}, context=tls) == 421, "WRONG_EXTERNAL_HOST")
@@ -654,10 +653,15 @@ def main():
                             "Content-Type": "application/json"}
             if gateway:
                 wrong_origin["Cookie"] = "coding_gateway=" + gateway.cookie
-            b2.require(status(HTTPSConnection, "localhost", listen_port, "/browser/v1/pair", wrong_origin,
-                              json.dumps({"challenge": challenge["challenge"],
-                                          "hostIncarnation": challenge["hostIncarnation"]}), context=tls) == 403,
-                       "FORWARDED_ORIGIN_BYPASS")
+            pair_body = json.dumps({"challenge": challenge["challenge"],
+                                    "hostIncarnation": challenge["hostIncarnation"]})
+            valid_origin = {**wrong_origin, "Origin": external}
+            no_origin = {name: value for name, value in wrong_origin.items() if name != "Origin"}
+            for headers in (wrong_origin, no_origin, {**valid_origin, "origin": "https://evil.example"}):
+                b2.require(status(HTTPSConnection, "localhost", listen_port, "/browser/v1/pair", headers,
+                                  pair_body, context=tls) == 403, "FORWARDED_ORIGIN_BYPASS")
+            b2.require(status(HTTPSConnection, "localhost", listen_port, "/browser/v1/pair", valid_origin,
+                              pair_body, context=tls) == 200, "PROXY_DID_NOT_REPLACE_FORGED_PROOF")
             b2.require(status(HTTPConnection, "127.0.0.1", host_port, "/browser/v1/info",
                               {"X-Forwarded-Host": f"localhost:{listen_port}", "X-Haifa-Proxy-Proof": "forged"}) == 403,
                        "DIRECT_BROWSER_UPSTREAM")
@@ -683,7 +687,7 @@ def main():
                 idle_timeout(context, external, owner, nginx, listen_port, tls, gateway, evidence)
                 if gateway:
                     stage = "gateway-expiry"
-                    gateway_expiry(page, owner, gateway, evidence)
+                    gateway_expiry(page, owner, gateway, stub, evidence)
                 else:
                     stage = "host-grants"
                     host_grants(context, page, external, owner, restart, host_port, evidence)

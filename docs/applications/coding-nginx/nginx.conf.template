@@ -44,6 +44,8 @@ http {
         include "{{PROXY_PROOF_INCLUDE}}";
         proxy_next_upstream off;
         proxy_intercept_errors off;
+        proxy_hide_header X-Haifa-Gateway-Session;
+        proxy_ignore_headers X-Accel-Redirect X-Accel-Buffering;
         proxy_cache off;
 
         {{GATEWAY_SESSION_INCLUDE}}
@@ -56,7 +58,6 @@ http {
         location = /browser/v1/events {
             proxy_pass http://127.0.0.1:{{HOST_PORT}};
             proxy_buffering off;
-            proxy_ignore_headers X-Accel-Buffering;
             proxy_ignore_client_abort off;
             proxy_read_timeout 15s;
             send_timeout 15s;

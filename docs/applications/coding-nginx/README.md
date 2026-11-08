@@ -38,8 +38,9 @@ Build Web with `VITE_HAIFA_CODING_GATEWAY_SESSION=true` and render
 must return 2xx for a valid session and 401 for a missing or expired session. Cookie issuance
 belongs to that gateway. Use a Secure, HttpOnly, same-site cookie, and use `nginx -V` to verify
 the auth request module. The include sends only the cookie to the verifier, and returns a
-marked 401 for a failed session check before forwarding. The browser then asks the operator
-to log in and pair again. Host authorization remains independent.
+marked 401 for a failed session check before forwarding. Nginx strips the marker from upstream
+responses, so only the ingress can certify that it rejected a request before Host admission.
+The browser then asks the operator to log in and pair again. Host authorization remains independent.
 
 Gateway session expiry rejects new RPC and SSE requests. A request-time session check leaves
 an already-open SSE connection established. Host grant revocation or expiry closes its

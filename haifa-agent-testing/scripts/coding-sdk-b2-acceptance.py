@@ -25,6 +25,9 @@ PROBE = r'''(() => {
   const r=await fetch('/browser/v1/rpc',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(grant||'')},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
   const body=await r.json(); return {status:r.status,body};
  }
+ function eventResponse(id) {
+  return fetch('/browser/v1/events?subscriptionId='+encodeURIComponent(id),{headers:{'Authorization':'Bearer '+grant}});
+ }
  window.probe={
   async pair(value) {
    const r=await fetch('/browser/v1/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({challenge:value.challenge,hostIncarnation:value.hostIncarnation})});
@@ -32,8 +35,13 @@ PROBE = r'''(() => {
    grant=b.result.grant; current=b.result; return {clientId:current.clientId,hostIncarnation:current.hostIncarnation};
   },
   rpc,
+  async inspectEvents(id) {
+   const r=await eventResponse(id);
+   await r.body?.cancel();
+   return {status:r.status,gatewaySession:r.headers.get('X-Haifa-Gateway-Session')};
+  },
   async attach(id, paused=false) {
-   const r=await fetch('/browser/v1/events?subscriptionId='+encodeURIComponent(id),{headers:{'Authorization':'Bearer '+grant}});
+   const r=await eventResponse(id);
    if(r.status!==200)throw Error('SSE attach failed');
    stream={closed:false,failed:false,bytes:0,resume:null}; const state=stream;
    (async()=>{const reader=r.body.getReader();try {

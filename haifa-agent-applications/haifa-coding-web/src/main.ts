@@ -803,13 +803,18 @@ function acknowledge(result: CommandResult, session: string | null) {
         "操作结果未知。任务可能已被接收，请先核对权威会话和历史；本页不会自动重发。",
         true,
       );
-  } else if (state.selected === session)
+  } else if (state.selected === session) {
+    if (result.receipt.reasonCode === "GATEWAY_SESSION_REQUIRED") {
+      message(explain(new CodingClientError(result.receipt.reasonCode)), true);
+      return;
+    }
     message(
       result.receipt.disposition === "accepted"
         ? "已接收操作。执行结果以会话中的最新状态为准。"
         : "操作未被接受，请刷新权威状态后核对。",
       result.receipt.disposition === "rejected",
     );
+  }
 }
 async function perform(
   available: Action,
@@ -971,7 +976,8 @@ async function recover() {
     await requester.foreground();
     if (client === requester) void refreshWorkspace(requester);
     await refreshList();
-    message("已重新核对连接与会话状态。");
+    if (client === requester && requester.state === "connected")
+      message("已重新核对连接与会话状态。");
   } catch (error) {
     message(explain(error), true);
   } finally {
@@ -1024,7 +1030,8 @@ $("pair-form").addEventListener("submit", (event) => {
       state.select(null);
       restoreDraft();
       await refreshList();
-      message("工作区已连接。请选择已有会话，或开始一个新任务。");
+      if (client === paired && paired.state === "connected")
+        message("工作区已连接。请选择已有会话，或开始一个新任务。");
     } catch (error) {
       message(explain(error), true);
     } finally {
