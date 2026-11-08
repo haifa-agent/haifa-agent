@@ -12,7 +12,7 @@
 
 - Add explicit, default-off Coding context selection with authorized history readers and documented legacy rollback; preserve frozen Run policy across pause/resume and SQLite reopen.
 
-- Shorten unified saved-evidence context while preserving original text and versioned readback.
+- Use reversible coordinates in unified saved evidence and reuse complete reads for files confirmed unchanged.
 
 - Wait for more removable history before starting a small optional unified checkpoint or retrying a
   non-reducing summary. Hard capacity recovery remains available.

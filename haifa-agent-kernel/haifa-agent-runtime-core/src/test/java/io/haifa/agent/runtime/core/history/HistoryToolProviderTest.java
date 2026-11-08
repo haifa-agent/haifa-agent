@@ -444,6 +444,17 @@ class HistoryToolProviderTest {
         var missing = new HashMap<>(ref);
         missing.put("messageId", "absent");
         var denied = invoke("history_read", missing);
+        var excerpt = provider.excerpt(run, visible, 2048).orElseThrow();
+        var coordinates = provider.refreshForProjection(run.id(), excerpt, true)
+                .orElseThrow()
+                .compactCoordinates()
+                .orElseThrow();
+        var compact = Map.<String, Object>of(
+                "runId", ref.get("runId"), "messageId", coordinates.messageId(), "version", coordinates.version());
+        assertThat(invoke("history_read", compact)).isEqualTo(invoke("history_read", ref));
+        var staleCompact = new HashMap<>(compact);
+        staleCompact.put("version", "d:0");
+        assertThat(invoke("history_read", staleCompact)).isEqualTo(denied);
         var stale = new HashMap<>(ref);
         stale.put("version", "wrong");
         assertThat(invoke("history_read", stale)).isEqualTo(denied);
@@ -453,6 +464,9 @@ class HistoryToolProviderTest {
         outside.put("runId", foreign.id().value());
         outside.put("messageId", foreignMessage.id().value());
         assertThat(invoke("history_read", outside)).isEqualTo(denied);
+        var outsideCompact = new HashMap<>(compact);
+        outsideCompact.put("runId", foreign.id().value());
+        assertThat(invoke("history_read", outsideCompact)).isEqualTo(denied);
         var otherProject = createRun("session", Optional.of(new io.haifa.agent.core.reference.ProjectRef("other")));
         var projectMessage = message(otherProject, "private project", MessageVisibility.USER_VISIBLE);
         var projectRef = new HashMap<>(ref);
@@ -494,8 +508,10 @@ class HistoryToolProviderTest {
         assertThat(invoke(guarded, "history_read", ref).successful()).isTrue();
         revoked.set(true);
         assertThat(invoke(guarded, "history_read", ref)).isEqualTo(denied);
+        assertThat(invoke(guarded, "history_read", compact)).isEqualTo(denied);
         store.redactMessage(visible.id());
         assertThat(invoke("history_read", ref)).isEqualTo(denied);
+        assertThat(invoke("history_read", compact)).isEqualTo(denied);
     }
 
     @Test

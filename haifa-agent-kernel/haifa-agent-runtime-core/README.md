@@ -34,10 +34,13 @@ Consecutive unified excerpts from one saved Run share its Run identifier in the 
 excerpts from that Run share one untrusted data message. Each excerpt keeps its message identifier, version, range
 and body, and is revalidated independently. A saved Tool excerpt is marked full only when it starts at the
 beginning and neither the stored source nor the selected window is truncated.
-Without an explicit cache contract, historical-only selections share coordinate column names across adjacent
-excerpts with simple identifiers and explain when full saved evidence can be reused for a source the current request
-confirms unchanged. A full row names the message and version and represents the entire source from offset zero;
-partial rows carry their explicit offset and window. Current Run checkpoints retain the continuation instructions.
+Without an explicit cache contract, historical-only selections can show a message sequence as m:<sequence>
+and the exact version digest in decimal as d:<digits>. Copy these into the existing history_read messageId and
+version fields with the quoted Run. The reader resolves the sequence in the authorized Session and checks the
+full original version. Readback still returns canonical identifiers. A full row covers the source from offset
+zero and partial rows carry their explicit range. For files the current request confirms unchanged, a full saved
+read can support an edit without a preliminary reread. Changes are still verified after editing. Current Run
+checkpoints retain their continuation instructions.
 
 Without an explicit cache contract, unified working-set requests with only current Run messages omit
 the historical-data instruction. The instruction remains for saved excerpts, summaries and history

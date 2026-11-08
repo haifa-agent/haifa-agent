@@ -46,6 +46,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshot;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.delegation.DelegationTool;
+import io.haifa.agent.runtime.core.history.HistoryToolProvider;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
@@ -103,9 +104,9 @@ public final class ModelMessageAssembler {
     private final ModelMessageProjectionPlanner planner;
     private final ActiveContextSnapshots activeContexts;
     private final java.util.function.BiFunction<AgentRunId, ToolCall, ToolCall> historyResults;
-    private io.haifa.agent.runtime.core.history.HistoryToolProvider history;
+    private HistoryToolProvider history;
 
-    public ModelMessageAssembler historicalData(io.haifa.agent.runtime.core.history.HistoryToolProvider value) {
+    public ModelMessageAssembler historicalData(HistoryToolProvider value) {
         history = value;
         return this;
     }
@@ -312,8 +313,8 @@ public final class ModelMessageAssembler {
                 }
             } else if (item.content() instanceof HistoricalExcerptContent excerpt) {
                 var safe = history == null
-                        ? java.util.Optional.<HistoricalExcerptContent>empty()
-                        : history.refresh(runId, excerpt);
+                        ? java.util.Optional.<HistoryToolProvider.RefreshedExcerpt>empty()
+                        : history.refreshForProjection(runId, excerpt, compactHistory);
                 if (safe.isEmpty() && item.retention() == io.haifa.agent.context.item.ContextRetention.MUST_KEEP)
                     throw new io.haifa.agent.runtime.core.storage.OptimisticLockException(
                             "required historical source unavailable");
@@ -321,12 +322,13 @@ public final class ModelMessageAssembler {
                 String source = toolEvidence ? "priorRunTool" : "priorRunMessages";
                 String quoted = "[Historical source unavailable; do not infer its content.]";
                 if (safe.isPresent()) {
-                    var verified = safe.orElseThrow();
+                    var refreshed = safe.orElseThrow();
+                    var verified = refreshed.content();
                     boolean sameRun = selectedBudget && verified.runId().equals(precedingExcerptRun);
                     boolean compact = compactHistory && hasCompactCoordinates(verified);
                     if (compact || (selectedBudget && toolEvidence)) {
                         String row = compact
-                                ? renderCompactExcerpt(verified, toolEvidence)
+                                ? renderCompactExcerpt(verified, toolEvidence, refreshed.compactCoordinates())
                                 : "[Saved excerpt; " + renderSavedToolEvidence(verified);
                         if (sameRun
                                 && compact == precedingCompactExcerpt
@@ -683,8 +685,13 @@ public final class ModelMessageAssembler {
                 && COORDINATE_TOKEN.matcher(excerpt.version()).matches();
     }
 
-    private static String renderCompactExcerpt(HistoricalExcerptContent excerpt, boolean toolEvidence) {
-        String identity = "[" + excerpt.messageId().value() + " " + excerpt.version();
+    private static String renderCompactExcerpt(
+            HistoricalExcerptContent excerpt,
+            boolean toolEvidence,
+            Optional<HistoryToolProvider.ReadCoordinates> coordinates) {
+        var reference = coordinates.orElseGet(() ->
+                new HistoryToolProvider.ReadCoordinates(excerpt.messageId().value(), excerpt.version()));
+        String identity = "[" + reference.messageId() + " " + reference.version();
         if (toolEvidence && fullEvidence(excerpt)) return identity + " full]\n" + excerpt.text();
         return identity + " " + excerpt.offset() + " " + excerpt.length() + (toolEvidence ? " partial" : "") + "]\n"
                 + excerpt.text();
