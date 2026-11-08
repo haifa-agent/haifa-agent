@@ -109,7 +109,12 @@ class Owner:
                     pass
         self.reader = threading.Thread(target=receive, daemon=True)
         self.reader.start()
-        ready = self.reply('ready')
+        try:
+            ready = self.reply('ready')
+        except BaseException:
+            self.process.kill()
+            self.process.wait(timeout=5)
+            raise
         self.endpoint = ready['endpoint']
         self.project = ready['projectId']
 

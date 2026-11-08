@@ -50,6 +50,10 @@ def run(command, **kwargs):
     return result.stdout
 
 
+def stream_timing(page):
+    return page.evaluate("acceptanceStreams.map(({beats,frames}) => ({beats,frames}))")
+
+
 def digest_assets(root):
     return {p.relative_to(root).as_posix(): b2.sha(p) for p in sorted(root.rglob("*")) if p.is_file()}
 
@@ -175,6 +179,15 @@ WATCH_STREAMS = """(() => {
   window.acceptanceStreams = [];
   window.fetch = async (...args) => {
     const response = await request(...args);
+    if (window.dropAcceptedCommand && String(args[0]).includes('/browser/v1/rpc')) {
+      const body = JSON.parse(args[1].body);
+      if (body.method === 'product/command' && body.params.command.operation === 'submit') {
+        window.dropAcceptedCommand = false;
+        window.acceptedCommandStatus = response.status;
+        await response.body.cancel();
+        throw new TypeError('Fixture discarded the command receipt');
+      }
+    }
     if (!response.ok || !String(args[0]).includes('/browser/v1/events?')) return response;
     const state = {beats: [], frames: [], closed: false};
     window.acceptanceStreams.push(state);
@@ -209,10 +222,20 @@ def pair(page, owner):
     challenge = owner.command("pair", "pairing")
     page.locator("#pair-code").fill(challenge["challenge"])
     page.locator("#pair-button").click()
-    page.wait_for_function("document.querySelector('#pairing').hidden")
+    page.locator("#pairing").wait_for(state="hidden")
 
 
-def browser_flow(page, owner, stub, root, evidence):
+def await_page(page, expression, timeout=20):
+    # The deployed CSP prohibits wait_for_function's in-page eval.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if page.evaluate(expression):
+            return
+        time.sleep(0.05)
+    raise RuntimeError("BROWSER_CONDITION_TIMEOUT")
+
+
+def browser_flow(page, owner, stub, root, evidence, nginx):
     evidence["browserStage"] = "pair"
     pair(page, owner)
     evidence["browserStage"] = "approval"
@@ -221,22 +244,28 @@ def browser_flow(page, owner, stub, root, evidence):
     interaction = page.locator(".interaction-form")
     approve = interaction.get_by_role("button", name="批准执行", exact=True)
     approve.wait_for()
-    page.wait_for_function(
-        "acceptanceStreams.some(s => s.frames.length && s.beats.length >= 9 && !s.closed)",
-        timeout=30000,
+    run([*nginx, "-s", "reload"])
+    try:
+        await_page(page, "acceptanceStreams.some(s => s.beats.length >= 9 && !s.closed)", timeout=45)
+    finally:
+        evidence["beforeApprovalTimingMs"] = stream_timing(page)
+    evidence["heartbeatSpanMs"] = max(
+        (stream["beats"][-1] - stream["beats"][0] for stream in evidence["beforeApprovalTimingMs"] if stream["beats"]),
+        default=0,
     )
+    b2.require(evidence["heartbeatSpanMs"] >= 15000, "IDLE_STREAM_DID_NOT_CROSS_TIMEOUT")
     b2.require(not (root / "workspace/approved.txt").exists(), "EFFECT_BEFORE_APPROVAL")
     interaction.get_by_role("checkbox", name="我已核对本次工具操作的内容和作用范围").check()
     approve.click()
     page.get_by_text("external-safe-completion", exact=True).wait_for()
     b2.require((root / "workspace/approved.txt").read_text() == "external-approved-content", "APPROVAL_EFFECT")
-    streams = page.evaluate("acceptanceStreams.map(({beats,frames}) => ({beats,frames}))")
     evidence["firstEventBeforeCompletion"] = any(
-        stream["frames"] and len(stream["beats"]) >= 9 for stream in streams
+        stream["frames"] for stream in evidence["beforeApprovalTimingMs"]
     )
     b2.require(evidence["firstEventBeforeCompletion"], "NO_INCREMENTAL_EVENTS")
-    evidence["streamTimingMs"] = streams
+    evidence["streamTimingMs"] = stream_timing(page)
     evidence["checks"].append("packed-web-approval-incremental-final")
+    evidence["checks"].append("nginx-graceful-reload-during-open-stream")
 
     evidence["browserStage"] = "reload-history"
     page.reload()
@@ -250,19 +279,25 @@ def browser_flow(page, owner, stub, root, evidence):
     if stub.calls != 2:
         raise RuntimeError("UNEXPECTED_STUB_CALL_COUNT")
 
+    evidence["browserStage"] = "unknown-receipt"
+    page.evaluate("window.dropAcceptedCommand = true")
+    page.locator("#draft").fill("Run one synthetic follow-up with a dropped receipt.")
+    page.locator("#send").click()
+    page.get_by_text("操作结果未知。任务可能已被接收，请先核对权威会话和历史；本页不会自动重发。",
+                     exact=True).wait_for()
+    b2.require(page.evaluate("window.acceptedCommandStatus") == 200, "COMMAND_NOT_ACCEPTED")
+    b2.require(page.get_by_text("external-safe-completion", exact=True).count() >= 1, "NO_HISTORY")
+    page.get_by_text("external-safe-completion", exact=True).nth(1).wait_for()
+    b2.require(stub.calls == 3, "UNKNOWN_COMMAND_REPLAY")
+    evidence["checks"].append("dropped-accepted-receipt-unknown-no-replay")
+
 
 def gateway_expiry(page, owner, gateway, evidence):
-    page.evaluate(b2.PROBE)
-    bound = page.evaluate("(proof) => probe.pair(proof)", owner.command("pair", "pairing"))
-    b2.result(page.evaluate("""() => probe.rpc("initialize", {protocolVersion:"1",
-        clientInfo:{name:"gateway-expiry-probe",version:"1"}, optionalCapabilities:
-        ["coding-product-v1","session-presentation-v1","session-consent-v1"]})"""))
-    subscription = b2.result(page.evaluate(
-        "(id) => probe.rpc('presentation/subscribe',{sessionId:id})", get_session(page)
-    ))
+    bound = initialize_probe(page, owner)
+    subscription = subscribe_probe(page, get_session(page))
     sub_id = subscription["subscriptionId"]
     page.evaluate("(id) => probe.attach(id)", sub_id)
-    page.wait_for_function("probe.stream()?.bytes > 0")
+    await_page(page, "probe.stream()?.bytes > 0")
     before = page.evaluate("probe.stream().bytes")
     gateway.expiry = time.monotonic()
     denied = page.evaluate("""async id => {
@@ -274,18 +309,74 @@ def gateway_expiry(page, owner, gateway, evidence):
             sse.headers.get('X-Haifa-Gateway-Session')];
     }""", sub_id)
     b2.require(denied == [401, 401, "required", "required"], "GATEWAY_EXPIRY")
-    page.wait_for_function("before => probe.stream()?.bytes > before && !probe.stream().closed", arg=before)
+    await_page(page, f"probe.stream()?.bytes > {before} && !probe.stream().closed")
     page.evaluate("window.dispatchEvent(new Event('online'))")
     page.get_by_text("网关会话已失效。请重新登录网关，再重新配对并核对任务状态。", exact=True).wait_for()
     owner.command("revoke " + bound["clientId"], "revoked")
-    page.wait_for_function("probe.stream()?.closed")
+    b2.await_stream_closed(page, 20)
     evidence["checks"].append("gateway-expiry-denies-new-streams-host-revoke-closes-existing")
+
+
+def initialize_probe(page, owner):
+    page.evaluate(b2.PROBE)
+    bound = page.evaluate("(proof) => probe.pair(proof)", owner.command("pair", "pairing"))
+    initialized = b2.result(page.evaluate("""() => probe.rpc("initialize", {protocolVersion:"1",
+        clientInfo:{name:"nginx-acceptance-probe",version:"1"}, optionalCapabilities:
+        ["coding-product-v1","session-presentation-v1","session-consent-v1"]})"""))
+    b2.require(initialized["clientId"] == bound["clientId"] and initialized["clientSource"] == "browser",
+               "BROWSER_BINDING")
+    return bound
+
+
+def subscribe_probe(page, session_id):
+    return b2.result(page.evaluate("(id) => probe.rpc('presentation/subscribe',{sessionId:id})", session_id))
+
+
+def host_grants(context, page, external, owner, restart, host_port, evidence):
+    first = initialize_probe(page, owner)
+    session = get_session(page)
+    sub_id = subscribe_probe(page, session)["subscriptionId"]
+    page.evaluate("(id) => probe.attach(id)", sub_id)
+    b2.require(status(HTTPConnection, "127.0.0.1", host_port, f"/v1/events?subscriptionId={sub_id}",
+                      {"X-CA-Client-ID": first["clientId"]}) in (403, 409), "NATIVE_BROWSER_SUBSCRIPTION")
+    second = context.new_page()
+    second.goto(external + "/browser/")
+    initialize_probe(second, owner)
+    code = second.evaluate("""async id => {
+        const request = window.fetch;
+        let status;
+        window.fetch = async (...args) => {
+            const response = await request(...args);
+            status = response.status;
+            return response;
+        };
+        try { await probe.attach(id); } catch {} finally { window.fetch = request; }
+        return status;
+    }""", sub_id)
+    b2.require(code in (403, 404, 409), "CROSS_CLIENT_SUBSCRIPTION")
+    b2.result(second.evaluate("() => probe.rpc('client/renew')"))
+    owner.command("revoke " + first["clientId"], "revoked")
+    b2.await_stream_closed(page, 8)
+    b2.require(page.evaluate("() => probe.rpc('client/renew')")["status"] == 403, "REVOKED_RENEW")
+    evidence["checks"].append("cross-client-and-native-denial-host-revoke")
+
+    owner = restart()
+    b2.require(second.evaluate("() => probe.rpc('client/renew')")["status"] == 403, "OLD_HOST_GRANT")
+    second.close()
+    fresh = initialize_probe(page, owner)
+    b2.require(first["hostIncarnation"] != fresh["hostIncarnation"], "HOST_RESTART_INCARNATION")
+    subscription = subscribe_probe(page, session)
+    b2.require(subscription["snapshot"]["consent"]["state"] == "ASK", "CONSENT_AFTER_RESTART")
+    page.evaluate("(id) => probe.attach(id)", subscription["subscriptionId"])
+    b2.await_stream_closed(page, 15)
+    b2.require(page.evaluate("() => probe.rpc('client/renew')")["status"] == 403, "EXPIRED_RENEW")
+    evidence["checks"].append("host-restart-history-default-consent-absolute-grant-expiry")
 
 
 def get_session(page):
     reply = b2.result(page.evaluate("""() => probe.rpc("product/query", {
         operation:"sessions",target:{projectId:null,sessionId:null,runId:null,interactionId:null,
-        targetRevision:null},search:null,limit:4,cursor:null})"""))
+        targetRevision:null},search:null,limit:4,executionId:null})"""))
     return reply["sessions"][0]["sessionId"]
 
 
@@ -303,6 +394,8 @@ def main():
     b2.require(not root.exists() and not root.is_relative_to(b2.ROOT), "NEW_EXTERNAL_RUN_ROOT_REQUIRED")
     revision = run(["git", "rev-parse", "HEAD"], cwd=b2.ROOT).decode().strip()
     b2.require(revision == args.expected_sha, "SOURCE_PROVENANCE")
+    b2.require(not run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=b2.ROOT),
+               "DIRTY_TRACKED_SOURCE")
     manifest = (args.preview_repository / "io/haifa/haifa-coding-host" / args.version
                 / "haifa-coding-product-preview-manifest.json").resolve()
     release = json.loads(manifest.read_text(encoding="utf-8"))
@@ -352,8 +445,14 @@ def main():
             root.joinpath("proxy-proof.txt").write_text(proof + "\n", encoding="ascii")
             os.environ.update(HAIFA_CODING_EXTERNAL_ORIGIN=external,
                               HAIFA_CODING_PROXY_PROOF_FILE=str(root / "proxy-proof.txt"))
-            owner = b2.Owner(cp, root, write_stub_config(root, stub), host_port, 120)
+            config = write_stub_config(root, stub)
+            owner = b2.Owner(cp, root, config, host_port, 120)
             stack.callback(owner.close)
+            def restart():
+                owner.close()
+                fresh = b2.Owner(cp, root, config, host_port, 8)
+                stack.callback(fresh.close)
+                return fresh
             stage = "https-route"
             tls = ssl.create_default_context(cafile=str(cert))
             for path in ("/v1/rpc", "/v1/events", "/health", "/__haifa_gateway", "/browser/v1/unknown"):
@@ -388,10 +487,13 @@ def main():
                 page.add_init_script(WATCH_STREAMS)
                 page.goto(external + "/browser/")
                 b2.require(page.evaluate("isSecureContext"), "NO_SECURE_BROWSER_CONTEXT")
-                browser_flow(page, owner, stub, root, evidence)
+                browser_flow(page, owner, stub, root, evidence, nginx)
                 if gateway:
                     stage = "gateway-expiry"
                     gateway_expiry(page, owner, gateway, evidence)
+                else:
+                    stage = "host-grants"
+                    host_grants(context, page, external, owner, restart, host_port, evidence)
                 browser.close()
             evidence.pop("browserStage", None)
         evidence["status"] = "PASS"
