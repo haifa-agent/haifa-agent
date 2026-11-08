@@ -3698,13 +3698,16 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(captured).hasSize(1);
+        long sequence = fixture.store
+                .message(new AgentMessageId("baseline-result-1"))
+                .orElseThrow()
+                .sequence();
         assertThat(captured.getFirst().messages())
-                .filteredOn(message -> message.content().contains("baseline-result-"))
+                .filteredOn(message -> message.content().startsWith("[Untrusted historical data; saved Tool evidence;"))
                 .singleElement()
                 .satisfies(message -> {
                     assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
-                    assertThat(message.content())
-                            .contains("baseline-result-1", "Untrusted historical data", "unrelated output");
+                    assertThat(message.content()).contains("[m:" + sequence + " d:", "unrelated output");
                 });
     }
 
@@ -3742,7 +3745,7 @@ class RuntimeCoreTest {
                     .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(captured).hasSize(1);
             var excerpts = captured.getFirst().messages().stream()
-                    .filter(message -> message.content().contains("baseline-result-"))
+                    .filter(message -> message.content().startsWith("[Untrusted historical data; saved Tool evidence;"))
                     .toList();
             if (continuing) {
                 assertThat(captured.getFirst().messages())
@@ -3759,11 +3762,15 @@ class RuntimeCoreTest {
                             .contains("columns: messageId version [offset length] coverage", "unrelated output");
                     var rows = message.content()
                             .lines()
-                            .filter(line -> line.startsWith("[baseline-result-"))
+                            .filter(line -> line.startsWith("[m:"))
                             .toList();
                     assertThat(rows).hasSize(8);
                     for (int i = 4; i <= 11; i++) {
-                        assertThat(rows.get(i - 4)).matches("\\[baseline-result-" + i + " [^ ]+ full]");
+                        long sequence = fixture.store
+                                .message(new AgentMessageId("baseline-result-" + i))
+                                .orElseThrow()
+                                .sequence();
+                        assertThat(rows.get(i - 4)).matches("\\[m:" + sequence + " d:[0-9]+ full]");
                     }
                 });
             } else {

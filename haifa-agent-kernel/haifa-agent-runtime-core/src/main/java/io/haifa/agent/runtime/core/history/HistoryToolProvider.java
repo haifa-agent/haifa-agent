@@ -1,5 +1,6 @@
 package io.haifa.agent.runtime.core.history;
 
+import io.haifa.agent.context.item.HistoricalExcerptContent;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.*;
@@ -12,6 +13,7 @@ import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.ToolCallViewProjector;
 import io.haifa.agent.tool.api.*;
+import java.math.BigInteger;
 import java.time.Duration;
 import java.util.*;
 
@@ -215,8 +217,16 @@ public final class HistoryToolProvider implements ToolProvider {
         });
     }
 
-    public Optional<io.haifa.agent.context.item.HistoricalExcerptContent> refresh(
-            AgentRunId current, io.haifa.agent.context.item.HistoricalExcerptContent excerpt) {
+    public record ReadCoordinates(String messageId, String version) {}
+
+    public record RefreshedExcerpt(HistoricalExcerptContent content, Optional<ReadCoordinates> compactCoordinates) {}
+
+    public Optional<HistoricalExcerptContent> refresh(AgentRunId current, HistoricalExcerptContent excerpt) {
+        return refreshForProjection(current, excerpt, false).map(RefreshedExcerpt::content);
+    }
+
+    public Optional<RefreshedExcerpt> refreshForProjection(
+            AgentRunId current, HistoricalExcerptContent excerpt, boolean compact) {
         return ports.unitOfWork().executeReadOnly(() -> {
             try {
                 var run = ports.runs().find(current).orElseThrow(Unavailable::new);
@@ -229,7 +239,7 @@ public final class HistoryToolProvider implements ToolProvider {
                 value = materialize(value);
                 var window = value.window(excerpt.offset(), excerpt.length(), 1);
                 if (window.incomplete()) return Optional.empty();
-                return Optional.of(new io.haifa.agent.context.item.HistoricalExcerptContent(
+                var refreshed = new HistoricalExcerptContent(
                         excerpt.runId(),
                         excerpt.messageId(),
                         excerpt.version(),
@@ -238,7 +248,19 @@ public final class HistoryToolProvider implements ToolProvider {
                         excerpt.length(),
                         window.value(),
                         value.results().stream().anyMatch(ToolResult::truncated),
-                        window.more()));
+                        window.more());
+                // A single selected occurrence in a multi-result message needs its original ToolCallId.
+                boolean compactMessage = compact
+                        && (excerpt.toolCallId().isEmpty()
+                                || value.message().contents().stream()
+                                                .filter(ToolResultPart.class::isInstance)
+                                                .count()
+                                        == 1);
+                var coordinates = compactMessage
+                        ? Optional.of(new ReadCoordinates(
+                                "m:" + value.message().sequence(), "d:" + new BigInteger(value.version(), 16)))
+                        : Optional.<ReadCoordinates>empty();
+                return Optional.of(new RefreshedExcerpt(refreshed, coordinates));
             } catch (Unavailable unavailable) {
                 return Optional.empty();
             }
@@ -450,12 +472,28 @@ public final class HistoryToolProvider implements ToolProvider {
     }
 
     private ToolResult read(AgentRun run, Map<String, Object> args) {
-        var source = source(
-                run,
-                new AgentRunId(required(args, "runId")),
-                new AgentMessageId(required(args, "messageId")),
-                text(args, "toolCallId"));
-        if (!source.version().equals(required(args, "version"))) throw new Unavailable();
+        var runId = new AgentRunId(required(args, "runId"));
+        var messageId = required(args, "messageId");
+        var version = required(args, "version");
+        if (version.startsWith("d:")) {
+            // The original version is always a 64-digit hex digest, so the transport form is unambiguous.
+            if (!messageId.matches("m:[1-9][0-9]{0,18}") || !version.matches("d:(0|[1-9][0-9]{0,77})"))
+                throw new Unavailable();
+            String hex = new BigInteger(version.substring(2)).toString(16);
+            if (hex.length() > 64) throw new Unavailable();
+            version = "0".repeat(64 - hex.length()) + hex;
+            long sequence = Long.parseLong(messageId.substring(2));
+            authorize(run, runId);
+            messageId = ports.state().messagesAfter(run.sessionId(), new MessageCursor(sequence - 1), 1).stream()
+                    .filter(message ->
+                            message.sequence() == sequence && message.runId().equals(Optional.of(runId)))
+                    .findFirst()
+                    .orElseThrow(Unavailable::new)
+                    .id()
+                    .value();
+        }
+        var source = source(run, runId, new AgentMessageId(messageId), text(args, "toolCallId"));
+        if (!source.version().equals(version)) throw new Unavailable();
         source = materialize(source);
         var window = source.window(
                 number(args, "offset", 0, 0, Integer.MAX_VALUE - 8192),

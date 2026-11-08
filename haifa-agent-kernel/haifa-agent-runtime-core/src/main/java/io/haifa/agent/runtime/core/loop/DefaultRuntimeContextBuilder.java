@@ -47,7 +47,9 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
     private static final PromptComponent HISTORY_SOURCE_RULE = historyRule(
             HISTORY_SOURCE_RULE_ID,
             RunWorkingSetSource.DATA_RULE
-                    + " Reuse full saved Tool evidence for sources the request confirms unchanged.");
+                    + " Copy m: and d: coordinates verbatim for history_read. Reuse full saved Tool evidence for files "
+                    + "the current request confirms unchanged. Edit without rereading, then verify. "
+                    + "Read when the saved content is missing, partial, or may have changed.");
     private static final PromptComponent HISTORY_DATA_RULE = historyRule(
             "working-set-data-rule",
             RunWorkingSetSource.DATA_RULE
