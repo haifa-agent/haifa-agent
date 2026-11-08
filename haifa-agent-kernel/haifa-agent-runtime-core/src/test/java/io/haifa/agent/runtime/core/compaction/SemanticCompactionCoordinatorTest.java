@@ -1521,6 +1521,49 @@ class SemanticCompactionCoordinatorTest {
     }
 
     @Test
+    void selectedSoftCompactionWaitsForFirstPrefixLargerThanTheTailTarget() {
+        var store = new InMemoryRuntimeStore();
+        var ids = new AtomicInteger();
+        var coordinator =
+                coordinator(store, () -> "first-prefix-" + ids.incrementAndGet(), CompressionPolicy.defaults());
+        var run = createAndSaveRun(store);
+        var session = run.sessionId();
+        var opening = store.appendSessionMessage(
+                draft("opening", session, run.id().value(), MessageRole.USER, "setup ".repeat(250)));
+        var firstBatch = store.appendSessionMessage(
+                draft("first-batch", session, run.id().value(), MessageRole.ASSISTANT, "evidence ".repeat(110)));
+        store.appendSessionMessage(
+                draft("second-batch", session, run.id().value(), MessageRole.ASSISTANT, "evidence ".repeat(110)));
+        var calls = new AtomicInteger();
+        var binding = createBindingWithContextWindow(
+                store,
+                run,
+                request -> {
+                    calls.incrementAndGet();
+                    return response("first-checkpoint", VALID_SUMMARY_JSON);
+                },
+                12_288);
+        var selected = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(12_288, 256, 615, 300, 0, 11_117, 8_000, 800, 1_200, 800));
+
+        assertThat(coordinator.evaluateSelected(run, 1, binding, selected).compacted())
+                .isFalse();
+        assertThat(calls).hasValue(0);
+        assertThat(store.latestValid(session)).isEmpty();
+
+        store.appendSessionMessage(
+                draft("third-batch", session, run.id().value(), MessageRole.ASSISTANT, "evidence ".repeat(110)));
+        assertThat(coordinator.evaluateSelected(run, 2, binding, selected).compacted())
+                .isTrue();
+        assertThat(calls).hasValue(1);
+        assertThat(store.latestValid(session)).hasValueSatisfying(summary -> {
+            assertThat(summary.coveredThrough()).isEqualTo(firstBatch.cursor());
+            assertThat(summary.sourceMessageIds()).contains(opening.id(), firstBatch.id());
+        });
+    }
+
+    @Test
     void selectedSoftCompactionFoldsShortOpeningWithTheOversizedAtomicGroup() {
         var store = new InMemoryRuntimeStore();
         var ids = new AtomicInteger();

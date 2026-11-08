@@ -669,14 +669,11 @@ public final class SemanticCompactionCoordinator {
             }
             if (selectedInputFits
                     && previousSummary.isEmpty()
-                    && safeSplit == activeGroups.size() - 1
-                    && prefixTokens <= targetTailBudget) {
-                long retainedTokens = estimateGroup(activeGroups.get(safeSplit), resolver);
-                if (retainedTokens > targetTailBudget && prefixTokens <= available - retainedTokens) {
-                    // The oversized atomic tail drives the pressure. Fold the opening with it once it can be evicted.
-                    invoker.checkControl(run);
-                    return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
-                }
+                    && prefixTokens <= targetTailBudget
+                    && initialEstimatedTokens <= available) {
+                // Start an optional first checkpoint once the removable history exceeds the retained-tail target.
+                invoker.checkControl(run);
+                return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
             }
         }
 
