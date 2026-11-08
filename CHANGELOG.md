@@ -14,8 +14,8 @@
 
 - Shorten unified saved-evidence context while preserving original text and versioned readback.
 
-- Defer another optional unified compaction after a non-reducing summary until more history can be replaced.
-  Hard capacity recovery remains available.
+- Wait for more removable history before starting a small optional unified checkpoint or retrying a
+  non-reducing summary. Hard capacity recovery remains available.
 
 - Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
   new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.

@@ -121,8 +121,11 @@ Compaction calls use the semantic summary schema in place of the Run's ordinary 
 The model request labels a required summary covering the current Run as a checkpoint for continuation.
 Runtime instructions tell the model how to use recorded successful reads to resume unfinished work.
 Cross-Run handoffs retain their separate historical-data annotation.
-When the ordinary request fits, complete-source soft compaction can defer a short opening before a
-single oversized retained group, so it can summarize that opening with the group in one call.
+The optional first unified soft checkpoint waits for a removable prefix larger than the retained-tail
+target while both the selected ordinary request and the original active history fit their respective
+input budgets. This lets several small completed groups be summarized together. If the original active
+history exceeds the summary input budget or the ordinary request needs hard recovery, the wait does
+not apply.
 For compaction model calls, `GENERATION` names the invocation boundary (including Provider/transport failures);
 `failureCode` retains the exact normalized model category and is not a content-quality verdict.
 Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,
