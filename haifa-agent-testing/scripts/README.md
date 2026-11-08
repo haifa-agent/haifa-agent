@@ -167,5 +167,8 @@ python3 haifa-agent-testing/scripts/coding-nginx-acceptance.py \
 对按 `VITE_HAIFA_CODING_GATEWAY_SESSION=true` 构建的制品加 `--gateway`，验网关会话过期。
 探针启动仅监听 loopback 的隔离 Nginx、真实 Host 与本地 Stub，使用临时 TLS 证书。
 Python HTTPS 客户端验证证书及主机名，浏览器仅信任本轮证书的公钥 pin。
+探针暂停一个浏览器 SSE 读取器，并断开主页面网络，核对 Host 完成澄清后的 Run、页面恢复观察，
+以及精确取消后续 Run。空闲超时用隔离故障配置将 upstream read timeout 降至 1 秒，
+确认中断后 Host grant 仍有效，再恢复模板的 15 秒配置。
 manifest 记录源码、制品、平台、断言与 SSE 时间样本。配置入口见
 [Nginx 同源模板](../../docs/applications/coding-nginx/README.md)。
