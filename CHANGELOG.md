@@ -2,6 +2,8 @@
 
 ## 0.1.5
 
+- Allow the local Coding updater's latest channel to replace installations across Maven versions.
+
 - Add an opt-in Coding Web HTTPS ingress profile for same-origin Nginx, with a trusted proxy
   boundary and optional gateway session checks for browser RPC and SSE.
 

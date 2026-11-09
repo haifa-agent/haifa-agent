@@ -23,6 +23,7 @@ sys.path.insert(
     0, str(Path(__file__).resolve().parents[2] / 'dist-support' / 'scripts')
 )
 from distribution_contracts import (  # noqa: E402 - repository scripts run unpackaged
+    VERSION_PATTERN,
     cli_build_command,
     pom_version,
     sha256_file,
@@ -37,6 +38,7 @@ LATEST_FOLDER = 'haifa-coding-agent-latest'
 LATEST_LAUNCHER = 'haifa-latest.bat'
 VERSION_ENTRY = 'META-INF/haifa/coding-agent-version.properties'
 VERSION_LABEL = re.compile(r'^[A-Za-z0-9._+-]{1,64}$')
+CLI_JAR_NAME = re.compile(rf'haifa-agent-cli-{VERSION_PATTERN.pattern}\.jar')
 
 
 def git(repo, *args):
@@ -298,8 +300,14 @@ def assemble_latest(archive, install_root, version, label, report_dir):
                 if not child.is_dir() or is_reparse(child):
                     raise ValueError(f'Invalid existing installation: {child}')
             jars = list((target / 'lib').glob('haifa-agent-cli*.jar'))
-            if [jar.name for jar in jars] != [jar_name]:
-                raise ValueError('Existing latest lib must contain exactly the expected CLI JAR')
+            if (
+                len(jars) != 1
+                or not CLI_JAR_NAME.fullmatch(jars[0].name)
+                or jars[0].is_symlink()
+                or is_reparse(jars[0])
+                or not jars[0].is_file()
+            ):
+                raise ValueError('Existing latest lib must contain exactly one versioned CLI JAR')
             previous = install_root / f'.{LATEST_FOLDER}.previous-{uuid.uuid4().hex}'
             try:
                 os.replace(target, previous)
