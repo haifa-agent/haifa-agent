@@ -659,12 +659,17 @@ commit. The last admitted model call may commit a valid result at the call-count
 another repair. This does not change Core terminal accounting or promise immediate remote cancellation.
 Before dispatch, compaction plans whole-turn batches against the remaining evaluation and Run call allowances.
 Each rendered summary request includes its previous valid summary, source, schema, output reserve and safety
-margin in the input admission check; batches shrink only at turn boundaries. An impossible plan leaves the
-summary and coverage unchanged unless deterministic degradation was explicitly enabled.
+margin in the input admission check. The default ceiling is eight physical summary calls per evaluation,
+including corrections. Explicit evaluation ceilings and the Run's limits still apply.
 Empty, malformed, schema-invalid or semantically invalid outputs may regenerate once per batch, sharing the
 same physical-call allowance and reserving calls needed by later batches. Feedback contains only a stable
 validation code and authorized source, never the rejected output. Non-STOP responses do not regenerate.
-The default physical-call ceiling and explicit deterministic-degradation configuration are unchanged.
+
+When `ACTIVE_HISTORY_BUDGET` exhausts its local plan allowance or rejects the final semantic candidate,
+it can commit a deterministic summary of the authorized prefix. The retained history starts at a user turn,
+and the candidate must reduce the projected history. The existing source and CAS checks govern the write.
+If no useful fallback is available, the existing retention allowance still governs continuation.
+Other triggers keep their existing deterministic-degradation rules.
 
 For configured active-history targets, recoverable failures may continue only while projected summary plus
 history is at most `min(availableSessionTokens, T + floor(T / 5))`, where `T` is the existing resolved history
