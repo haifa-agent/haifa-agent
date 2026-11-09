@@ -1,6 +1,6 @@
 # 安装
 
-Haifa Agent 0.1.5 面向 Java 21。下文以 0.1.5 SDK 为例。
+Haifa Agent 面向 Java 21。当前源码开发线为 `0.1.6-SNAPSHOT`，下文以正式版 `0.1.5` SDK 为例。
 
 SDK 通过 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases) 的
 `haifa-agent-sdk-v<version>.zip` 分发。下载可用版本，或从对应源码构建发行包，再使用与 ZIP 相同的 BOM 版本。

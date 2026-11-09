@@ -3,7 +3,7 @@
 [![Feature PR Fast](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml/badge.svg?branch=dev)](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml)
 ![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
 ![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.1.5-blue)
+![Version](https://img.shields.io/badge/version-0.1.6--SNAPSHOT-blue)
 
 **Java / Spring 生态的 Agent Runtime、SDK 与本地 Agent 应用。**
 
@@ -11,7 +11,7 @@
 
 你可以直接使用 Haifa Agent 自带的 **Coding Agent** 和 **Personal Assistant**，也可以通过 **Java SDK** 把 Agent 能力嵌入现有 Java / Spring Boot 应用。
 
-> 当前源码版本为 `0.1.5`。已发布制品见 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases)。
+> 当前开发线为 `0.1.6-SNAPSHOT`，最新正式版为 `0.1.5`。已发布制品见 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases)。
 >
 > 项目仍处于快速演进阶段，README 和 `docs/` 只描述当前源码已经实现的能力。
 

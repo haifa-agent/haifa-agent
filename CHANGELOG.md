@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased - 0.1.6-SNAPSHOT
+
 ## 0.1.5
 
 - Allow the local Coding updater's latest channel to replace installations across Maven versions.

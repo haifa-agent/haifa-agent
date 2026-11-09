@@ -18,7 +18,7 @@
 
     If -FullPublish is passed, also performs:
     - V1: Full reactor build and artifact manifest verification
-    - V2: Complete baseline JAR immutability check across all 44 public modules
+    - V2: Complete baseline JAR immutability check across all public modules
     - V4: Consumer smoke dependency resolution and transitive version check
 #>
 [CmdletBinding()]
@@ -141,10 +141,10 @@ try {
     # 3. Main checkout on branch 'dev' succeeds and publishes baseline
     git -C $tempRepoMain checkout -q -b dev
     $mainDevVersion = Resolve-WorktreePublishVersion -RepoRoot $tempRepoMain
-    if ($mainDevVersion.Version -ne '0.1.5-SNAPSHOT' -or -not $mainDevVersion.IsBaseline) {
-        throw "Expected baseline 0.1.5-SNAPSHOT from main checkout on dev, got: $($mainDevVersion.Version)"
+    if ($mainDevVersion.Version -ne '0.1.6-SNAPSHOT' -or -not $mainDevVersion.IsBaseline) {
+        throw "Expected baseline 0.1.6-SNAPSHOT from main checkout on dev, got: $($mainDevVersion.Version)"
     }
-    Write-Host "[V5-MainDevBaseline] PASS (main checkout on dev resolves to baseline 0.1.5-SNAPSHOT)"
+    Write-Host "[V5-MainDevBaseline] PASS (main checkout on dev resolves to baseline 0.1.6-SNAPSHOT)"
 
     # 4. Linked worktree on a feature branch produces versioned identifier and is not baseline
     $worktreePath = Join-Path $repoRoot 'local-tmp\test-worktree-feat-one'
@@ -152,10 +152,10 @@ try {
     git -C $tempRepoMain worktree add -q -b feat-one $worktreePath dev
     try {
         $wtVersion = Resolve-WorktreePublishVersion -RepoRoot $worktreePath
-        if ($wtVersion.Version -ne '0.1.5-test-worktree-feat-one-SNAPSHOT' -or $wtVersion.IsBaseline) {
-            throw "Expected 0.1.5-test-worktree-feat-one-SNAPSHOT, got: $($wtVersion.Version)"
+        if ($wtVersion.Version -ne '0.1.6-test-worktree-feat-one-SNAPSHOT' -or $wtVersion.IsBaseline) {
+            throw "Expected 0.1.6-test-worktree-feat-one-SNAPSHOT, got: $($wtVersion.Version)"
         }
-        Write-Host "[V5-WorktreeVersioned] PASS (worktree resolves to 0.1.5-test-worktree-feat-one-SNAPSHOT)"
+        Write-Host "[V5-WorktreeVersioned] PASS (worktree resolves to 0.1.6-test-worktree-feat-one-SNAPSHOT)"
     } finally {
         git -C $tempRepoMain worktree remove -f $worktreePath 2>$null
         if (Test-Path $worktreePath) { Remove-Item -Recurse -Force $worktreePath }
@@ -172,7 +172,7 @@ try {
 Write-Host "`n--- Testing P1 Probe: Locked Manifest Deletion Abort ---"
 $tempRepoP1 = Join-Path $repoRoot 'local-tmp\test-m2-repo-p1'
 if (Test-Path $tempRepoP1) { Remove-Item -Recurse -Force $tempRepoP1 }
-$p1Version = '0.1.5-p1-locked-SNAPSHOT'
+$p1Version = '0.1.6-p1-locked-SNAPSHOT'
 $p1BomDir = Join-Path $tempRepoP1 "io\haifa\haifa-agent-bom\$p1Version"
 New-Item -ItemType Directory -Path $p1BomDir -Force | Out-Null
 $p1Manifest = Join-Path $p1BomDir 'haifa-sdk-publish-manifest.json'
@@ -197,7 +197,7 @@ $testResults['P1-LockedManifestGuard'] = 'PASS'
 Write-Host "`n--- Testing P1 Probe: Product Artifacts Purged on Failure ---"
 $tempRepoProd = Join-Path $repoRoot 'local-tmp\test-m2-repo-prod'
 if (Test-Path $tempRepoProd) { Remove-Item -Recurse -Force $tempRepoProd }
-$prodVersion = '0.1.5-prod-test-SNAPSHOT'
+$prodVersion = '0.1.6-prod-test-SNAPSHOT'
 
 # Simulate intermediate product JAR installed before a failure
 $prodJarDir = Join-Path $tempRepoProd "io\haifa\haifa-agent-cli\$prodVersion"
@@ -226,18 +226,18 @@ New-Item -ItemType Directory -Path $tempPomDir -Force | Out-Null
 $unexpandedPom = Join-Path $tempPomDir 'unexpanded.pom'
 Set-Content -Path $unexpandedPom -Value '<project><parent><version>${revision}</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
 Assert-Throws {
-    Assert-InstalledPomValid -InstalledPomPath $unexpandedPom -ArtifactId 'test' -ExpectedVersion '0.1.5-slot-SNAPSHOT'
+    Assert-InstalledPomValid -InstalledPomPath $unexpandedPom -ArtifactId 'test' -ExpectedVersion '0.1.6-slot-SNAPSHOT'
 } 'still contains unresolved' 'P2-UnresolvedRevisionRejected'
 
 $mismatchedPom = Join-Path $tempPomDir 'mismatched.pom'
-Set-Content -Path $mismatchedPom -Value '<project><parent><version>0.1.5-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
+Set-Content -Path $mismatchedPom -Value '<project><parent><version>0.1.6-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
 Assert-Throws {
-    Assert-InstalledPomValid -InstalledPomPath $mismatchedPom -ArtifactId 'test' -ExpectedVersion '0.1.5-slot-SNAPSHOT'
-} 'has version ''0.1.5-SNAPSHOT'', expected ''0.1.5-slot-SNAPSHOT''' 'P2-MismatchedVersionRejected'
+    Assert-InstalledPomValid -InstalledPomPath $mismatchedPom -ArtifactId 'test' -ExpectedVersion '0.1.6-slot-SNAPSHOT'
+} 'has version ''0.1.6-SNAPSHOT'', expected ''0.1.6-slot-SNAPSHOT''' 'P2-MismatchedVersionRejected'
 
 $validPom = Join-Path $tempPomDir 'valid.pom'
-Set-Content -Path $validPom -Value '<project><parent><version>0.1.5-slot-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
-Assert-InstalledPomValid -InstalledPomPath $validPom -ArtifactId 'test' -ExpectedVersion '0.1.5-slot-SNAPSHOT'
+Set-Content -Path $validPom -Value '<project><parent><version>0.1.6-slot-SNAPSHOT</version></parent><artifactId>test</artifactId></project>' -Encoding utf8
+Assert-InstalledPomValid -InstalledPomPath $validPom -ArtifactId 'test' -ExpectedVersion '0.1.6-slot-SNAPSHOT'
 Write-Host "[P2-ValidPomVersion] PASS (POM with correctly expanded target version accepted)"
 
 Remove-Item -Recurse -Force $tempPomDir
@@ -253,7 +253,7 @@ Set-Content -Path (Join-Path $scratchDir 'pom.xml') -Value '<project><artifactId
 
 try {
     $classResult = Get-ReactorModuleClassification -RepoRoot $repoRoot
-    if ($classResult.PublicModules.Count -ne 44) {
+    if ($classResult.PublicModules.Count -ne 45) {
         throw "Classification count mismatch."
     }
     Write-Host "[P2-LocalTmpIgnored] PASS (local-tmp scratch POM successfully ignored by reactor classification)"
@@ -289,8 +289,8 @@ if (Test-Path $tempRepoV3) { Remove-Item -Recurse -Force $tempRepoV3 }
 
 $wt1Path = 'D:\workspace\haifa-agent-worktrees\slot-1-feat-a'
 $wt2Path = 'D:\workspace\haifa-agent-worktrees\slot-2-feat-b'
-$wt1Version = '0.1.5-slot-1-feat-a-SNAPSHOT'
-$wt2Version = '0.1.5-slot-2-feat-b-SNAPSHOT'
+$wt1Version = '0.1.6-slot-1-feat-a-SNAPSHOT'
+$wt2Version = '0.1.6-slot-2-feat-b-SNAPSHOT'
 
 # Create distinct JARs with different bytes for wt1 and wt2
 $wt1JarDir = Join-Path $tempRepoV3 "io\haifa\haifa-agent-sdk\$wt1Version"
@@ -371,7 +371,7 @@ $testResults['V3-WorktreeIsolation'] = 'PASS'
 Write-Host "`n--- Testing V6: Coordinate Ownership Enforcement ---"
 $tempRepoV6 = Join-Path $repoRoot 'local-tmp\test-m2-repo-v6'
 if (Test-Path $tempRepoV6) { Remove-Item -Recurse -Force $tempRepoV6 }
-$v6Version = '0.1.5-owned-target-SNAPSHOT'
+$v6Version = '0.1.6-owned-target-SNAPSHOT'
 $v6OwnerPath = 'D:\existing\worktree\owned-target'
 $v6OtherPath = 'D:\other\worktree\owned-target'
 
@@ -457,16 +457,16 @@ Write-Host "`n--- Testing Anti-Drift: Reactor Module Classification ---"
 $classification = Get-ReactorModuleClassification -RepoRoot $repoRoot
 Write-Host "Reactor modules: $($classification.PublicModules.Count) public modules, $($classification.Boms.Count) BOMs, $($classification.ProductModules.Count) product modules."
 
-if ($classification.PublicModules.Count -ne 44) {
-    throw "Expected 44 public modules, found $($classification.PublicModules.Count)."
+if ($classification.PublicModules.Count -ne 45) {
+    throw "Expected 45 public modules, found $($classification.PublicModules.Count)."
 }
 if ($classification.Boms.Count -ne 2) {
     throw "Expected 2 BOMs, found $($classification.Boms.Count)."
 }
-if ($classification.ProductModules.Count -ne 11) {
-    throw "Expected 11 product modules, found $($classification.ProductModules.Count)."
+if ($classification.ProductModules.Count -ne 15) {
+    throw "Expected 15 product modules, found $($classification.ProductModules.Count)."
 }
-Write-Host "[AntiDrift-ModuleClassification] PASS (all 66 reactor POMs + BOMs strictly classified)"
+Write-Host "[AntiDrift-ModuleClassification] PASS (declared Reactor modules strictly classified)"
 $testResults['AntiDrift-Classification'] = 'PASS'
 
 # -------------------------------------------------------------
@@ -479,13 +479,13 @@ if ($FullPublish) {
 
     $resolvedLocalRepo = Get-MavenLocalRepository -RepoRoot $repoRoot
 
-    # Record hashes and mtimes of ALL 44 baseline JARs before publish
-    Write-Host "Recording pre-publish state of baseline 0.1.5-SNAPSHOT JARs..."
+    # Record hashes and mtimes of all baseline JARs before publish
+    Write-Host "Recording pre-publish state of baseline 0.1.6-SNAPSHOT JARs..."
     $baselineJars = @{}
     foreach ($modRel in $classification.PublicModules) {
         $pomXml = [xml](Get-Content (Join-Path $repoRoot (Join-Path $modRel 'pom.xml')))
         $artId = $pomXml.project.artifactId
-        $bJar = Join-Path $resolvedLocalRepo "io\haifa\$artId\0.1.5-SNAPSHOT\$artId-0.1.5-SNAPSHOT.jar"
+        $bJar = Join-Path $resolvedLocalRepo "io\haifa\$artId\0.1.6-SNAPSHOT\$artId-0.1.6-SNAPSHOT.jar"
         if (Test-Path $bJar) {
             $baselineJars[$artId] = @{
                 Path = $bJar
@@ -505,14 +505,14 @@ if ($FullPublish) {
     $publishedVersion = $pubResult.Version
     $manifestPath = $pubResult.ManifestPath
 
-    # V1: Verify manifest and all 44 artifacts
+    # V1: Verify manifest and all public artifacts
     Write-Host "`n--- Verifying V1: Artifacts and Manifest ---"
     if (-not (Test-Path $manifestPath)) {
         throw "[V1] Manifest not found at '$manifestPath'."
     }
     $manifest = Get-Content $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if ($manifest.artifacts.Count -ne 44) {
-        throw "[V1] Expected 44 artifacts in manifest, got $($manifest.artifacts.Count)."
+    if ($manifest.artifacts.Count -ne $classification.PublicModules.Count) {
+        throw "[V1] Expected $($classification.PublicModules.Count) artifacts in manifest, got $($manifest.artifacts.Count)."
     }
     foreach ($art in $manifest.artifacts) {
         $installedJar = Join-Path $resolvedLocalRepo "io\haifa\$($art.artifactId)\$publishedVersion\$($art.jarFileName)"
@@ -524,7 +524,7 @@ if ($FullPublish) {
             throw "[V1] Hash mismatch for '$($art.artifactId)': manifest=$($art.sha256), actual=$actualHash"
         }
     }
-    Write-Host "[V1] PASS (all 44 artifacts verified with SHA256 hashes against manifest)"
+    Write-Host "[V1] PASS (all public artifacts verified with SHA256 hashes against manifest)"
     $testResults['V1-FullPublish'] = 'PASS'
 
     # V2: Immutability check for all baseline JARs + no product JARs installed

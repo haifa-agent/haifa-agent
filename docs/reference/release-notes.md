@@ -2,7 +2,7 @@
 
 仓库根目录的 [CHANGELOG](../../CHANGELOG.md) 是 Release History 的权威文档。
 
-本页对应源码版本 `0.1.5`。Coding Agent 默认启用统一上下文策略，并可用 legacy 策略保留历史读回。
+本页记录正式版 `0.1.5`。Coding Agent 默认启用统一上下文策略，并可用 legacy 策略保留历史读回。
 从 0.1.4 升级、恢复旧暂停 Run 和回退的步骤见 [升级说明](upgrading.md#014-升级到-015)。
 
 标准发布流程构建 Windows x64 Coding Agent、Windows x64 Personal Assistant、Personal Assistant Linux x64 服务器包
