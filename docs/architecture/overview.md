@@ -76,7 +76,7 @@ Coding 的实验性 `haifa-coding-api` 仍属于 Application 层：公共合同�
 
 ## 当前 Non-goals
 
-0.1.4 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
+0.1.5 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
 
 详见 [Runtime 与模块边界](runtime-and-module-boundaries.md)。
 
