@@ -13,6 +13,7 @@ import io.haifa.agent.tool.api.ToolSchema;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ToolCatalogBuilderTest {
@@ -102,6 +103,52 @@ class ToolCatalogBuilderTest {
                                 ToolFixtures.provider()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("alias must equal tool name");
+    }
+
+    @Test
+    void acceptsExactPredecessorBindingsOnlyForDeclaredAdditions() {
+        var provider = ToolFixtures.provider();
+        var read = new ToolAlias("file_read");
+        var added = new ToolAlias("file_stat");
+        var input = ToolFixtures.definition().inputSchema();
+        var prior = new ToolCatalogBuilder()
+                .register(read, ToolFixtures.definition(), "binding", provider)
+                .freeze();
+        var expanded = new ToolCatalogBuilder()
+                .register(read, ToolFixtures.definition(), "binding", provider)
+                .register(added, ToolFixtures.definition(added.value(), ToolRisk.LOW, input), "binding", provider)
+                .freeze();
+        var original = prior.findByAlias(read).orElseThrow();
+        var current = expanded.findByAlias(added).orElseThrow();
+        var invoker = new DefaultToolInvoker(expanded, Set.of(added));
+
+        assertThat(expanded.snapshot().digest()).isNotEqualTo(original.catalogDigest());
+        invoker.validateBinding(original);
+        invoker.validateBinding(current);
+        assertThatThrownBy(() -> new DefaultToolInvoker(expanded).validateBinding(original))
+                .isInstanceOf(IllegalStateException.class);
+
+        var changedReference = new FrozenToolBinding(
+                original.alias(),
+                original.coordinate(),
+                original.definition(),
+                "other-binding",
+                original.catalogDigest());
+        var addedWithOldDigest = new FrozenToolBinding(
+                current.alias(),
+                current.coordinate(),
+                current.definition(),
+                current.providerBindingReference(),
+                original.catalogDigest());
+        var unknownDigest = new FrozenToolBinding(
+                original.alias(),
+                original.coordinate(),
+                original.definition(),
+                original.providerBindingReference(),
+                "unknown-digest");
+        for (var binding : List.of(changedReference, addedWithOldDigest, unknownDigest)) {
+            assertThatThrownBy(() -> invoker.validateBinding(binding)).isInstanceOf(IllegalStateException.class);
+        }
     }
 
     @Test

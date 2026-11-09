@@ -14,6 +14,8 @@
   OpenCode Go DeepSeek Flash input/cache lanes without counting cache tokens twice.
 
 - Default Coding to unified context selection with authorized history readers, explicit legacy rollback, and Run policy frozen across pause/resume and SQLite reopen.
+- Resume paused Coding Runs across the addition of history readers when the original frozen tool
+  catalog still matches.
 
 - Use reversible coordinates in unified saved evidence and reuse complete reads for files confirmed unchanged.
 
