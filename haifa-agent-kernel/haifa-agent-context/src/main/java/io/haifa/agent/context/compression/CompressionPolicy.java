@@ -23,6 +23,8 @@ public record CompressionPolicy(
         long maxActiveHistoryBudgetTokens,
         OptionalLong activeHistoryBudgetTokens) {
 
+    private static final int DEFAULT_MAX_COMPACTION_PHYSICAL_CALLS = 8;
+
     public CompressionPolicy(int recentMessageGroups, int maxSummaryFacts, int forcedRecentMessageGroups) {
         this(recentMessageGroups, maxSummaryFacts, forcedRecentMessageGroups, 50, 25);
     }
@@ -45,7 +47,7 @@ public record CompressionPolicy(
                 25,
                 8_000,
                 24_000,
-                3,
+                DEFAULT_MAX_COMPACTION_PHYSICAL_CALLS,
                 false,
                 true,
                 OptionalLong.empty());
@@ -176,7 +178,7 @@ public record CompressionPolicy(
                 25,
                 8_000,
                 24_000,
-                3,
+                DEFAULT_MAX_COMPACTION_PHYSICAL_CALLS,
                 false,
                 true,
                 0,

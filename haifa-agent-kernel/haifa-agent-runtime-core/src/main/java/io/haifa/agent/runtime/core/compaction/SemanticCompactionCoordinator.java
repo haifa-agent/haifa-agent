@@ -887,6 +887,47 @@ public final class SemanticCompactionCoordinator {
                 throw (ContextBuildException) ex;
             }
             if (activeBudget
+                    && (ex instanceof SemanticSummaryValidationException
+                            || ex instanceof CompactionBudgetExceededException)) {
+                // A degraded summary has no complete-source attestation. Leave a whole user turn after it
+                // even when semantic compaction could have used a later atomic boundary within that turn.
+                int fallbackSplit = safeSplit;
+                while (fallbackSplit > 0 && !isTurnAnchor(activeGroups.get(fallbackSplit))) {
+                    fallbackSplit--;
+                }
+                SummaryCommit commit = new SummaryCommit("NO_REDUCTION", previousSummary, false);
+                if (fallbackSplit > 0) {
+                    List<AgentMessage> fallbackSource = activeGroups.subList(0, fallbackSplit).stream()
+                            .flatMap(List::stream)
+                            .toList();
+                    long tailTokens =
+                            estimateGroups(activeGroups.subList(fallbackSplit, activeGroups.size()), resolver);
+                    long maxUsefulSummaryTokens =
+                            prevSummaryTokens + projectionPlan.projectedActiveTokens() - tailTokens;
+                    commit = fallbackToDeterministic(
+                            run,
+                            previousSummary,
+                            fallbackSource,
+                            visible,
+                            expectedPreviousVersion,
+                            evaluationId,
+                            maxUsefulSummaryTokens);
+                }
+                if (commit.outcome().equals("NO_REDUCTION") && ex instanceof SemanticSummaryValidationException) {
+                    failureBackoff.record(backoffScope, sourceToCompact);
+                }
+                return recoveryOutcome(
+                        run,
+                        evaluationId,
+                        reason,
+                        commit,
+                        visible,
+                        resolver,
+                        initialEstimatedTokens,
+                        cacheHitRate,
+                        startNanos);
+            }
+            if (activeBudget
                     || (completeSource && ex instanceof CompactionBudgetExceededException)
                     || (ex instanceof CompactionBudgetExceededException
                             && !policy.allowDeterministicDegradedFallback())) {
@@ -919,7 +960,13 @@ public final class SemanticCompactionCoordinator {
             }
             if (degraded) {
                 SummaryCommit commit = fallbackToDeterministic(
-                        run, previousSummary, sourceToCompact, visible, expectedPreviousVersion, evaluationId);
+                        run,
+                        previousSummary,
+                        sourceToCompact,
+                        visible,
+                        expectedPreviousVersion,
+                        evaluationId,
+                        Long.MAX_VALUE);
                 return recoveryOutcome(
                         run,
                         evaluationId,
@@ -1061,7 +1108,8 @@ public final class SemanticCompactionCoordinator {
             List<AgentMessage> sourceToCompact,
             List<AgentMessage> visible,
             long expectedPreviousVersion,
-            String evaluationId) {
+            String evaluationId,
+            long maxUsefulSummaryTokens) {
         var request = new io.haifa.agent.context.compression.CompressionRequest(
                 new SummaryId(ids.nextValue()),
                 new SummaryVersion(expectedPreviousVersion + 1),
@@ -1154,6 +1202,9 @@ public final class SemanticCompactionCoordinator {
                         + HeuristicTokenEstimator.tokens(String.join("\n", openItems))
                         + (boundedToolRefs.size() * 8));
 
+        if (estimatedTokens >= maxUsefulSummaryTokens) {
+            return new SummaryCommit("NO_REDUCTION", previousSummary, false);
+        }
         ConversationSummary mergedSummary = new ConversationSummary(
                 baseSummary.id(),
                 baseSummary.version(),
