@@ -129,16 +129,25 @@ class ToolCatalogBuilderTest {
                 .isInstanceOf(IllegalStateException.class);
 
         var changedReference = new FrozenToolBinding(
-                original.alias(), original.coordinate(), original.definition(), "other-binding", original.catalogDigest());
+                original.alias(),
+                original.coordinate(),
+                original.definition(),
+                "other-binding",
+                original.catalogDigest());
         var addedWithOldDigest = new FrozenToolBinding(
-                current.alias(), current.coordinate(), current.definition(),
-                current.providerBindingReference(), original.catalogDigest());
+                current.alias(),
+                current.coordinate(),
+                current.definition(),
+                current.providerBindingReference(),
+                original.catalogDigest());
         var unknownDigest = new FrozenToolBinding(
-                original.alias(), original.coordinate(), original.definition(),
-                original.providerBindingReference(), "unknown-digest");
+                original.alias(),
+                original.coordinate(),
+                original.definition(),
+                original.providerBindingReference(),
+                "unknown-digest");
         for (var binding : List.of(changedReference, addedWithOldDigest, unknownDigest)) {
-            assertThatThrownBy(() -> invoker.validateBinding(binding))
-                    .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> invoker.validateBinding(binding)).isInstanceOf(IllegalStateException.class);
         }
     }
 

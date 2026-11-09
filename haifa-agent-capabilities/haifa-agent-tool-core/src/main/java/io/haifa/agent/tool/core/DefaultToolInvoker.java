@@ -22,9 +22,8 @@ public final class DefaultToolInvoker implements ToolInvoker {
     /** Accepts exact bindings from the same catalog before the declared tools were added. */
     public DefaultToolInvoker(DefaultToolCatalog catalog, Set<ToolAlias> addedAliases) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
-        this.predecessor = addedAliases.isEmpty()
-                ? Optional.empty()
-                : Optional.of(predecessor(catalog, Set.copyOf(addedAliases)));
+        this.predecessor =
+                addedAliases.isEmpty() ? Optional.empty() : Optional.of(predecessor(catalog, Set.copyOf(addedAliases)));
     }
 
     private static DefaultToolCatalog predecessor(DefaultToolCatalog catalog, Set<ToolAlias> addedAliases) {
@@ -65,7 +64,8 @@ public final class DefaultToolInvoker implements ToolInvoker {
         var frozen = catalog.findByCoordinate(binding.coordinate())
                 .orElseThrow(() -> new IllegalStateException("tool coordinate is not in the frozen catalog"));
         if (!frozen.equals(binding)
-                && predecessor.flatMap(previous -> previous.findByCoordinate(binding.coordinate()))
+                && predecessor
+                        .flatMap(previous -> previous.findByCoordinate(binding.coordinate()))
                         .filter(binding::equals)
                         .isEmpty()) {
             throw new IllegalStateException("tool binding differs from the frozen catalog");

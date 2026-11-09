@@ -118,14 +118,18 @@ class CodingContextLifecycleTest {
             runtime.get().addListener(snapshot -> {
                 if (snapshot.status() == AgentRunStatus.SUSPENDED) paused.countDown();
             });
-            run = agent.client().create(agent.projectId(), "Pause this Run", "start")
-                    .activeRun().orElseThrow().runId();
+            run = agent.client()
+                    .create(agent.projectId(), "Pause this Run", "start")
+                    .activeRun()
+                    .orElseThrow()
+                    .runId();
             await(paused);
         }
 
         try (var agent = openAgent(workspace, current, request -> {
             assertThat(request.runId()).isEqualTo(run);
-            assertThat(request.tools()).extracting(tool -> tool.name())
+            assertThat(request.tools())
+                    .extracting(tool -> tool.name())
                     .doesNotContain("history_read", "history_search");
             return response("Resumed");
         })) {

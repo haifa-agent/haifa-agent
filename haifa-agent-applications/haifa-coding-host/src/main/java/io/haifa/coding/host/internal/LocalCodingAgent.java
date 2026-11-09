@@ -580,7 +580,8 @@ public final class LocalCodingAgent implements AutoCloseable {
             var historyProvider = configuration.context().historyRetrieval()
                     ? new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence.ports())
                     : null;
-            List<ToolDefinition> historyDefinitions = historyProvider == null ? List.of() : historyProvider.definitions();
+            List<ToolDefinition> historyDefinitions =
+                    historyProvider == null ? List.of() : historyProvider.definitions();
             var catalog = new ProjectToolCatalog(
                             configuration.execution().maximumTimeout(), historyDefinitions, historyProvider)
                     .freeze(
@@ -630,7 +631,9 @@ public final class LocalCodingAgent implements AutoCloseable {
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolRequestCanonicalizer(executionCanonicalizer)
                     .toolPlatform(
-                            catalog, new DefaultToolInvoker(catalog, addedHistoryAliases), new JsonSchema202012Validator())
+                            catalog,
+                            new DefaultToolInvoker(catalog, addedHistoryAliases),
+                            new JsonSchema202012Validator())
                     .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
                     .toolApprovalPrompts((binding, call, reauthentication) -> {
                         String toolName = binding.definition().name().value();
