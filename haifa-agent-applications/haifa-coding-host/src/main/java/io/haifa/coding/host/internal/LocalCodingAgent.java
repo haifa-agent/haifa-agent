@@ -111,6 +111,8 @@ import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.skill.api.SkillAlias;
+import io.haifa.agent.tool.api.ToolAlias;
+import io.haifa.agent.tool.api.ToolDefinition;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.io.IOException;
@@ -578,10 +580,9 @@ public final class LocalCodingAgent implements AutoCloseable {
             var historyProvider = configuration.context().historyRetrieval()
                     ? new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence.ports())
                     : null;
+            List<ToolDefinition> historyDefinitions = historyProvider == null ? List.of() : historyProvider.definitions();
             var catalog = new ProjectToolCatalog(
-                            configuration.execution().maximumTimeout(),
-                            historyProvider == null ? List.of() : historyProvider.definitions(),
-                            historyProvider)
+                            configuration.execution().maximumTimeout(), historyDefinitions, historyProvider)
                     .freeze(
                             Set.copyOf(configuredTools),
                             effectiveCapabilities,
@@ -591,6 +592,9 @@ public final class LocalCodingAgent implements AutoCloseable {
                             webPlatform.contributions(),
                             skillTools,
                             executionPlatform == null ? null : executionPlatform.profile());
+            var addedHistoryAliases = historyDefinitions.stream()
+                    .map(definition -> new ToolAlias(definition.name().value()))
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
             Set<String> disclosedToolAliases = catalog.snapshot().bindings().stream()
                     .map(binding -> binding.alias().value())
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -625,7 +629,8 @@ public final class LocalCodingAgent implements AutoCloseable {
             var runtime = runtimeBuilder
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolRequestCanonicalizer(executionCanonicalizer)
-                    .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
+                    .toolPlatform(
+                            catalog, new DefaultToolInvoker(catalog, addedHistoryAliases), new JsonSchema202012Validator())
                     .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
                     .toolApprovalPrompts((binding, call, reauthentication) -> {
                         String toolName = binding.definition().name().value();

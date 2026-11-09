@@ -3,9 +3,12 @@ package io.haifa.agent.cli;
 import static io.haifa.agent.cli.CodingHostTestFixture.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.coding.host.internal.CliConfiguration;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -92,6 +95,47 @@ class CodingContextLifecycleTest {
                         .isEqualTo(requests.get(1).messages());
             }
             assertThat(Files.readString(calculator)).isEqualTo(continuation ? corrected : original);
+        }
+    }
+
+    @Test
+    void defaultCodingResumesAnOldRunWithItsFrozenToolCatalog() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("upgrade-workspace"));
+        var current = CliConfigurationBuilder.from(sqliteConfiguration(root.resolve("upgrade.db")))
+                .enabledTools(java.util.Set.of("file_read"))
+                .build();
+        var old = CliConfigurationBuilder.from(current)
+                .context(new CliConfiguration.Context("legacy", 2048, false, false))
+                .build();
+        var runtime = new AtomicReference<AgentRuntime>();
+        var paused = new CountDownLatch(1);
+        AgentRunId run;
+        try (var agent = openAgent(workspace, old, request -> {
+            runtime.get().handle(request.runId()).pause();
+            return response("Paused");
+        })) {
+            runtime.set(agent.localAgent().runtime());
+            runtime.get().addListener(snapshot -> {
+                if (snapshot.status() == AgentRunStatus.SUSPENDED) paused.countDown();
+            });
+            run = agent.client().create(agent.projectId(), "Pause this Run", "start")
+                    .activeRun().orElseThrow().runId();
+            await(paused);
+        }
+
+        try (var agent = openAgent(workspace, current, request -> {
+            assertThat(request.runId()).isEqualTo(run);
+            assertThat(request.tools()).extracting(tool -> tool.name())
+                    .doesNotContain("history_read", "history_search");
+            return response("Resumed");
+        })) {
+            var upgraded = agent.localAgent().runtime();
+            upgraded.resume(new ResumeAgentRunRequest("upgrade-resume", run, List.of()));
+            assertThat(upgraded.handle(run)
+                            .awaitCompletion(Duration.ofSeconds(15))
+                            .orElseThrow()
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
         }
     }
 

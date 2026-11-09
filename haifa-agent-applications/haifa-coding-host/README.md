@@ -21,6 +21,8 @@ releases its observations and consent; it does not close Host or cancel accepted
 New Coding Runs default to unified context with authorized history readers. Configure
 `context.policy: legacy` to roll back selection. Set `context.historyRetrieval: true` with legacy
 to retain saved-version readback. The policy remains frozen for each admitted Run.
+A paused Run admitted before the history readers were added can resume when its frozen tool
+catalog matches the current catalog before those two additions. The Run retains its original tools.
 
 The native terminal capability adds `product/terminalSession` and `product/activity` to a negotiated
 native connection. The Host verifies both Session ownership and Run membership before returning a

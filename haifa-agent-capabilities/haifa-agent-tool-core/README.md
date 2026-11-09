@@ -6,4 +6,9 @@ Runtime depends on Tool API only; applications assemble this module with concret
 
 Canonical definition hashing uses UTF-8 SHA-256 over a platform-owned serialization with lexically sorted map keys and security/behavior fields included; alias and runtime health are excluded. Catalog snapshots are alias-sorted and content-addressed, reject duplicate aliases/coordinates/providers, and cannot be mutated after freeze.
 
+Applications that add tools to an existing catalog can declare the added aliases when assembling
+the invoker. It accepts a frozen binding from the exact predecessor catalog reconstructed without
+those aliases. Both catalogs require full binding equality, including the catalog digest and
+provider reference.
+
 The schema validator supports the bounded Draft 2020-12 subset used by built-in tools: object/properties/required/additionalProperties, arrays/items, scalar types, enum/const, numeric/string/collection bounds, document-local `$ref`, and allOf/anyOf/oneOf. Catalog build rejects non-document-local or unresolved `$ref`, schemas deeper than 64 levels, schemas over 4,096 nodes or 1 MiB of schema text, and `pattern` (excluded to avoid unbounded regular-expression execution). Invocation validation is limited to 10,000 instance nodes, 64 levels, 20 errors, 1,000,000 characters per string, and a 100 ms soft deadline; errors return bounded structured paths without echoing full values.
