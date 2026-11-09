@@ -165,8 +165,8 @@ bash dist-support/scripts/build-distributions.sh ca:linux-x64 --rebuild-jre
 # 从压缩包重新解压，用内置 Java 检查启动；使用临时数据，不调用模型
 python3 dist-support/scripts/smoke_distributions.py verify-ca-linux
 
-tar -xzf dist-support/output/haifa-coding-agent-linux-x64-v0.1.5.tar.gz
-./haifa-coding-agent-v0.1.5/bin/haifa --terminal --workspace /absolute/workspace
+tar -xzf dist-support/output/haifa-coding-agent-linux-x64-v0.1.6-SNAPSHOT.tar.gz
+./haifa-coding-agent-v0.1.6-SNAPSHOT/bin/haifa --terminal --workspace /absolute/workspace
 ```
 
 若 WSL 不可用（`wsl.exe -d Ubuntu -- bash -lc true` 直接失败并报 `Wsl/Service/E_UNEXPECTED`，或只
