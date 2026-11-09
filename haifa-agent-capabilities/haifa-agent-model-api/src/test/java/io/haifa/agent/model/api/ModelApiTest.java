@@ -458,6 +458,30 @@ class ModelApiTest {
                 Map.of());
     }
 
+    @Test
+    void defaultsTheSessionAffinityToTheRunAndKeepsAnExplicitConversationValue() {
+        ResolvedModelSnapshot snapshot = imageSnapshot(ModelCapability.IMAGE_UPLOAD_INPUT);
+
+        AgentChatRequest defaulted = chatRequest(snapshot, ModelMessage.text(ModelMessageRole.USER, "hello"));
+        AgentChatRequest conversation = new AgentChatRequest(
+                new ModelCallId("call-affinity"),
+                new ModelRequestId("request-affinity"),
+                new AgentRunId("run-image"),
+                " conversation-root ",
+                1,
+                1,
+                snapshot,
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(30),
+                Map.of(),
+                java.util.Optional.empty());
+
+        assertThat(defaulted.sessionAffinity()).isEqualTo("run-image");
+        assertThat(conversation.sessionAffinity()).isEqualTo("conversation-root");
+    }
+
     private static ResolvedModelSnapshot imageSnapshot(ModelCapability capability) {
         return ResolvedModelSnapshot.create(
                 new ModelProviderId("image-provider"),

@@ -1,5 +1,25 @@
 # Haifa Coding Agent
 
+## Experimental bounded presentation
+
+The product owns `coding.presentation.CodingPresentationObservation` and
+`CodingPresentationHistory`, mapping authoritative Session/Run/Interaction/history facts into the
+JDK-only [Coding contract](../haifa-coding-api/README.md). `CodingSessionService.observeChanges`
+registers a bounded, process-local Session invalidation. Named mutations and owner reconciliation
+notify independently of receipt delivery. Observations register before reading, serialize snapshot and
+updates, deduplicate source cursors and close their own handles without cancelling execution.
+
+`presentationSnapshot`/`snapshotSession` are pure authority reads: the Host owner, rather than an
+observer, remains responsible for reconciliation and follow-up dispatch. History carries source Run
+identity and explicit truncation while the legacy Host wire keeps its original fields. No new durable
+store, persistence owner or Run lifecycle is introduced. The publisher folds live output and replay in
+bounded batches, preserving cursor and redaction order without reloading the Session on each fragment.
+An assistant commit refreshes authoritative history. Exact final-message correlation controls
+live-to-history handoff; unavailable review data disables approval. Active Run delivery events produce
+bounded notice cards with the source Run,
+reason and safe display facts. The event tail provides recovery and the view reports when earlier
+delivery events may be omitted. The contract README records budgets and compatibility bindings.
+
 ## Product client API
 
 `io.haifa.agent.application.project.product.coding.client.CodingSessionClient` 是 Coding Agent 的稳定产品
@@ -14,6 +34,9 @@ Session 调和在发现活动 Run 的执行者已丢失（不再被当前进程�
 `STARTING / WAITING_USER / EXCHANGING / STORING` 登录阶段；具体 OAuth Attempt、Provider HTTP 和凭据存储
 仍留在最高层装配与共享 Local Model Auth Integration 中。
 
+The optional authentication `localManagementCommand` is a display-only instruction owned by the product assembly;
+it grants no remote credential-write/login permission.
+
 ## Session approval
 
 Terminal users can choose **Allow for this session** for ordinary built-in tool approvals. The local product
@@ -21,6 +44,9 @@ client remembers that choice for the current Coding Session in this app instance
 approval has reached Runtime `APPLIED`. Subsequent ordinary approvals are submitted through the same revision-aware
 Runtime API; no policy, workspace boundary or explicit denial is overridden. `/approval reset` returns the Session
 to asking each time. A new Session or app/client instance does not inherit consent.
+
+The same product approval component supports a nonblocking owner-lifetime guard for Host client leases.
+An expired or revoked owner cannot activate or reuse consent; Runtime remains the exact-approval authority.
 
 Workspace attachment, permission elevation, input/credential interactions, unknown tools and incomplete target
 projections remain explicit. Consent is not persisted and is not a project-wide permission rule.
@@ -183,6 +209,15 @@ Scope 中重新解析。标准 `CodingSessionClient` 提供脱敏授权清单与
 `host-guarded` 只提供受控进程启动、cwd、超时、取消、输出与进程树回收，不提供 OS 文件系统隔离。该 Store 不进入
 公共 Runtime/SDK/Execution 或 Personal Assistant。
 
+SQLite persistence now enforces one product-process owner per canonical database path. `ProjectPersistenceAssembly`
+acquires an OS file lock before migrations/open and holds it until store close; a second embedded assembly, or a
+future Host assembly sharing the same persistence entry, fails fast with `DATABASE_OWNED_BY_ANOTHER_PROCESS`.
+This is not a transaction writer lock or UI ownership lease; separate databases and `MEMORY` mode are unaffected.
+`CodingSessionClient.cancel(sessionId, runId, idempotencyKey)` and
+`CodingSessionService.abortActiveRun(sessionId, runId, idempotencyKey)` bind cancellation to the exact requested
+active Run; a stale Run returns `ACTIVE_RUN_MISMATCH` and never cancels its successor. The existing session-level
+cancel remains unchanged, and this package does not implement a Host command or listener.
+
 ## Coding Session 产品闭环
 
 `CodingSessionService` 是 Coding Agent 的产品 façade，提供 Session 创建、稳定分页/搜索、打开、
@@ -312,3 +347,43 @@ Coding base prompt 1.8.5 将任务进展和方法选择交给主模型，并要�
 转成最多三个问题的澄清交互，因此产品从不把它当作普通工具执行；`ProjectToolExecutor` 对真的被分发的调用直接报错，
 让这一拦截可被验证。`CodingSessionClient.respond(interaction, action, inputs, key)` 承载提交的答案，无法传输输入的
 实现会对非空载荷报错而不是静默丢弃。
+
+## History continuation
+
+`CodingSessionClient.history(sessionId, limit)` returns recent safe history; `nextBeforeSequence`, when present,
+is the exclusive cursor for `history(sessionId, limit, nextBeforeSequence)`. The local implementation uses the
+same authorization and redaction for both reads, scans at most 2,000 source records per page, and returns a
+continuation even for a scan window containing no visible items. `limit` bounds source messages (1–100); a
+synthesized failure stays with its source message. History remains a display projection, not a recovery source.
+
+## Composition-owned configuration summary
+
+`CodingSessionClient.configurationSummary()` optionally supplies safe composition-owned configuration facts
+for the environment view. Embedded clients default to an empty list; the Host adapter supplies provenance and
+safe effective-setting summaries without exposing configuration contents or credentials.
+
+`CodingSessionClient.renewConnection()` is a background composition hook. It returns true after transport
+reinitialization when the caller must reload observations; embedded clients return false. Renewal changes no
+Run ownership and never resubmits a product command.
+
+## Recoverable manual Shell commands
+
+Manual Shell executions use the plan token as a stable execution ID. On capable Hosts, `shell/start`
+returns admission without waiting for the process; `shell/get` reads a single outcome and `shell/list`
+returns Session-scoped metadata without output bodies. `/shell` lists receipts, `/shell ID` recovers output,
+and `/shell cancel ID` explicitly requests cancellation through the existing execution broker. Closing
+a TUI, interrupting observation or losing an RPC response never cancels or resends the command.
+
+Receipts belong to the current Host process: at most eight commands run concurrently, with 128 retained
+receipts and a 30-minute retention period after completion; active commands do not expire. Evicted receipts
+return unavailable and consumed tokens cannot dispatch again. Host restart is not durable Shell recovery.
+Cancellation is a request until the broker reports the actual process outcome. Host shutdown requests
+Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
+Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.
+
+Compaction and export remain on their existing APIs: this change adds no speculative generic operation
+store. Their behavior has no executed long-command failure evidence comparable to manual Shell.
+
+The standalone Coding assembly defaults to `context.policy: unified-context-v1` with authorized
+history readers. See the [CLI context configuration and rollback](../haifa-agent-cli/README.md#context-selection-and-rollback).
+`ProjectToolCatalog` only contributes the Runtime history provider when the highest-level assembly supplies it.

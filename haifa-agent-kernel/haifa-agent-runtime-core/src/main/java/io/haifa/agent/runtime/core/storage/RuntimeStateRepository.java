@@ -29,6 +29,21 @@ public interface RuntimeStateRepository
 
     List<AgentMessage> messages(AgentRunId runId);
 
+    /** The initiating USER identity, including a redacted record so callers fail closed instead of choosing a later input. */
+    default Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
+        return messages(runId).stream()
+                .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER)
+                .min(java.util.Comparator.comparingLong(AgentMessage::sequence));
+    }
+
+    /** Latest USER input identity, excluding internal responses and retaining redacted goals. */
+    default Optional<AgentMessage> latestUserMessage(AgentRunId runId) {
+        return messages(runId).stream()
+                .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER
+                        && message.visibility() != io.haifa.agent.core.message.MessageVisibility.INTERNAL)
+                .max(java.util.Comparator.comparingLong(AgentMessage::sequence));
+    }
+
     List<AgentStep> steps(AgentRunId runId);
 
     List<ToolCall> toolCalls(AgentRunId runId);

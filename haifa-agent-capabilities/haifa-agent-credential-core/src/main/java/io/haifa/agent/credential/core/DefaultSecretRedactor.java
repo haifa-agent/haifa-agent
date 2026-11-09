@@ -96,4 +96,128 @@ public final class DefaultSecretRedactor implements SecretRedactor {
         redacted = KEY_VALUE.matcher(redacted).replaceAll("$1" + REDACTED);
         return URI_USER_INFO.matcher(redacted).replaceAll("$1" + REDACTED + "@");
     }
+
+    /**
+     * Opens a thread-confined fragment redactor. Ambiguous prefixes/unterminated credential values are
+     * withheld until a later fragment proves their boundary; exceeding the explicit carry budget fails closed.
+     * Consumers may discard an unfinished tail when their best-effort observation ends.
+     */
+    public Stream openStream(int maximumPendingCharacters) {
+        if (maximumPendingCharacters < 1) throw new IllegalArgumentException("stream budget must be positive");
+        return new Stream(maximumPendingCharacters);
+    }
+
+    public final class Stream {
+        private final int maximumPendingCharacters;
+        private final StringBuilder pending = new StringBuilder();
+        private boolean failed;
+
+        private Stream(int maximumPendingCharacters) {
+            this.maximumPendingCharacters = maximumPendingCharacters;
+        }
+
+        /** Returns only text that cannot become part of a credential when another fragment arrives. */
+        public String accept(String fragment) {
+            Objects.requireNonNull(fragment, "fragment must not be null");
+            if (failed) throw new IllegalStateException("Secret redaction stream is closed");
+            pending.append(fragment);
+            int safeEnd = pending.length();
+            int[] maskedUntil = new int[pending.length()];
+            for (String secret : persistentSecrets) markLiteral(secret, maskedUntil);
+            for (String secret : scopedSecrets.keySet()) markLiteral(secret, maskedUntil);
+            for (int offset = 0; offset < safeEnd; offset++) {
+                int remaining = pending.length() - offset;
+                for (String secret : persistentSecrets) {
+                    if (literalPrefix(secret, offset, remaining)) {
+                        safeEnd = offset;
+                        break;
+                    }
+                }
+                for (String secret : scopedSecrets.keySet()) {
+                    if (literalPrefix(secret, offset, remaining)) {
+                        safeEnd = offset;
+                        break;
+                    }
+                }
+            }
+            // Respect the same replacement order as redact(): a prefix inside an already masked value
+            // cannot start another credential, while a higher-priority unfinished pattern stays pending.
+            for (var pattern : List.of(AUTHORIZATION, KEY_VALUE, URI_USER_INFO)) {
+                var matcher = pattern.matcher(pending);
+                for (int offset = 0; offset < pending.length(); offset++) {
+                    if (maskedUntil[offset] > offset) {
+                        offset = maskedUntil[offset] - 1;
+                        continue;
+                    }
+                    matcher.region(offset, pending.length());
+                    boolean matched = matcher.lookingAt();
+                    if (matcher.hitEnd()) {
+                        safeEnd = Math.min(safeEnd, offset);
+                        break;
+                    }
+                    if (matched) {
+                        markRange(maskedUntil, offset, matcher.end());
+                        offset = matcher.end() - 1;
+                    }
+                }
+            }
+            safeEnd = protectOverlappingMatches(safeEnd);
+            if (pending.length() - safeEnd > maximumPendingCharacters) {
+                pending.setLength(0);
+                failed = true;
+                throw new IllegalStateException("Secret redaction fragment budget exceeded");
+            }
+            String safe = redact(pending.substring(0, safeEnd));
+            pending.delete(0, safeEnd);
+            return safe;
+        }
+
+        private void markLiteral(String secret, int[] maskedUntil) {
+            for (int start = pending.indexOf(secret); start >= 0; start = pending.indexOf(secret, start + 1)) {
+                markRange(maskedUntil, start, start + secret.length());
+            }
+        }
+
+        private void markRange(int[] maskedUntil, int start, int end) {
+            for (int i = start; i < end; i++) maskedUntil[i] = Math.max(maskedUntil[i], end);
+        }
+
+        private int protectOverlappingMatches(int end) {
+            int previous;
+            do {
+                previous = end;
+                for (var pattern : List.of(AUTHORIZATION, KEY_VALUE, URI_USER_INFO)) {
+                    var matcher = pattern.matcher(pending);
+                    while (matcher.find() && matcher.start() < end) {
+                        if (matcher.end() > end) {
+                            end = matcher.start();
+                            break;
+                        }
+                    }
+                }
+                for (String secret : persistentSecrets) end = protectLiteral(secret, end);
+                for (String secret : scopedSecrets.keySet()) end = protectLiteral(secret, end);
+            } while (end > 0 && end != previous);
+            return end;
+        }
+
+        private int protectLiteral(String secret, int end) {
+            if (end == 0) return 0;
+            int start = pending.lastIndexOf(secret, end - 1);
+            return start >= 0 && start + secret.length() > end ? start : end;
+        }
+
+        private boolean literalPrefix(String secret, int offset, int remaining) {
+            if (remaining >= secret.length()) return false;
+            for (int i = 0; i < remaining; i++) {
+                if (pending.charAt(offset + i) != secret.charAt(i)) return false;
+            }
+            return true;
+        }
+
+        /** Allows observation owners to release empty stream state between tools. */
+        public boolean awaitingMoreText() {
+            return pending.length() != 0;
+        }
+    }
 }

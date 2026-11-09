@@ -27,17 +27,13 @@ import io.haifa.agent.memory.api.MemoryRetriever;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
-import io.haifa.agent.model.api.EffectiveModelParameters;
-import io.haifa.agent.model.api.ImageInputProfile;
 import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
-import io.haifa.agent.model.api.ModelImageSource;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
-import io.haifa.agent.model.api.ModelReasoningPolicy;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
@@ -74,7 +70,6 @@ import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1087,34 +1082,7 @@ class ChildRunDelegationTest {
     void childInheritsTheParentsReferenceInputsButNotItsFreeText() throws Exception {
         URI plan = URI.create("https://images.example.com/floor-plan.png");
         List<AgentChatRequest> childRequests = new CopyOnWriteArrayList<>();
-        ResolvedModelSnapshot text = DefaultResolvedModelSnapshots.deepSeekV4Pro();
-        EnumSet<ModelCapability> capabilities = EnumSet.copyOf(text.capabilities());
-        capabilities.add(ModelCapability.IMAGE_URL_INPUT);
-        ResolvedModelSnapshot base = ResolvedModelSnapshot.create(
-                text.providerId(),
-                text.providerVersion(),
-                text.modelId(),
-                text.modelVersion(),
-                text.providerModelId(),
-                text.adapterType(),
-                text.adapterVersion(),
-                text.apiStyle(),
-                text.dialect(),
-                text.endpoint(),
-                text.credentialRef(),
-                text.nativeStreaming(),
-                capabilities,
-                text.contextWindow(),
-                8_192,
-                Map.of(),
-                Map.of());
-        ResolvedModelSnapshot visionModel = base.withEffectiveParameters(new EffectiveModelParameters(
-                base.modelId(),
-                "2.0",
-                "sha256:" + "a".repeat(64),
-                ModelReasoningPolicy.disabled(),
-                4096,
-                Optional.of(ImageInputProfile.standard(Set.of(ModelImageSource.URL), false))));
+        ResolvedModelSnapshot visionModel = ContextLifecycleHistoryFixture.urlImageModel();
         Options options = Options.defaults();
         Fixture fixture = fixture(
                 options.customize(builder -> builder.profiles((id, overrides) -> new ResolvedProfile(
@@ -1244,6 +1212,7 @@ class ChildRunDelegationTest {
         if (contextWindow == 32_768) {
             assertThat(childCalls).hasValue(1);
             assertThat(child.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(child.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_CONTEXT_TOO_LONG);
             assertThat(diagnostic.get())
                     .isInstanceOf(io.haifa.agent.runtime.core.loop.ContextRebuildExhaustedException.class);
         } else {

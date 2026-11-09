@@ -86,6 +86,9 @@ public final class InMemoryRuntimeStore
     private final Map<AgentRunId, List<AgentMessage>> messages = new HashMap<>();
     private final Map<io.haifa.agent.core.session.AgentSessionId, List<AgentMessage>> sessionMessages = new HashMap<>();
     private final Map<AgentMessageId, AgentMessage> messagesById = new HashMap<>();
+    private final Map<AgentRunId, AgentMessageId> latestUserByRun = new HashMap<>();
+    private final Map<io.haifa.agent.core.session.AgentSessionId, java.util.NavigableMap<Long, AgentMessageId>>
+            requiredHistory = new HashMap<>();
     private final Map<AgentMessageId, ModelContinuationRecord> modelContinuationsByMessage = new HashMap<>();
     private final Map<String, ModelContinuationRecord> modelContinuationsById = new HashMap<>();
     private final ModelContinuationProtector modelContinuationProtector = AesGcmModelContinuationProtector.ephemeral();
@@ -453,7 +456,14 @@ public final class InMemoryRuntimeStore
                 draft.metadata(),
                 draft.createdAt());
         stream.add(message);
+        if (HistoryRetention.required(message.runId(), message.role(), message.contents()))
+            requiredHistory
+                    .computeIfAbsent(message.sessionId(), ignored -> new java.util.TreeMap<>())
+                    .put(message.sequence(), message.id());
         messagesById.put(message.id(), message);
+        if (message.role() == io.haifa.agent.core.message.MessageRole.USER
+                && message.visibility() != io.haifa.agent.core.message.MessageVisibility.INTERNAL)
+            message.runId().ifPresent(id -> latestUserByRun.put(id, message.id()));
         message.runId().ifPresent(runId -> messages.computeIfAbsent(runId, ignored -> new ArrayList<>())
                 .add(message));
         if (RunMessageVisibility.projectable(message)) {
@@ -623,26 +633,51 @@ public final class InMemoryRuntimeStore
     public synchronized List<AgentMessage> messagesAfter(
             io.haifa.agent.core.session.AgentSessionId sessionId, MessageCursor cursor, int limit) {
         if (limit < 1) throw new IllegalArgumentException("limit must be positive");
-        return sessionMessages.getOrDefault(sessionId, List.of()).stream()
-                .filter(message -> message.sequence() > cursor.value())
-                .limit(limit)
-                .toList();
+        var stream = sessionMessages.getOrDefault(sessionId, List.of());
+        int low = 0, high = stream.size();
+        while (low < high) {
+            int middle = low + (high - low) / 2;
+            if (stream.get(middle).sequence() <= cursor.value()) low = middle + 1;
+            else high = middle;
+        }
+        return List.copyOf(stream.subList(low, (int) Math.min(stream.size(), (long) low + limit)));
     }
 
     @Override
     public synchronized RecentMessageWindow recentMessages(
             io.haifa.agent.core.session.AgentSessionId sessionId, MessageCursor atOrBefore, int limit) {
         if (limit < 1) throw new IllegalArgumentException("limit must be positive");
-        List<AgentMessage> eligible = sessionMessages.getOrDefault(sessionId, List.of()).stream()
-                .filter(message -> message.sequence() <= atOrBefore.value())
-                .toList();
-        List<AgentMessage> selected = eligible.subList(Math.max(0, eligible.size() - limit), eligible.size());
+        var stream = sessionMessages.getOrDefault(sessionId, List.of());
+        int low = 0, high = stream.size();
+        while (low < high) {
+            int middle = low + (high - low) / 2;
+            if (stream.get(middle).sequence() <= atOrBefore.value()) low = middle + 1;
+            else high = middle;
+        }
+        List<AgentMessage> selected = List.copyOf(stream.subList(Math.max(0, low - limit), low));
         if (selected.isEmpty()) {
             return new RecentMessageWindow(
                     sessionId, MessageCursor.BEFORE_FIRST, MessageCursor.BEFORE_FIRST, List.of());
         }
         return new RecentMessageWindow(
                 sessionId, selected.getFirst().cursor(), selected.getLast().cursor(), selected);
+    }
+
+    @Override
+    public synchronized List<AgentMessage> requiredHistory(
+            io.haifa.agent.core.session.AgentSessionId sessionId, long after, long before, int limit) {
+        if (limit < 1 || after < 0 || before <= after) throw new IllegalArgumentException("invalid history range");
+        return requiredHistory
+                .getOrDefault(sessionId, java.util.Collections.emptyNavigableMap())
+                .subMap(after, false, before, false)
+                .values()
+                .stream()
+                .map(messagesById::get)
+                .filter(message -> message.status() == MessageStatus.COMPLETED
+                        && (message.visibility() == io.haifa.agent.core.message.MessageVisibility.USER_VISIBLE
+                                || message.visibility() == io.haifa.agent.core.message.MessageVisibility.AGENT_VISIBLE))
+                .limit(limit)
+                .toList();
     }
 
     @Override
@@ -710,6 +745,18 @@ public final class InMemoryRuntimeStore
     @Override
     public synchronized List<AgentMessage> messages(AgentRunId runId) {
         return List.copyOf(messages.getOrDefault(runId, List.of()));
+    }
+
+    @Override
+    public synchronized Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
+        return messages.getOrDefault(runId, List.of()).stream()
+                .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER)
+                .findFirst();
+    }
+
+    @Override
+    public synchronized Optional<AgentMessage> latestUserMessage(AgentRunId runId) {
+        return Optional.ofNullable(latestUserByRun.get(runId)).map(messagesById::get);
     }
 
     @Override
@@ -985,5 +1032,9 @@ public final class InMemoryRuntimeStore
             runMessages.set(runMessages.indexOf(current), replacement);
         });
         messagesById.put(replacement.id(), replacement);
+        if (replacement.status() == MessageStatus.REDACTED) {
+            var index = requiredHistory.get(replacement.sessionId());
+            if (index != null) index.remove(replacement.sequence());
+        }
     }
 }

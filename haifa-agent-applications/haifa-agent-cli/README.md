@@ -1,5 +1,25 @@
 # Haifa Agent CLI
 
+## Experimental native presentation
+
+`haifa host --presentation` explicitly enables the optional `session-presentation-v1` capability.
+It is off by default. Native v1 clients must offer that capability in `initialize`; the Host selects
+it only when enabled. Programmatic Host composition has an equivalent explicit boolean overload.
+This switch does not serve Web assets or allow browser Origin requests.
+
+After initialization, `presentation/subscribe {sessionId}` returns `{subscriptionId, snapshot}`.
+Attach `/v1/events?subscriptionId=...` using the same `X-CA-Client-ID`; updates accepted before attach
+are already buffered. `presentation/history {sessionId, limit?, beforeSequence?}` returns a separate
+bounded product history page. `presentation/close {subscriptionId}` closes only that client's
+observation. Snapshot/update/resync payloads use the
+[shared product contract](../haifa-coding-api/README.md); consumers resubscribe on gaps or resync.
+
+The engine owns fact mapping, redaction, bounds and publication ordering; Host owns negotiation,
+native context checks and SSE attachment. Session consent remains separately negotiated with
+`session-consent-v1` and scoped to each client. SSE polling does not renew its lease or client lifetime.
+Existing native methods and legacy capability booleans remain unchanged; no new Client/browser SDK,
+browser authorization or TUI migration is included in this experimental extension.
+
 ## Policy / Approval
 
 CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVER` 风险阈值表达实际审批策略。产品提供 immutable `PolicyRuleSet`，Decision 是瞬时结果；需要等待的审批只由 Runtime Interaction 持久化和恢复，不创建 Policy Snapshot、Decision、Evidence 或 Grant。CLI 不提供企业审批路由、待办或业务单据提交能力。
@@ -12,6 +32,12 @@ CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVE
 达到阈值的普通执行风险创建一次 Interaction 审批，批准后 Runtime 重验并继续同一 ToolCall，不产生第二个
 控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
 Broker/Workspace/Sandbox 边界或 Credential 重认证。当 preflight 证明调用未分派（`NOT_DISPATCHED`）时，Runtime 将该 ToolCall 标记为终态 FAILED 并回传失败事实（`failureCode` 与 `NOT_DISPATCHED`）继续循环，不再创建专用 `execution-recovery` Interaction；模型没有权限申请 Tool，也不能绕过标准策略。
+
+内置文件写工具（`file_create`、`file_write`、`file_patch`、`file_delete`、`file_move`）的审批由 CLI
+装配提供结构化 `ApprovalPresentation`：默认可见正文说明请求的实际动作、意图、精确目标，以及本次调用
+请求的完整文件内容或 patch 的有界、脱敏预览。该展示只消费工具调用参数，不读取文件推断执行前状态，
+也不把请求写成已经成功；凭据样式文本由现有 `SecretRedactor` 脱敏，机器坐标与调用摘要保留在折叠技术细节。
+非文件写工具继续使用中性回退文本。
 
 `haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
 Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
@@ -147,6 +173,52 @@ Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核�
 观察统计、截断标记和可选 Artifact Ref。模型返回空终态时，Runtime 只在同一冻结 Binding 上默认重试
 两次，不切换 Provider/Model，也不会从空响应调度 Tool。
 
+## CA Host mode
+
+`powershell
+haifa-coding host --workspace D:\repos\my-project --bind 127.0.0.1 --port 17861
+`
+
+Host is an explicit foreground mode built from the same CLI distribution and product assembly. It requires durable
+SQLite persistence, loads only explicit --config or the user configuration (never a workspace config overlay), and
+binds only loopback addresses. It exposes the reviewed CA Host JSON-RPC/SSE protocol under /v1/rpc, /v1/events
+and /health. Closing an observation, unsubscribing, or disconnecting a client never cancels a Run; stopping the Host
+is a separate explicit process action.
+
+Parallel edits in one physical workspace require independent manual worktrees. Host does not allocate worktrees,
+detect same-directory write conflicts, or provide writer/reader ownership roles.
+
+Startup failures keep their own vocabulary: a rejected command line still prints `Invalid host command: <reason>`,
+while a configuration the Host refuses prints `HOST_CONFIGURATION_REJECTED: <single-line detail>` (secret-redacted,
+bounded to 200 characters) and logs `CLI_HOST_STARTUP_REJECTED` with the same detail. `DATABASE_OWNED_BY_ANOTHER_PROCESS`,
+`HOST_DURABLE_PERSISTENCE_REQUIRED` and `HOST_BIND_*` stay as they were.
+
+## Remote TUI mode
+
+```powershell
+haifa-coding tui --connect http://127.0.0.1:17861            # resumes the last Session of that Host
+haifa-coding tui --connect http://127.0.0.1:17861 --session <SESSION_ID>
+haifa-coding tui --connect http://127.0.0.1:17861 --new      # starts a new Session
+```
+
+The remote TUI is a thin client of one running CA Host and is dispatched before this process opens its own logs,
+configuration, credentials, Runtime or SQLite database. It therefore accepts no `--workspace`, `--config`, `--model`,
+`--approval`, `--timeout`, `--trace`, `-m/--message`, `resume` or `--terminal` options: the Host owns the workspace,
+model configuration, Runtime, persistence and credentials. The shipped launchers pass the `tui` argument vector
+through untouched, without injecting the bundled `--config` and without creating the per-user data directories that
+only the local modes use.
+
+The Host stays authoritative for tool-output preview; new peers stream it only after explicit optional capability
+negotiation. Session consent is enabled only for negotiated `session-consent-v1`; credential setup stays local to
+the trusted Host. Ordinary per-approval approve/reject
+and authenticated logout remain available.
+An unavailable or protocol-incompatible Host fails fast with a stable `REMOTE_*` code and never falls back to an
+embedded Run. When a Run settles while a queued follow-up has already advanced on the Host, the terminal performs one
+bounded reconcile per settled Run to move onto the successor instead of reloading on every delta. Closing this
+terminal, including a process-exit signal such as `SIGTERM`, only closes its own client and observations; it
+never cancels the Host Run. A scoped INT-only bridge copies a highlighted transcript selection; without one,
+an INT signal only detaches the client. TERM retains the JVM exit path. Only an explicit cancel gesture in the
+TUI (`Esc`/`Ctrl+C` delivered as a key, without a selection) sends `run/cancel`.
 ## 构建与运行
 
 ### 本地发行目录（macOS / Linux）
@@ -587,6 +659,12 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_SQLITE_DATABASE_PATH`、`HAIFA_TRANSCRIPT_ROOT` 和
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
+`tools.enabled` controls built-in Project tools. The Session-scoped `history_search`/`history_read`
+readers are controlled together by `context.historyRetrieval`. They are enabled with the default unified
+policy and may be present even with a restricted `tools.enabled` list.
+Set `context.historyRetrieval: false` to suppress them (and use legacy selection). The effective Project
+configuration includes their aliases; Skill/MCP contributions retain their existing separate controls.
+
 `tools.enabled`、冻结 Tool Binding、模型披露、ToolCall 持久化和 Provider 执行统一使用
 `file_list`、`file_read`、`file_patch`、`workspace_attach`、`execution_run`
 等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、当前授权目录的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
@@ -843,3 +921,188 @@ Search，除真实模型 Endpoint 外不需要外部信息服务。
 当前硬门禁是 Run 正常完成、独立 Oracle 通过、受保护文件和批次边界未变化、真实模型证据完整且无敏感
 信息泄漏。耗时、Token、模型调用数、工具调用数和失败工具结果作为二级趋势指标记录，用于后续比较模型与
 Prompt 效率；现阶段除“失败后恢复”专用用例外，不因单次效率波动判失败。
+
+## Remote Host workspace display
+
+The optional `initialize.workspaceContext` is a bounded display snapshot of the Host's initial authorized
+workspace and Git/worktree metadata. Remote TUI composition maps it into existing environment surfaces and
+labels Shell/export destinations; it never resolves the client's current directory or Git metadata.
+Older Hosts and non-Git/detached checkouts use explicit unavailable fallbacks.
+
+## Host configuration provenance
+
+Host startup and the remote `/session` panel show a bounded summary of the selected configuration source,
+workspace-overlay policy, effective approval mode/threshold for new Runs and configured tool/model counts.
+The Host ignores implicit repository overlays. Use `host --config <trusted-file>` to select a trusted repository
+file explicitly; it replaces implicit user/workspace inputs and must include durable SQLite configuration.
+The summary exposes neither file contents nor credential values. Older Hosts show an unavailable fallback.
+
+## Remote client context renewal
+
+The optional `client-renewal` capability provides authenticated `client/renew`; public `host/ping` remains
+health-only. The remote Terminal checks its connection every 15 seconds on the background maintenance lane,
+independently of sidebar visibility. Older v1 Hosts use a bounded authenticated `session/list` read instead.
+An expired context or restarted Host triggers one reinitialization attempt per check and closes old transport
+observations; the Terminal then reloads the selected Session and reattaches through the existing cursor path.
+No product mutation is retried, no Run is cancelled and no session consent is granted by connection renewal.
+A different project at the same endpoint is refused until an explicit new connection.
+
+## Java 21 SSE scheduling
+
+Remote SSE line framing uses the UTF-8 reader directly with per-stream CR/LF state. A synchronizing
+PushbackReader around an idle stream can pin Java 21 virtual-thread carriers; on low-core hosts, two idle
+observations then prevent concurrent RPC work from progressing. The line reader supports LF, CR and CRLF
+within the existing line/frame bounds and allows idle observations to unmount from their carriers.
+
+## Recoverable manual Shell commands
+
+Manual Shell executions use the plan token as a stable execution ID. On capable Hosts, `shell/start`
+returns admission without waiting for the process; `shell/get` reads a single outcome and `shell/list`
+returns Session-scoped metadata without output bodies. `/shell` lists receipts, `/shell ID` recovers output,
+and `/shell cancel ID` explicitly requests cancellation through the existing execution broker. Closing
+a TUI, interrupting observation or losing an RPC response never cancels or resends the command.
+
+Receipts belong to the current Host process: at most eight commands run concurrently, with 128 retained
+receipts and a 30-minute retention period after completion; active commands do not expire. Evicted receipts
+return unavailable and consumed tokens cannot dispatch again. Host restart is not durable Shell recovery.
+Cancellation is a request until the broker reports the actual process outcome. Host shutdown requests
+Shell cancellation before closing persistence. Normal asynchronous Agent Runs retain their existing lifecycle.
+Old clients/Hosts keep the synchronous Shell endpoint; new clients detect optional `shell-operations`.
+
+Compaction and export remain on their existing APIs: this change adds no speculative generic operation
+store. Their behavior has no executed long-command failure evidence comparable to manual Shell.
+
+
+### Optional remote v1 capabilities
+
+`initialize` accepts a bounded `optionalCapabilities` array and returns only explicitly offered, implemented
+extensions in an array with the same name. An absent response field from an older Host means no extensions.
+Legacy `preview`, `session-consent` and `auth-mutation` booleans remain false for compatibility with old v1
+clients; new features must not flip those legacy bits. Unknown offers are ignored; malformed offers or an
+unrequested Host selection fail the handshake. The composition offers independent `preview-v1` and `session-consent-v1` extensions; preview is selected only when its existing execution publisher is available.
+Remote completion excludes credential setup; `/commands` and `/help` explain its unavailability and label
+supported Host-side actions. Pending approval/reopen, trust, reload and export remain available.
+
+
+### Remote tool-output preview
+
+New peers explicitly negotiate `preview-v1` through `initialize.optionalCapabilities`; old v1 capability bits
+and Session `previewAvailable` fields retain their legacy false values. `preview/subscribe` requires the
+negotiated logical client context plus an exact Session/Run pair, and returns a `tool-preview` SSE subscription;
+`preview/unsubscribe` closes only that observation. Existing client/subscription limits, attach expiry and
+queue capacity apply. Each safe frame is bounded to 4096 UTF-8 bytes and preserves ToolCallId/channel and
+separate execution-truncation/preview-loss flags. The execution broker's cross-chunk sensitive-value redaction
+remains upstream; Host display projection additionally filters controls and credential patterns.
+
+The remote adapter consumes the public execution preview API only; it does not construct execution brokers,
+providers or persistence. Preview is transient and has no cursor, replay or history persistence. Queue overflow,
+disconnect and slow observers drop their observation without cancelling/replaying the Run. The terminal retains
+its existing bounded per-tool display tail; completed tool results remain authoritative. Older peers continue
+without preview or session consent; remote credential mutation remains disabled for all peers.
+
+
+Preview normalization/redaction keeps subscription-local state per ToolCallId and output channel, including ANSI
+sequences and credential patterns split across frames. Up to 64 pending stream keys and 4096 pending characters
+per key are retained; empty keys are released. An unknown source gap, over-budget credential fragment or control
+sequence drops only the observation. Ordinary complete progress is not held until tool completion. The fragment
+redactor shares the existing credential patterns rather than maintaining a second regex list. Remaining ambiguous
+text is never persisted or flushed unsafely when the subscriber disconnects.
+
+### Client-bound remote Session consent
+
+Peers explicitly selecting `session-consent-v1` may use `approval/allowForSession`, `approval/resetSession`,
+`approval/status` and `client/close`. The original v1 capability bits remain false. Ordinary approval eligibility,
+exact identity/revision checks and initial Runtime APPLIED confirmation reuse the existing Coding approval component.
+Workspace expansion, elevation, unknown tools, incomplete targets, hard denies and credential input remain explicit.
+
+Each initialized client has an independent transient 45-second consent lease. The existing TUI maintenance effect
+renews it with `client/renew` every 15 seconds, independently of sidebar visibility. Public health pings, polling
+and another client's traffic do not renew consent. Every automatic approval checks the lease; maintenance is not
+required for expiry. A late renewal replaces the expired lease without restoring consent. Reconnect and Host
+restart never inherit it. Graceful client close revokes its lease; a killed/disconnected client expires naturally.
+Lease expiry/revocation leaves already-dispatched tools and Runs alone and returns future requests to ASK.
+
+`/approval reset` deliberately revokes the Session's consent across all clients; exact Run cancellation also resets
+that Session after the cancel command is accepted. Status distinguishes ASK, PENDING application and ACTIVE with a
+UTC epoch-millisecond expiry. UI status reads run on the existing maintenance lane, and changes are shown without
+blocking input. Consent is neither a credential nor an authentication identity, and no new durable store is added.
+
+### Local credential repair while Host is running
+
+Use the shipped `haifa auth` command on the **Host machine, as the same OS user**. The local-development
+distribution calls the same entry `haifa-coding auth`. This entry assembles only the existing authentication
+service/store and registered login methods. It does not load Coding workspace configuration, start a model,
+open Runtime/SQLite, or create Runtime data/log directories. The launchers pass `auth` arguments through before
+injecting their bundled `--config` and data variables.
+
+```text
+haifa auth status
+haifa auth connect --provider deepseek --method api-key
+haifa auth connect --provider openai-codex --method device
+haifa auth connect --provider openai-codex --method browser
+haifa auth connect --provider google-antigravity --method browser
+haifa auth connect --provider opencode-go --method device
+haifa auth logout --connection model-auth://deepseek/default
+```
+
+API keys are read with console echo disabled; no key argument, environment-key import, redirected-stdin fallback
+or remote secret collection is added. Empty input cancels; validation/cancel failures keep the existing credential.
+Replacing an API key preserves its saved provider attributes, including Bailian workspace and region.
+Browser/device modes use the same registered compatibility drivers and availability as embedded login. One-time
+instructions appear only on this local console, without Runtime/file logging. Unsupported methods fail with a stable
+safe code; no untrusted failure detail is printed.
+
+Windows uses Credential Manager. An already configured headless Linux Host uses the existing explicit
+`HAIFA_CODING_AUTH_STORE=file` opt-in; manage that same store with `--store file`, for example:
+
+```text
+haifa auth connect --provider deepseek --method api-key --store file
+haifa auth status --store file
+```
+
+There is no automatic plaintext fallback on other platforms. Commands target the provider's supported `default`
+slot; environment/OS references and custom slots are not silently rewritten. Use the same store selector and OS user
+as Host, rather than updating an unrelated local account. Host's model credential resolver rereads the shared store,
+so a successful local replacement can be used by the next model call without another database owner.
+
+A new Host advertises a bounded display-only local management command for its configured, locally writable default
+credential. Legacy credential-write/login capability flags remain false. Remote `/connect` shows a dismissible detail
+panel containing Host/project, account scope, the runnable local command and refresh steps; it never collects a secret.
+After local repair, reopen `/account` in that remote TUI to read fresh Host connection status, then retry deliberately.
+Credential repair never replays a failed Run or uncertain tool automatically. `/logout` remains an explicit action.
+
+## Context selection and rollback
+
+Coding defaults to the bounded Run working set and unified budget and compaction. These settings
+show the defaults:
+
+```yaml
+context:
+  policy: unified-context-v1
+  targetTokens: 4096
+  historyRetrieval: true
+```
+
+`targetTokens` is a soft working-set target (128–65536), not the model's hard input limit. Required
+requests, applicable constraints and covering summaries may exceed this target; the final model input
+still has to fit the hard limit. The strategy is frozen when a Run is admitted. A model selection or
+configuration change applies to a later Run; it does not rewrite an admitted Run's policy.
+
+The two read-only tools `history_search` and `history_read` use authorized, versioned results from the
+same Session, including saved large results. They do not reread the current file as an older version or
+rerun a historical action. Their definitions and reads count toward the ordinary input/call budgets.
+Steer and pause/resume continue through the existing Runtime protocol. Steer may reselect completed
+history at its safe point; saved evidence remains readable, and pending protocol associations are retained.
+If required source content becomes unavailable, the Run fails explicitly rather than claiming it was
+successfully summarized.
+
+To roll back selection while retaining saved-result readback, set `context.policy: legacy` and keep
+`context.historyRetrieval: true`, then restart the application. To restore the legacy tool schema as
+well, set `historyRetrieval: false`. An explicit `policy: legacy` disables readers unless retained
+with `historyRetrieval: true`. Setting only `historyRetrieval: false` also selects legacy. Do not disable readers for an
+already admitted Run that still requires them; finish or settle that Run under its frozen assembly first.
+The original history, saved results and committed summaries remain stored. Unknown context options,
+unified selection without readers, invalid targets and `automaticMaintenance: true` are rejected.
+
+The policy has deterministic integration coverage. Automatic summary maintenance after termination
+is unsupported.

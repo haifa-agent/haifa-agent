@@ -3,6 +3,8 @@ package io.haifa.agent.application.project.product.coding;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.core.content.AssetRefPart;
+import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCode;
@@ -10,6 +12,7 @@ import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
+import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -17,6 +20,7 @@ import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,6 +30,49 @@ class CodingSessionHistoryServiceTest {
     private static final AgentSessionId SESSION_ID = new AgentSessionId("session-1");
     private final InMemoryRuntimeStore messages = new InMemoryRuntimeStore();
     private final AtomicInteger authorizations = new AtomicInteger();
+
+    @Test
+    void preservesExactRunAssociationAndExplicitTruncationWithoutMatchingText() {
+        var first = new AgentRunId("first-run");
+        var second = new AgentRunId("second-run");
+        append("first-message", first, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "same answer…");
+        append("second-message", second, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "same answer…");
+        append("large-message", second, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "汉".repeat(9000));
+        var items = service(ignored -> Optional.empty()).recent(SESSION_ID, 10).items();
+        assertThat(items)
+                .extracting(CodingSessionHistoryItem::sourceRunId)
+                .containsExactly(Optional.of(first.value()), Optional.of(second.value()), Optional.of(second.value()));
+        assertThat(items).extracting(CodingSessionHistoryItem::truncated).containsExactly(false, false, true);
+        assertThat(items.get(0).id()).isNotEqualTo(items.get(1).id());
+    }
+
+    @Test
+    void preservesPersistedFinalIdentityAcrossHistoryPages() {
+        var run = new AgentRunId("run-1");
+        append("progress", run, MessageRole.ASSISTANT, MessageVisibility.USER_VISIBLE, "progress");
+        append(
+                "answer",
+                run,
+                MessageRole.ASSISTANT,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("answer", "plain")),
+                Map.of("final", true, "partial", true));
+        append(
+                "failed",
+                new AgentRunId("failed-run"),
+                MessageRole.ASSISTANT,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("failure summary", "plain")),
+                Map.of("final", true, "terminalErrorCode", "MODEL_CALL_FAILED"));
+        var history = service(ignored -> Optional.empty());
+
+        var latest = history.recent(SESSION_ID, 2);
+        assertThat(latest.items()).extracting(CodingSessionHistoryItem::status).containsExactly("FINAL", "COMPLETED");
+        assertThat(history.before(SESSION_ID, latest.nextBeforeSequence().orElseThrow(), 2)
+                        .items())
+                .extracting(CodingSessionHistoryItem::status)
+                .containsExactly("COMPLETED");
+    }
 
     @Test
     void projectsOnlyRedactedUserVisibleConversationMessages() {
@@ -65,6 +112,8 @@ class CodingSessionHistoryServiceTest {
 
         assertThat(page.items()).hasSize(2);
         assertThat(page.items().getLast().kind()).isEqualTo(CodingSessionHistoryItem.Kind.ERROR);
+        assertThat(page.items().getLast().code()).contains("MODEL_CALL_FAILED");
+        assertThat(page.items().getLast().diagnosticId()).contains("diagnostic-1");
         assertThat(page.items().getLast().body())
                 .isEqualTo("[MODEL_CALL_FAILED] Model call failed · Diagnostic ID: diagnostic-1");
     }
@@ -89,6 +138,80 @@ class CodingSessionHistoryServiceTest {
     }
 
     @Test
+    void continuesBeforeTheReturnedSequenceWithoutRepeatingMessages() {
+        for (int i = 1; i <= 5; i++) {
+            append(
+                    "paged-" + i,
+                    new AgentRunId("run-" + i),
+                    MessageRole.USER,
+                    MessageVisibility.USER_VISIBLE,
+                    "message " + i);
+        }
+        var history = service(runId -> Optional.empty());
+        var latest = history.recent(SESSION_ID, 2);
+        var older = history.before(SESSION_ID, latest.nextBeforeSequence().orElseThrow(), 2);
+        var first = history.before(SESSION_ID, older.nextBeforeSequence().orElseThrow(), 2);
+        assertThat(latest.items()).extracting(CodingSessionHistoryItem::body).containsExactly("message 4", "message 5");
+        assertThat(older.items()).extracting(CodingSessionHistoryItem::body).containsExactly("message 2", "message 3");
+        assertThat(first.items()).extracting(CodingSessionHistoryItem::body).containsExactly("message 1");
+        assertThat(first.nextBeforeSequence()).isEmpty();
+        assertThat(first.earlierHistoryAvailable()).isFalse();
+        assertThat(authorizations).hasValue(3);
+        assertThat(history.before(SESSION_ID, 1, 2).items()).isEmpty();
+        assertThatThrownBy(() -> history.before(SESSION_ID, 0, 2)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void emptyVisibleScanWindowStillAdvancesItsContinuation() {
+        append(
+                "old-visible",
+                new AgentRunId("old-run"),
+                MessageRole.USER,
+                MessageVisibility.USER_VISIBLE,
+                "old message");
+        for (int i = 0; i < 2100; i++) {
+            append(
+                    "internal-" + i,
+                    new AgentRunId("internal-run"),
+                    MessageRole.RUNTIME,
+                    MessageVisibility.INTERNAL,
+                    "internal");
+        }
+        var history = service(runId -> Optional.empty());
+        var recent = history.recent(SESSION_ID, 2);
+        assertThat(recent.items()).isEmpty();
+        assertThat(recent.nextBeforeSequence()).isPresent();
+        var older = history.before(SESSION_ID, recent.nextBeforeSequence().orElseThrow(), 2);
+        assertThat(older.items()).extracting(CodingSessionHistoryItem::body).containsExactly("old message");
+        assertThat(older.nextBeforeSequence()).isEmpty();
+    }
+
+    @Test
+    void nonTextVisibleMessagesKeepTheRetainedSourceBoundaryForOlderText() {
+        append(
+                "older-text",
+                new AgentRunId("older-run"),
+                MessageRole.USER,
+                MessageVisibility.USER_VISIBLE,
+                "older text");
+        for (int i = 1; i <= 2; i++) {
+            append(
+                    "image-" + i,
+                    new AgentRunId("image-run-" + i),
+                    MessageRole.USER,
+                    MessageVisibility.USER_VISIBLE,
+                    List.of(new AssetRefPart(new AssetRef("asset-" + i, "image/png", "image.png"))));
+        }
+        var history = service(runId -> Optional.empty());
+        var recent = history.recent(SESSION_ID, 2);
+        assertThat(recent.items()).isEmpty();
+        assertThat(recent.nextBeforeSequence()).hasValue(2);
+        var older = history.before(SESSION_ID, recent.nextBeforeSequence().orElseThrow(), 2);
+        assertThat(older.items()).extracting(CodingSessionHistoryItem::body).containsExactly("older text");
+        assertThat(older.nextBeforeSequence()).isEmpty();
+    }
+
+    @Test
     void validatesTheProductHistoryLimitBeforeReading() {
         assertThatThrownBy(() -> service(runId -> Optional.empty()).recent(SESSION_ID, 101))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -106,6 +229,21 @@ class CodingSessionHistoryServiceTest {
     }
 
     private void append(String id, AgentRunId runId, MessageRole role, MessageVisibility visibility, String text) {
+        append(id, runId, role, visibility, List.of(new TextPart(text, "plain")));
+    }
+
+    private void append(
+            String id, AgentRunId runId, MessageRole role, MessageVisibility visibility, List<ContentPart> content) {
+        append(id, runId, role, visibility, content, Map.of());
+    }
+
+    private void append(
+            String id,
+            AgentRunId runId,
+            MessageRole role,
+            MessageVisibility visibility,
+            List<ContentPart> content,
+            Map<String, Object> metadata) {
         messages.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId(id),
                 SESSION_ID,
@@ -114,8 +252,8 @@ class CodingSessionHistoryServiceTest {
                 role,
                 MessageStatus.COMPLETED,
                 visibility,
-                java.util.List.of(new TextPart(text, "plain")),
-                Map.of(),
+                content,
+                metadata,
                 Instant.parse("2026-08-07T00:00:00Z")));
     }
 }

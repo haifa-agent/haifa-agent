@@ -58,12 +58,27 @@ public record Tui4jTerminalIo(
     }
 
     public static Tui4jTerminalIo system() {
+        return system(false);
+    }
+
+    /**
+     * Remote thin-client composition. The client must not use tui4j's combined process handler: it turns a claimed
+     * SIGINT/SIGTERM into one in-app quit message that also cancels the active Run, so a killed client would
+     * cancel work the Host still owns. A scoped INT-only bridge preserves selection copying; TERM keeps
+     * the JVM's exit behavior and never becomes a Host cancellation request.
+     */
+    public static Tui4jTerminalIo systemWithoutSignalHandler() {
+        return system(true);
+    }
+
+    private static Tui4jTerminalIo system(boolean withoutSignalHandler) {
         List<String> environment = System.getenv().entrySet().stream()
                 .filter(entry -> SAFE_TERMINAL_ENVIRONMENT.contains(entry.getKey()))
                 .map(entry -> entry.getKey() + "=" + entry.getValue())
                 .sorted()
                 .toList();
-        return new Tui4jTerminalIo(Optional.empty(), Optional.empty(), environment, false, System.console() != null);
+        return new Tui4jTerminalIo(
+                Optional.empty(), Optional.empty(), environment, withoutSignalHandler, System.console() != null);
     }
 
     public static Tui4jTerminalIo streams(InputStream input, OutputStream output, List<String> environment) {
@@ -152,7 +167,9 @@ public record Tui4jTerminalIo(
     void run(Program program) {
         Objects.requireNonNull(program, "program must not be null");
         resetMouseReporting();
-        try {
+        try (var interrupt = withoutSignalHandler && input.isEmpty()
+                ? new TerminalInterruptSignal(() -> program.send(new TerminalInterruptSignal.Interrupted()))
+                : null) {
             // Push the host title so it can be restored on exit (xterm title stack), then claim it.
             writeSequence(SAVE_WINDOW_TITLE);
             writeSequence("\u001B]2;" + WINDOW_TITLE + "\u0007");

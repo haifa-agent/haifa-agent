@@ -2,6 +2,9 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.coding.host.internal.CliWorkspaceSignalDiscovery;
+import io.haifa.coding.host.internal.TrustedProjectResourceCatalog;
+import io.haifa.coding.host.internal.TrustedWorkspaceEnvironmentCatalog;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;

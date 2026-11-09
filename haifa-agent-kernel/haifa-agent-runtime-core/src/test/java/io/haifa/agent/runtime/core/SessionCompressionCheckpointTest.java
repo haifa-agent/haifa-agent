@@ -181,7 +181,8 @@ class SessionCompressionCheckpointTest {
                 new CompressionPolicy(2, 10, 1),
                 () -> "stable-summary-" + ids.incrementAndGet(),
                 () -> NOW);
-        var first = source.compact(run.sessionId());
+        source.compact(run.sessionId());
+        var first = source.select(run);
         var checkpoint = first.summary().orElseThrow();
 
         store.appendSessionMessage(
@@ -196,7 +197,10 @@ class SessionCompressionCheckpointTest {
                 .filteredOn(item -> item.content() instanceof MessageGroupContextContent)
                 .flatExtracting(item -> ((MessageGroupContextContent) item.content()).messages())
                 .extracting(AgentMessage::id)
-                .containsExactly(new AgentMessageId("stable-three"), new AgentMessageId("stable-four"));
+                .containsExactly(
+                        store.initiatingUserMessage(run.id()).orElseThrow().id(),
+                        new AgentMessageId("stable-three"),
+                        new AgentMessageId("stable-four"));
         assertThat(store.latestVersion(run.sessionId())).isEqualTo(1);
     }
 
@@ -219,7 +223,8 @@ class SessionCompressionCheckpointTest {
                 new CompressionPolicy(2, 10, 1),
                 () -> "model-prefix-summary-" + ids.incrementAndGet(),
                 () -> NOW);
-        var first = source.compact(session);
+        source.compact(session);
+        var first = source.select(run);
         var assembler = new ModelMessageAssembler(store);
         var firstMessages = assembler.assemble(runId, context(first));
 
@@ -534,6 +539,16 @@ class SessionCompressionCheckpointTest {
         scheduler.runAll();
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(runtime.find(accepted.runId())
+                        .orElseThrow()
+                        .error()
+                        .orElseThrow()
+                        .details())
+                .containsEntry("contextFailure", "REBUILD_EXHAUSTED");
+        assertThat(traces)
+                .filteredOn(t -> t.operation().equals("runtime.error"))
+                .singleElement()
+                .satisfies(t -> assertThat(t.safeAttributes()).containsEntry("contextFailure", "REBUILD_EXHAUSTED"));
         assertThat(modelCalls).hasValue(3);
         assertThat(toolExecutions).hasValue(1);
         assertThat(store.steps(accepted.runId()))
@@ -545,7 +560,9 @@ class SessionCompressionCheckpointTest {
             assertThat(tool.providerCorrelationId().value())
                     .isNotEqualTo(tool.idempotencyKey().value());
         });
-        assertThat(traces).anyMatch(trace -> trace.operation().equals("context.forced-rebuild"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("context.forced-rebuild"))
+                .hasSize(1);
         assertThat(traces)
                 .filteredOn(trace -> trace.operation().equals("context.built"))
                 .anySatisfy(trace -> assertThat(trace.safeAttributes())

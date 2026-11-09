@@ -1075,6 +1075,20 @@ CREATE TABLE memory_scope_clear (
     PRIMARY KEY (tenant_id, owner_id, owner_type, scope_type, target_id)
 ) STRICT;
 
+-- Migration V16: history_retention_index
+-- One rebuildable classification bit over existing source records, not another history store.
+ALTER TABLE session_message ADD COLUMN history_requires_retention INTEGER NOT NULL DEFAULT 1;
+UPDATE session_message SET history_requires_retention = CASE WHEN run_id IS NULL OR EXISTS (
+    SELECT 1 FROM json_each(CAST(content_payload AS TEXT), '$.parts') part
+    WHERE COALESCE(json_extract(part.value, '$.kind'), '') NOT IN ('text', 'tool-call-ref', 'tool-result-ref')
+       OR (role = 'USER' AND json_extract(part.value, '$.kind') = 'text'
+           AND (lower(json_extract(part.value, '$.text')) LIKE 'project constraint:%'
+                OR json_extract(part.value, '$.text') LIKE '项目约束%'))
+) THEN 1 ELSE 0 END;
+CREATE INDEX idx_message_required_history ON session_message(session_id, sequence)
+    WHERE history_requires_retention = 1 AND status = 'COMPLETED'
+      AND visibility IN ('USER_VISIBLE', 'AGENT_VISIBLE');
+
 -- Migration V1000: project_product_session
 CREATE TABLE project_product_session (
     session_id TEXT PRIMARY KEY,
@@ -1266,6 +1280,7 @@ INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (12, 'r
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (13, 'sdk_conversation_metadata_only', 'sha256:dc19669cfd56953827bd9b72f10c521f7c83eb3ec50cfea8976c941134330082', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (14, 'run_parent_index', 'sha256:6332ac2a2954017a88c1c8b97a0607625d16954deacdaef7e8d6d4fea2b78f7b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (15, 'memory_direct_crud', 'sha256:df5d0d0f6225ee4d0fcf23fbbb868fd98168da1755bb822a968a0b6254a4920c', 0);
+INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (16, 'history_retention_index', 'sha256:f75203fd42a07fe99449d1a653e673d426556013fdcc0dd2daddc0db5f9e163d', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1000, 'project_product_session', 'sha256:929d869e45117a3e829be4f9b995bc646874583410c6f3572800f264aa4f418b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1001, 'coding_session_product_loop', 'sha256:109f86f30032eecb16a6d34ab945ce4fba8573eed8d8391f800d7132f2f06fcf', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1002, 'coding_session_event_cursor', 'sha256:f566cba113dcf3ab9eb6f0883497e672cf3d02c5d7a3d64e94d5f186ed89c2b6', 0);

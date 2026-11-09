@@ -20,6 +20,7 @@ public final class OpenAiCompatibleDialects {
     public static final String DEEPSEEK = "deepseek-openai-chat";
     public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-chat";
     public static final String KIMI = "kimi-openai-chat";
+    public static final String OPENCODE_GO = "opencode-go-openai-chat";
     public static final String ZHIPU = "zhipu-openai-chat";
     public static final String VOLCENGINE_ARK = "volcengine-ark-openai-chat";
     public static final String SILICONFLOW = "siliconflow-openai-chat";
@@ -165,6 +166,7 @@ public final class OpenAiCompatibleDialects {
             case VOLCENGINE_ARK -> VolcengineArkOpenAiChatDialect.INSTANCE;
             case SILICONFLOW -> SiliconFlowOpenAiChatDialect.INSTANCE;
             case TOKENRHYTHM -> TokenRhythmOpenAiChatDialect.INSTANCE;
+            case OPENCODE_GO -> OpenCodeGoOpenAiChatDialect.INSTANCE;
             default -> throw new IllegalArgumentException("unsupported OpenAI-compatible dialect: " + dialectId);
         };
     }

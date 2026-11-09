@@ -56,7 +56,10 @@ public final class SqliteSessionMessageRepository
             long sequence = mapper.nextMessageSequence(draft.sessionId().value());
             SessionMessageRow row = toRow(draft, sequence);
             try {
-                mapper.insertMessage(row);
+                mapper.insertMessage(
+                        row,
+                        io.haifa.agent.runtime.core.storage.HistoryRetention.required(
+                                draft.runId(), draft.role(), draft.contents()));
             } catch (PersistenceException exception) {
                 throw new IllegalStateException("message already exists or has invalid references", exception);
             }
@@ -106,6 +109,19 @@ public final class SqliteSessionMessageRepository
     }
 
     @Override
+    public List<AgentMessage> requiredHistory(AgentSessionId sessionId, long after, long before, int limit) {
+        requireLimit(limit);
+        if (after < 0 || before <= after) throw new IllegalArgumentException("invalid history range");
+        return read(() ->
+                unitOfWork
+                        .mapper(RuntimeStoreMapper.class)
+                        .requiredHistory(sessionId.value(), after, before, limit)
+                        .stream()
+                        .map(this::fromRow)
+                        .toList());
+    }
+
+    @Override
     public Optional<MessageCursor> latestMessageCursor(AgentSessionId sessionId) {
         return read(() -> Optional.ofNullable(
                         unitOfWork.mapper(RuntimeStoreMapper.class).latestMessageSequence(sessionId.value()))
@@ -123,6 +139,18 @@ public final class SqliteSessionMessageRepository
         return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).messagesForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
+    }
+
+    public Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
+        return read(() -> Optional.ofNullable(
+                        unitOfWork.mapper(RuntimeStoreMapper.class).initiatingUserMessage(runId.value()))
+                .map(this::fromRow));
+    }
+
+    public Optional<AgentMessage> latestUserMessage(AgentRunId runId) {
+        return read(() -> Optional.ofNullable(
+                        unitOfWork.mapper(RuntimeStoreMapper.class).latestUserMessage(runId.value()))
+                .map(this::fromRow));
     }
 
     @Override

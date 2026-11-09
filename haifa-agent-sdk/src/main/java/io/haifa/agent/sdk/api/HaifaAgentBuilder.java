@@ -96,6 +96,8 @@ public final class HaifaAgentBuilder {
     private boolean starterDefaultInstructionsInUse;
     private CompressionPolicy compressionPolicy;
     private PlanAuthoringSpec planAuthoringSpec;
+    private boolean historyRetrieval;
+    private Integer workingSetTarget;
     private Supplier<? extends ExecutorService> executionExecutorFactory;
 
     HaifaAgentBuilder() {}
@@ -419,6 +421,31 @@ public final class HaifaAgentBuilder {
         return this;
     }
 
+    /** Opts into bounded, authorized history_search/history_read tools; disabled by default. */
+    public HaifaAgentBuilder enableHistoryRetrieval() {
+        historyRetrieval = true;
+        return this;
+    }
+
+    /** Enables bounded Run selection and its required historical readers. Disabled by default. */
+    public HaifaAgentBuilder enableRunWorkingSet() {
+        return enableRunWorkingSet(
+                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.DEFAULT_WORKING_SET_TARGET);
+    }
+
+    public HaifaAgentBuilder enableRunWorkingSet(int targetTokens) {
+        io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.validateWorkingSetTarget(targetTokens);
+        workingSetTarget = targetTokens;
+        historyRetrieval = true;
+        return this;
+    }
+
+    private Map<String, Object> workingSetOptions(Map<String, Object> original) {
+        if (workingSetTarget == null) return original;
+        return io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.unifiedWorkingSetOptions(
+                original, workingSetTarget);
+    }
+
     public HaifaAgent build() {
         ProductProfile effectiveProfile = Objects.requireNonNull(profile, "a Product Profile must be configured");
         ModelContribution model = requireComponent(this.model, "MODEL_REQUIRED", "a Model must be configured");
@@ -439,7 +466,18 @@ public final class HaifaAgentBuilder {
             effectiveJavaTools.add(new PlanAuthoringTool(
                     planAuthoringSpec, persistence.runtimePersistence().state(), ids, time));
         }
-        ToolAssembly.Prepared prepared = ToolAssembly.prepare(this.toolPlatform, effectiveJavaTools, toolRegistrations);
+        var effectiveRegistrations = new ArrayList<>(toolRegistrations);
+        if (historyRetrieval) {
+            var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence.runtimePersistence());
+            for (var definition : history.definitions())
+                effectiveRegistrations.add(new io.haifa.agent.sdk.contribution.ToolRegistration(
+                        new io.haifa.agent.tool.api.ToolAlias(definition.name().value()),
+                        definition,
+                        "runtime-history:" + definition.name().value(),
+                        history));
+        }
+        ToolAssembly.Prepared prepared =
+                ToolAssembly.prepare(this.toolPlatform, effectiveJavaTools, effectiveRegistrations);
         ToolPlatformContribution tool = prepared.platform();
         Set<String> allowedTools = new LinkedHashSet<>(effectiveProfile.allowedTools());
         allowedTools.addAll(prepared.contributedAliases());
@@ -516,7 +554,8 @@ public final class HaifaAgentBuilder {
                                     effectiveProfile.budget(),
                                     effectiveProfile.limits(),
                                     resolveModelSnapshot(model, effectiveProfile, id),
-                                    Map.of());
+                                    Map.of(),
+                                    workingSetOptions(Map.of()));
                         }
                         var baseSnapshot = Optional.ofNullable(model.snapshots().get(selected.modelId()))
                                 .orElseThrow(() -> new IllegalArgumentException(
@@ -532,7 +571,7 @@ public final class HaifaAgentBuilder {
                                 selected.limits(),
                                 snapshot,
                                 Map.of(),
-                                selected.modelRequestOptions(),
+                                workingSetOptions(selected.modelRequestOptions()),
                                 selected.allowedTools(),
                                 selected.truncatedOutputPolicy());
                     });

@@ -2,6 +2,9 @@ package io.haifa.agent.context.compression;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.UnaryOperator;
+import java.util.stream.Collectors;
 
 /**
  * Deterministically renders a validated {@link SemanticConversationSummaryV1}
@@ -15,19 +18,28 @@ public final class SemanticSummaryRenderer {
     private SemanticSummaryRenderer() {}
 
     public static String renderMarkdown(SemanticConversationSummaryV1 summary) {
+        return renderMarkdown(summary, Set.of());
+    }
+
+    static String renderMarkdown(SemanticConversationSummaryV1 summary, Set<SemanticSummaryItem> labeledItems) {
+        return renderMarkdown(summary, labeledItems, UnaryOperator.identity());
+    }
+
+    static String renderMarkdown(
+            SemanticConversationSummaryV1 summary, Set<SemanticSummaryItem> labeledItems, UnaryOperator<String> ref) {
         Objects.requireNonNull(summary, "summary must not be null");
         StringBuilder sb = new StringBuilder();
         sb.append(PREFACE).append("\n\n");
 
         if (!summary.goals().isEmpty()) {
             sb.append("## Goals\n");
-            renderItems(sb, summary.goals());
+            renderItems(sb, summary.goals(), labeledItems, ref);
             sb.append("\n");
         }
 
         if (!summary.constraints().isEmpty()) {
             sb.append("## Constraints and Preferences\n");
-            renderItems(sb, summary.constraints());
+            renderItems(sb, summary.constraints(), labeledItems, ref);
             sb.append("\n");
         }
 
@@ -39,15 +51,15 @@ public final class SemanticSummaryRenderer {
             sb.append("## Progress\n");
             if (!progress.completed().isEmpty()) {
                 sb.append("### Completed\n");
-                renderItems(sb, progress.completed());
+                renderItems(sb, progress.completed(), labeledItems, ref);
             }
             if (!progress.active().isEmpty()) {
                 sb.append("### Active\n");
-                renderItems(sb, progress.active());
+                renderItems(sb, progress.active(), labeledItems, ref);
             }
             if (!progress.blocked().isEmpty()) {
                 sb.append("### Blocked\n");
-                renderItems(sb, progress.blocked());
+                renderItems(sb, progress.blocked(), labeledItems, ref);
             }
             sb.append("\n");
         }
@@ -61,7 +73,7 @@ public final class SemanticSummaryRenderer {
                 }
                 if (!decision.sourceRefs().isEmpty()) {
                     sb.append(" [")
-                            .append(String.join(", ", decision.sourceRefs()))
+                            .append(decision.sourceRefs().stream().map(ref).collect(Collectors.joining(", ")))
                             .append("]");
                 }
                 sb.append("\n");
@@ -71,30 +83,39 @@ public final class SemanticSummaryRenderer {
 
         if (!summary.criticalContext().isEmpty()) {
             sb.append("## Critical Context\n");
-            renderItems(sb, summary.criticalContext());
+            renderItems(sb, summary.criticalContext(), labeledItems, ref);
             sb.append("\n");
         }
 
         if (!summary.nextSteps().isEmpty()) {
             sb.append("## Next Steps\n");
-            renderItems(sb, summary.nextSteps());
+            renderItems(sb, summary.nextSteps(), labeledItems, ref);
             sb.append("\n");
         }
 
         if (!summary.unresolvedQuestions().isEmpty()) {
             sb.append("## Unresolved Questions\n");
-            renderItems(sb, summary.unresolvedQuestions());
+            renderItems(sb, summary.unresolvedQuestions(), labeledItems, ref);
             sb.append("\n");
         }
 
         return sb.toString().trim();
     }
 
-    private static void renderItems(StringBuilder sb, List<SemanticSummaryItem> items) {
+    private static void renderItems(
+            StringBuilder sb,
+            List<SemanticSummaryItem> items,
+            Set<SemanticSummaryItem> labeledItems,
+            UnaryOperator<String> ref) {
         for (SemanticSummaryItem item : items) {
-            sb.append("- ").append(item.text());
+            sb.append("- ");
+            if (labeledItems.contains(item))
+                sb.append("[").append(item.stableItemId()).append("] ");
+            sb.append(item.text());
             if (!item.sourceRefs().isEmpty()) {
-                sb.append(" [").append(String.join(", ", item.sourceRefs())).append("]");
+                sb.append(" [")
+                        .append(item.sourceRefs().stream().map(ref).collect(Collectors.joining(", ")))
+                        .append("]");
             }
             sb.append("\n");
         }

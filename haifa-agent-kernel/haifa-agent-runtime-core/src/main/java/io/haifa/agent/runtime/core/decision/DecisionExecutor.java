@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.decision;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_METADATA_KEY;
+
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.checkpoint.CheckpointType;
@@ -912,6 +914,23 @@ public final class DecisionExecutor {
             ToolPipelineOutcome outcome;
             try {
                 outcome = tools.execute(run, call, request, loopContext.iteration(), loopContext.traceContext());
+            } catch (ToolPolicyDeniedException denial) {
+                rejectPolicyDeniedToolRequest(run, call, step, denial);
+                continue;
+            } catch (ToolAuthorizationProtocolException protocol) {
+                rejectAuthorizationProtocolToolRequest(run, call, step, protocol);
+                continue;
+            } catch (ToolInputValidationException validation) {
+                rejectToolRequest(run, call, step, validation, "Tool request rejected. " + validation.repairHint());
+                continue;
+            } catch (IllegalArgumentException | SecurityException repairable) {
+                rejectToolRequest(
+                        run,
+                        call,
+                        step,
+                        repairable,
+                        "Tool request rejected; repair the arguments or choose another capability.");
+                continue;
             } catch (CancellationObservedException stopped) {
                 cancelCurrentToolAndPendingSiblings(run, call, step, stopped.signal());
                 throw stopped;
@@ -1559,6 +1578,8 @@ public final class DecisionExecutor {
             facts.put("providerId", value.model().providerId().value());
             facts.put("modelId", value.model().providerModelId());
             facts.put("configurationDigest", value.model().configurationDigest());
+            if (value.metadata().get(PHASE_METADATA_KEY) instanceof String phase && !phase.isBlank())
+                facts.put(PHASE_METADATA_KEY, phase);
         });
         continuation.ifPresent(value -> {
             ModelContinuationRef reference = value.reference();

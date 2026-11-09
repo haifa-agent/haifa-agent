@@ -5,10 +5,25 @@ Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 `docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准；模型连接流程同时遵守
 `docs/prd/28-coding-agent-model-authentication-and-codex-subscription-login-prd.md`；界面支持响应式双栏工作区与可折叠信息侧栏（Ctrl+X B 切换），不自行发明无序扩展 UI。
 
+## 产品协议预览
+
+设置环境变量 `HAIFA_CODING_TUI_PRODUCT=true` 可试用产品协议。远程模式连接以
+`haifa-coding host --presentation` 启动并支持 `native-terminal-activity-v1` 的 Host。
+远程和嵌入模式均使用单个 `CodingClient`，由装配层分别持有连接和 Host owner。关闭观察或
+远程终端只释放订阅与客户端资源。终止已经接纳的 Run 或 Shell 需要显式取消。
+
+会话装载、搜索、模型、资源、工作区和待恢复队列来自产品查询。会话输入、精确取消、
+交互响应、恢复、重命名、归档、删除、导出、压缩和受管 Shell 使用产品命令。产品快照
+提供待处理审批、澄清、正文和 DeliveryLifecycle。原生活动游标支持分批补读工具详情、
+Run 收尾、输入和交互状态。工具实时输出使用独立预览通道，`/history` 分页读取会话消息。
+
+本地登录使用可信本地凭据入口。远程账号状态与注销走产品接口，登录与密钥录入在
+可信 Host 执行。关闭环境变量可启动旧 native 入口。
+
 ## 自主交付状态
 
-Terminal 只消费 Runtime API 的 `DeliveryLifecycle` 安全 DTO，不读取 Runtime Store、SQLite、模型正文或
-Tool 原始输出来推断交付状态。`completion.deferred` 的 `phase` 由 Runtime 中性发布为 `COMPLETION`，
+产品协议预览从展示快照直接读取 DeliveryLifecycle 卡片。兼容入口消费 Runtime API 的
+`DeliveryLifecycle` 安全 DTO。两种入口均依赖明确的交付事实。`completion.deferred` 的 `phase` 由 Runtime 中性发布为 `COMPLETION`，
 Terminal 统一显示 Completion deferred，不再把 Runtime 的 blocker code 猜测成 Recovering 或 Verifying；
 `budget.threshold-reached` 显示 Budget threshold；卡片只包含
 稳定 reason code、缺失 Evidence code、实际限制资源、当前用量/冻结上限、剩余百分比和纠偏次数，
@@ -26,7 +41,7 @@ haifa-agent-cli
         v
 haifa-agent-coding-terminal
   tui4j Program/Model、Viewport、Textarea、Selector、Reducer、View
-  只通过 coding-agent 模块公开的 CodingSessionClient 读取和提交产品事实
+  产品入口使用 CodingClient，旧 native 入口使用 CodingSessionClient
         |
         v
 haifa-agent-coding-agent
@@ -121,7 +136,7 @@ Windows ConPTY Gate B。
 │                                                             │  Git branch: main              │
 │                                                             │  Model: <model> (<provider>)   │
 │                                                             │  Resources: skills, MCP        │
-│                                                             │  Haifa Agent v0.1.4            │
+│                                                             │  Haifa Agent v0.1.5            │
 │ [交互卡片槽位：Approval / Selector / 命令面板]              │                                │
 │ ▌ [Textarea 输入区，3 行，按左栏宽度换行]                   │                                │
 │ ▌                                                           │                                │
@@ -143,6 +158,7 @@ Windows ConPTY Gate B。
    - 分栏竖线连续覆盖会话视口、输入框、输入提示和选择器；编辑器布局与左栏共用同一宽度，长文本按终端单元格换行，不进入右侧栏。侧栏切换或窗口缩放时重新排版，保留草稿和光标；最底部全局状态/快捷键栏保持通栏。
    - 窄屏信息可达性：窄屏用户无需展开侧栏，即可通过 `<leader>s`（`/session`）弹层随时查看同等详尽的环境、Session、Git、模型与资源摘要；
    - 布局自适应与用户显式折叠偏好：首次启动或窗口 Resize 时，终端根据当前列宽（>=100 列）自动计算侧栏展示；一旦用户使用 `<leader>b` 显式折叠或展开侧栏，终端锁定用户的显式偏好（`sidebarExplicitlyToggled`），后续窗口缩放事件不会强行覆盖用户的偏好选择。
+   - 侧栏 Sessions 列表按最后活动时间倒序（最近更新的 Session 在最上），默认显示前 5 条；列表独立滚动——滚轮落在 Sessions 区域内时只移动该列表的选中行与窗口，不滚动 transcript；窗口外的条数以 `… N more · scroll` 提示，点击仍只命中本次渲染的行。
 
 2. **焦点与弹层优先级契约 (Focus & Modal Priority Contract)**：
    - 普通内建工具审批增加 `Allow for this session`：当前 Coding Session 内后续普通工具审批自动通过，退出应用后清除；`/approval reset` 恢复逐次审批。首次批准仅在 Runtime 实际应用后生效，Pending 不激活；工作区授权、权限提升、凭据/输入交互、未知工具和硬性拒绝保持原流程。
@@ -159,6 +175,7 @@ Windows ConPTY Gate B。
    - 用户在输入框中编写的草稿内容、光标位置（Cursor），以及因多行/长文本粘贴而生成的占位符映射（`[Pasted #N ~M lines]` -> 原文正文映射 `pastedContent`），受到全局严格保护；
    - 打开命令面板（`Ctrl+P`）、Session 摘要（`<leader>s`）、交互式重命名（`<leader>r`）等辅助弹层时，Controller 自动暂存当前草稿与光标；
    - 弹层完成或被取消（Esc/Ctrl+C）后，完整恢复用户原有的草稿正文与光标位置，不被命令替换为空或 `/command`；
+   - 草稿归属于它被编写时的 Session：通过侧栏行或 `/resume` 切到另一个 Session 时，前一个 Session 的未发文本不会跟随编辑器过去，切回时正文与光标原样恢复；同一进程最多缓存最近 32 个 Session 的草稿，超出后淘汰最先离开的会话；首个 Session 加载前输入的文本不受影响；
    - 即使在输入框临时用于交互式重命名期间，粘贴占位符映射也不会被垃圾回收，草稿恢复后完整保留粘贴映射；
    - 交互式 Session 重命名（`<leader>r` 或 `/rename` 不带参数）：无活动 Session 时提示友好错误；有活动 Session 时在编辑器展示当前 Session 名称供修改，Enter 确认重命名并在后台异步执行，Esc 取消并恢复草稿。
 
@@ -200,6 +217,8 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   Run 自身的失败仍由红色 Run Summary 表示，不把历史普通失败全部染红。
 - 折叠态耗时始终显示；按 `ctrl+o` 或点击条目可展开/收起。鼠标选中过的条目保持为当前展开目标，
   未选中过条目时回退到最近可展开项。点击仅在鼠标捕获开启时可用，且完成文本选择后不触发展开。
+  工具头在运行期即预留固定宽度的结果元数据列，结算时只更新状态与耗时，不重新裁剪目标或改变后续行位；
+  超长元数据在折叠态截断，展开后仍保留完整事实。
   新 Tool 生命周期投影将业务输出与 `Technical details` 分离：`ctrl+x t`（macOS `⌃X T`）切换当前工具的
   技术信息，包含机器名、关联 ID、原因码、Result Ref 与可得进程状态，以及 `Duration … · N lines · X KB`。
   展开后的业务输出优先使用 Runtime 投影的有界 `outputPreview`（当前为本次实际写入的文件内容或本次调用
@@ -266,8 +285,17 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 - Runtime Checkpoint 继续持久化并推进事件 Cursor，但作为内部恢复事实不投影到 Transcript；
 - Approval 优先从 `InteractionView.approvalPresentation` 渲染结构化展示：动作标题、目的、内容类型与
   正文、环境要点、默认折叠的技术细节和允许动作；缺少结构化展示时回退到 `safePrompt` 文本。
-  `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
-  原有 editor buffer/cursor 均保持不变；
+  `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。内置文件写操作
+  （`file_create` / `file_write` / `file_patch` / `file_delete` / `file_move`）由产品提供结构化展示：
+  默认可见正文说明实际动作、意图、精确目标以及本次调用请求的完整内容或 patch（有界、脱敏），
+  不读取文件推断执行前状态，也不声称写入已经成功；机器坐标和调用摘要留在折叠技术细节中。无法识别的
+  工具仍使用中性回退文本。Selector 接管输入期间以及响应回执后，原有 editor buffer/cursor 均保持不变；
+- Approval 与 Clarification Selector 按真实物理行预算选择可见项，而不是按 `rows()<24` 固定只显示一项。
+  Selector 保留标题、当前选中项、导航/帮助提示，并在选项超出预算时显示明确的 `x-y of N` 范围；
+  compact 窗口在放得下时同时显示 `Allow once` 与 `Reject`。问题标题、选项标签和 rationale 按终端
+  cell width 换行，截断时保留显式省略号；正常屏幕下 Selector 最多占用约一半物理行，保留可用的
+  Transcript 视口。背景 Waiting/Pending/Recovery 区域与弹层竞争最小行数时先收缩背景行。
+  Transcript 滚动只移动上方视口，不会移动或隐藏底部 Selector；
 - `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer
   合并展示且按稳定 ID 去重，Alt+Up 仍从产品队列恢复原文；
 - 活动状态区分 `THINKING`（模型交互与处理工具结果）、`WORKING`（工具执行）和
@@ -285,9 +313,9 @@ message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随；用户
   明确提交新消息或 Steer 时也会恢复自动跟随，避免上一轮回翻状态把新一轮输出持续藏在下方。
-- 终端保持禁用应用级鼠标事件上报（不启用 SGR cell-motion），启动与退出时输出防御性 reset 序列。
-  划词文本选择与系统剪贴板复制由宿主终端（Windows Terminal、VS Code 终端、iTerm2 等）原生接管，
-  支持在整个屏幕任意区域拖拽选中与复制。`PageUp/PageDown` 负责应用拥有的 Transcript 视口翻页导航，
+- 终端默认开启应用级鼠标捕获，Transcript 拖选后 Ctrl+C 通过 Clipboard/OSC 52 复制选区。
+  `HAIFA_TERMINAL_MOUSE=off` 使用宿主终端原生选择；启动与退出均输出防御性 mouse reset 序列。
+  `PageUp/PageDown` 负责应用拥有的 Transcript 视口翻页导航，
   方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
@@ -328,7 +356,10 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   其他产品错误只显示稳定错误码并保留草稿，不退出进程；
 - Escape：若存在 Waiting，只取消 Waiting；否则是活动 Run 的全局取消键（先 arm 再确认）。
   裸 Escape 不得被当作 EOF；Selector 打开时先关闭 Selector。空闲时 Escape 只关闭 Selector；
-  Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
+  Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run。嵌入式模式下 Ctrl-C 由 Program 接管的
+  SIGINT 处理器转成同一条中断。远程薄客户端只桥接 SIGINT：存在 Transcript 选区时复制并保留草稿，
+  无选区时只退出客户端；SIGTERM 始终使用 JVM 默认退出路径，均不会取消 Host 拥有的 Run。
+  终端直接发送的 Ctrl+C 按键仍优先复制选区，否则走清空草稿/取消活动 Run 的中断路径；
 - `/resume` 选择并打开真实 Session；顶层 `haifa-coding resume`、`resume --last` 和
   `resume <SESSION_ID>` 复用同一产品客户端与打开流程；
 - `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，
@@ -505,6 +536,27 @@ Event replay retains at most the latest 2,000 lifecycle events in one background
 large session cannot allocate an unbounded intermediate list. Durable conversation messages remain
 the authoritative reopened transcript.
 
+## Selection generation and Remote v1 capabilities
+
+Every selection transition allocates a monotonic generation. Snapshot/history/replay loads install the
+view first and subscribe afterwards from the authoritative cursor, so a synchronously replayed
+subscription event is reduced against the newly installed session. Async load, command, approval,
+model, shell, cursor and stream completions carry the captured Session/Run/generation and may only
+update the view they were started for. A->B->A therefore rejects an old A result even when the
+SessionId matches again. A failed transition keeps the previous view and stream usable and can be
+retried; stale subscribe completions close only their own handles and never cancel Runs. Cancel
+always targets the captured active Run through `cancel(sessionId, requestedRunId, key)`.
+
+`CodingTerminalApplication` and `CodingTerminalController` accept an immutable
+`CodingTerminalConnectionOptions` for the composition root. Existing constructors keep
+`embedded()`. Remote v1 supplies negotiated connection options: Tool preview is enabled only for mutually supported
+`preview-v1`; session-level consent/reset is independently enabled only for negotiated `session-consent-v1`.
+Credential setup (API key, browser/device sign-in) remains refused in the remote UI. New Host composition supplies
+a dismissible detail panel with the trusted-local auth command, Host/account scope and /account refresh steps
+before any secret is collected. Auth status and logout remain available, and ordinary precise
+approve/reject is unchanged. `CodingSessionClient` remains the only product interface; there is no
+capability registry or transport import in this module.
+
 ## Assistant streaming boundary
 
 Assistant deltas are consumed through the closeable, Run-scoped transient output subscription.
@@ -515,16 +567,63 @@ authoritative Assistant text comes from the persisted Session messages.
 
 ## Clarification input
 
-`ask_clarification` surfaces in the terminal as a compact `Clarification · <title>` transcript card with one line per
-question. The option list and its rationale live in the selector, so the card never repeats them and never needs a
-fold. While that selector is open it is the only region that advertises keys: the composer's `[Send Now]`/`[Cancel]`
-strip and the run interrupt hint stay hidden, and one blank row separates the modal from the regions it covers. A
-multi-question clarification is a wizard, so the selector title always states `Step X of Y` with the question header,
-every option shows its own rationale on the line below it, and the focused row right-aligns an `[enter]` marker so an
-unmarked single-choice row cannot read as "press Space first".
+`ask_clarification` surfaces in the terminal as a compact `Clarification · <title>` transcript card with the question
+headers and a bounded prompt summary. The option list and rationale live in the selector; `ctrl+o` expands the same
+card to the complete bounded question, option, rationale, answer-mode, custom/Done-or-Send and Cancel detail, and the
+transcript viewport scrolls it while the selector stays pinned. `PageUp`/`PageDown` keep working as read-only
+transcript navigation while an approval or clarification selector is open; they neither move the selector selection
+nor submit or close the interaction. While that selector is open it is the only region that advertises keys: the
+composer's `[Send Now]`/`[Cancel]` strip and the run interrupt hint stay hidden, and one blank row separates the modal
+from the regions it covers. A multi-question clarification is a wizard, so the selector title always states
+`Step X of Y` with the question header, every option shows its own rationale on the line below it, and the focused row
+right-aligns an `[enter]` marker so an unmarked single-choice row cannot read as "press Space first". ← and → move
+to the previous or next question and keep every answer already marked.
 
 Space only marks an option (multi-choice `[ ]` ↔ `[✓]`, single choice `( )` ↔ `(✓)`, both U+2713) and never submits;
-Enter selects the focused option, confirms the current question, and moves on to the next one. "Type your own answer"
-hands the composer to the free-text lane while the card stays pending. The answer is submitted as one part per question
+Enter selects the focused option, confirms the current question, and moves on to the next one. On a multi-choice
+question the last row is `Review answers`. The last confirmation, and → from the last question once every question
+has an answer, opens a review that lists each question with the options or text that will be sent. Enter on a review
+row returns to that question; Enter on `Send answer` submits. "Type your own answer" hands the composer to the
+free-text lane while the card stays pending. The answer is submitted as one part per question
 with format `clarification-answer.v1`, so the Runtime validates it like any other interaction input. "Cancel" answers
 with the `cancel` action, which resumes the run without an answer instead of cancelling it.
+
+## Remote error recovery
+
+Remote Host failures retain their stable reason codes and use terminal-owned recovery text. Missing Sessions,
+revision conflicts, capacity limits, payload bounds and expired contexts explain the appropriate next action.
+`CLIENT_CONTEXT_REQUIRED` calls for reconnecting and reopening the Session, not rerunning its task;
+`REMOTE_OUTCOME_UNKNOWN` warns that the Host may still be executing and requires inspecting the authoritative
+outcome before any resend. Unknown codes use a bounded fallback. Arbitrary Host exception text stays suppressed.
+
+## Remote execution location
+
+The remote composition supplies display-only Host workspace/Git context to the existing sidebar, footer and
+Session summary. Shell confirmation/results and export cards identify the Host execution location; export
+logical paths remain intact. Narrow displays keep the Host label, while non-Git workspaces and old Hosts have
+explicit unavailable fallbacks. Terminal performs no local filesystem/Git lookup for these facts.
+
+## Host configuration summary
+
+The `/session` environment panel opens immediately and loads composition-owned configuration facts on the
+background effect lane. Remote Hosts report source, workspace-overlay policy and safe approval/tool/model
+summaries; an older Host has an explicit unavailable fallback. Late results never reopen a dismissed panel.
+
+## Remote connection maintenance
+
+Periodic connection checks use the maintenance effect lane and continue with the sidebar hidden or before a
+Session is selected. Healthy checks leave task status unchanged. Context expiry/restart reinitializes and
+reattaches the current Session; unavailable Hosts show safe recovery guidance and are checked again at the
+bounded cadence. Restoring a connection clears connection errors without clearing unrelated unknown-outcome
+warnings. Input, Resize and Runtime events remain responsive while a check is outstanding.
+
+Manual Shell commands return a stable execution ID on capable Hosts. `/shell` lists retained Session receipts,
+`/shell ID` reads an outcome after reconnecting, and `/shell cancel ID` explicitly requests cancellation.
+Closing a TUI only stops observation. The current Host retains at most 128 receipts for 30 minutes after
+completion; these receipts do not survive a Host restart. Admission, status and cancellation run off the UI thread.
+
+
+Remote compositions pass negotiated preview support through `CodingTerminalConnectionOptions`; credential
+setup remains disabled; session consent has its own negotiated capability and client lease. Remote completion omits `/connect`; the command
+palette/help keeps a labeled unavailable entry and identifies supported Host actions. Choosing a labeled
+entry dispatches its canonical command, never its display annotation.

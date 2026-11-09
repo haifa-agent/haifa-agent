@@ -5,6 +5,7 @@ import com.williamcallahan.tui4j.ansi.TextWrapper;
 import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
+import io.haifa.agent.application.coding.terminal.application.CodingAgentVersion;
 import io.haifa.agent.application.coding.terminal.markdown.render.MarkdownRenderer;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
@@ -12,6 +13,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalDurations;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
+import io.haifa.agent.application.coding.terminal.state.TerminalSessionRow;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.ToolBodyLines;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
@@ -35,6 +37,11 @@ final class Tui4jTerminalView {
             Pattern.compile("\\[Past(?:ed #\\d+ ~\\d+ lines|ing ~\\d+ lines)\\]");
     /** Selector kind prefix of a clarification wizard, whose rows carry answer markers instead of plain labels. */
     private static final String CLARIFICATION_SELECTOR_PREFIX = "clarification:";
+    /** Cap on wrapped rationale rows per option; a truncated rationale still ends with an explicit ellipsis. */
+    private static final int MAX_SELECTOR_DESCRIPTION_LINES = 4;
+
+    /** The question count at the start of a wizard title, so a header cannot supply a second match. */
+    private static final Pattern CLARIFICATION_STEP_COUNT = Pattern.compile("^Clarification · Step \\d+ of (\\d+) · ");
 
     private static final Set<String> SUCCESS_STATUSES = Set.of(
             "ACCEPTED",
@@ -98,6 +105,43 @@ final class Tui4jTerminalView {
     private final TextWrapper textWrapper = new TextWrapper();
     private final TerminalShortcutProfile shortcuts;
     private TranscriptRegion transcriptRegion = new TranscriptRegion(0, 0, 1, 1);
+
+    /** Rendered sidebar Session rows and their screen line, rebuilt on every render pass. */
+    private final List<SidebarSessionHit> sidebarSessionRows = new ArrayList<>();
+
+    /** Screen rows currently holding the sidebar Session window, rebuilt on every render pass. */
+    private int sidebarSessionsFirstRow = -1;
+
+    private int sidebarSessionsLastRow = -1;
+
+    /** One rendered sidebar row mapped to the Session it represents. */
+    record SidebarSessionHit(int row, io.haifa.agent.core.session.AgentSessionId sessionId) {}
+
+    /**
+     * Resolves a screen row inside the sidebar panel to the Session drawn there.
+     *
+     * <p>Only rows recorded during the last render can match, so a click can never select a Session that is not
+     * currently visible, and the mapping cannot drift from what the user sees.
+     */
+    Optional<io.haifa.agent.core.session.AgentSessionId> sidebarSessionAt(int screenRow) {
+        for (SidebarSessionHit hit : sidebarSessionRows) {
+            if (hit.row() == screenRow) return Optional.of(hit.sessionId());
+        }
+        return Optional.empty();
+    }
+
+    /** True when the sidebar panel is drawn, which decides both polling and click handling. */
+    boolean sidebarRendered() {
+        return !sidebarSessionRows.isEmpty();
+    }
+
+    /** True when the screen row lies on the sidebar Session list, which scrolls independently of the transcript. */
+    boolean sidebarSessionsAt(int screenRow) {
+        return sidebarSessionsFirstRow >= 0
+                && screenRow >= sidebarSessionsFirstRow
+                && screenRow <= sidebarSessionsLastRow;
+    }
+
     private List<TranscriptHit> transcriptHits = List.of();
 
     Tui4jTerminalView() {
@@ -154,6 +198,9 @@ final class Tui4jTerminalView {
             return row >= startRow && row <= endRow;
         }
     }
+
+    /** Pre-wrapped selector rows for one option, so windowing and row budgeting use real physical lines. */
+    private record SelectorOptionView(List<String> labelLines, List<String> descriptionLines, String category) {}
 
     Optional<String> toggleableItemAt(int logicalRow) {
         return transcriptHits.stream()
@@ -450,7 +497,33 @@ final class Tui4jTerminalView {
         }
         lines.add("");
 
-        lines.add(theme.muted("• Haifa Agent v0.1.4"));
+        sidebarSessionRows.clear();
+        sidebarSessionsFirstRow = -1;
+        sidebarSessionsLastRow = -1;
+        lines.add(theme.focus("Sessions"));
+        if (state.sessionRows().isEmpty()) {
+            lines.add(theme.muted("  \u2022 No sessions yet"));
+        } else {
+            List<TerminalSessionRow> visible = state.visibleSessionRows();
+            int windowStart = state.sessionRowWindowStart();
+            for (int offset = 0; offset < visible.size() && lines.size() < height - 4; offset++) {
+                TerminalSessionRow row = visible.get(offset);
+                boolean selected = windowStart + offset == state.sessionRowSelected();
+                // Record the rendered line so a click maps back to exactly this Session, not a screen guess.
+                sidebarSessionRows.add(new SidebarSessionHit(lines.size(), row.sessionId()));
+                if (sidebarSessionsFirstRow < 0) sidebarSessionsFirstRow = lines.size();
+                sidebarSessionsLastRow = lines.size();
+                String text = clip(row.render(selected), width);
+                lines.add(selected ? theme.strong(text) : theme.muted(text));
+            }
+            int hidden = state.sessionRows().size() - visible.size();
+            if (hidden > 0 && lines.size() < height - 4) {
+                // The window scrolls on its own; this only reports how much stays outside it.
+                lines.add(theme.muted("  \u2026 " + hidden + " more \u00b7 scroll"));
+            }
+        }
+
+        lines.add(theme.muted("• Haifa Agent v" + CodingAgentVersion.current()));
         lines.add(theme.muted("• " + shortcuts.sidebarToggle() + " toggle"));
 
         while (lines.size() < height) {
@@ -518,7 +591,18 @@ final class Tui4jTerminalView {
             // One spacer row separates the modal card from the background regions it covers. It is a single space,
             // not an empty string, because the row budget counts the lines of every region.
             lines.add(" ");
-            lines.addAll(selector(state.selector().get(), compact ? 1 : 4, editorColumns));
+            // A background region may itself contain newlines. Drop optional background rows before they compete
+            // with the modal controls at MIN_ROWS, then budget the selector from actual physical rows.
+            int minimumSelectorRows = 7;
+            while (visualRows(lines) + 1 + 1 + minimumSelectorRows > state.rows() && lines.size() > 1) {
+                lines.remove(lines.size() - 2);
+            }
+            int fixedRows = visualRows(lines);
+            int transcriptReserve = Math.max(2, Math.min(6, state.rows() / 6));
+            int selectorCap = Math.max(6, state.rows() / 2);
+            int selectorAvailable = Math.max(6, state.rows() - fixedRows - 1 - transcriptReserve);
+            int selectorRows = Math.min(selectorCap, selectorAvailable);
+            lines.addAll(selector(state.selector().get(), selectorRows, editorColumns));
         } else {
             lines.add(theme.editor(stylePastePlaceholders(editor.view()), editorColumns, 3));
             if (!compact) {
@@ -755,7 +839,14 @@ final class Tui4jTerminalView {
         }
         if ((item.kind() == TranscriptItem.Kind.APPROVAL || item.kind() == TranscriptItem.Kind.CLARIFICATION)
                 && item.approvalDetails().isPresent()) {
-            return style(item, approval(title, item.approvalDetails().orElseThrow(), item.expanded()));
+            return style(
+                    item,
+                    approval(
+                            title,
+                            item.approvalDetails().orElseThrow(),
+                            item.expanded(),
+                            availableWidth,
+                            item.kind() == TranscriptItem.Kind.CLARIFICATION));
         }
         if (collapsed) {
             String content = title + theme.muted("  ›");
@@ -813,49 +904,23 @@ final class Tui4jTerminalView {
     private String toolHeader(TranscriptItem item, int availableWidth, boolean collapsed) {
         String name = toolName(item.title());
         String target = toolTarget(item.title());
-        String badge = theme.toolNameBadge(name);
         String glyph = item.exitCode().filter(code -> code != 0).isPresent()
                         && SUCCESS_STATUSES.contains(item.status().toUpperCase(Locale.ROOT))
                 ? theme.muted("○")
                 : styledGlyph(item.status());
-        String metadata = auxiliaryMetadata(item, collapsed);
+        int available = Math.max(1, availableWidth - 1);
+        // Reserve the same metadata column before and after settlement. Otherwise a completed call
+        // re-clips its target, and an over-wide header can wrap inside Viewport before the final clip.
+        int metadataRoom = Math.min(16, available / 3);
+        String metadata = Truncate.truncate(auxiliaryMetadata(item, collapsed), metadataRoom, "…");
+        String badge = theme.toolNameBadge(Truncate.truncate(name, Math.max(1, available - metadataRoom - 8), "…"));
         String chevron = theme.muted(collapsed ? "›" : "⌄");
-
-        int nameWidth = TextWidth.measureCellWidth(name);
-        int targetWidth = TextWidth.measureCellWidth(target);
-        int metadataWidth = TextWidth.measureCellWidth(metadata);
-        int available = Math.max(1, availableWidth);
-        int fixedLeft = 1 + 1 + nameWidth + 2 + (target.isEmpty() ? 0 : 1 + targetWidth);
-        int rightWidth = (metadata.isEmpty() ? 0 : metadataWidth + 1) + 1;
-        if (fixedLeft + 1 + rightWidth > available && !target.isEmpty()) {
-            int maximumTarget = available - (1 + 1 + nameWidth + 2) - 1 - rightWidth;
-            if (maximumTarget < 1) {
-                int fixedWithoutTarget = 1 + 1 + nameWidth + 2;
-                int gap = Math.max(0, available - fixedWithoutTarget - rightWidth);
-                return glyph
-                        + " "
-                        + badge
-                        + " ".repeat(gap)
-                        + (metadata.isEmpty() ? "" : theme.muted(metadata) + " ")
-                        + chevron;
-            }
-            target = Truncate.truncate(target, maximumTarget, "…");
-            targetWidth = TextWidth.measureCellWidth(target);
-            fixedLeft = 1 + 1 + nameWidth + 2 + 1 + targetWidth;
-        }
-
-        int gap = Math.max(0, available - fixedLeft - rightWidth);
-        StringBuilder line = new StringBuilder();
-        line.append(glyph).append(' ').append(badge);
-        if (!target.isEmpty()) {
-            line.append(' ').append(target);
-        }
-        line.append(" ".repeat(gap));
-        if (!metadata.isEmpty()) {
-            line.append(theme.muted(metadata)).append(' ');
-        }
-        line.append(chevron);
-        return line.toString();
+        String left = glyph + " " + badge;
+        int targetRoom = Math.max(0, available - TextWidth.measureCellWidth(left) - metadataRoom - 4);
+        if (!target.isEmpty() && targetRoom > 0) left += " " + Truncate.truncate(target, targetRoom, "…");
+        int gap = Math.max(1, available - TextWidth.measureCellWidth(left) - metadataRoom - 2);
+        String paddedMetadata = metadata + " ".repeat(Math.max(0, metadataRoom - TextWidth.measureCellWidth(metadata)));
+        return Truncate.truncate(left + " ".repeat(gap) + theme.muted(paddedMetadata) + " " + chevron, available, "");
     }
 
     private static String toolName(String title) {
@@ -921,7 +986,9 @@ final class Tui4jTerminalView {
 
         String status = item.status().toLowerCase(Locale.ROOT);
         String titleText = sanitize(item.title());
-        String headerText = titleText.toLowerCase(Locale.ROOT).startsWith("error")
+        boolean alreadyErrorOrBracketed =
+                titleText.toLowerCase(Locale.ROOT).startsWith("error") || titleText.startsWith("[");
+        String headerText = alreadyErrorOrBracketed
                 ? "✖ " + titleText + " [" + status + "]"
                 : "✖ Error · " + titleText + " [" + status + "]";
 
@@ -973,45 +1040,110 @@ final class Tui4jTerminalView {
         return item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION;
     }
 
-    private String approval(String title, ApprovalDetails details, boolean expanded) {
-        StringBuilder content = new StringBuilder(title);
-        content.append('\n').append("  ").append(sanitize(details.purpose()));
-        content.append('\n').append(theme.muted("  " + sanitize(details.contentType())));
+    private String approval(
+            String title, ApprovalDetails details, boolean expanded, int availableWidth, boolean clarification) {
+        int contentWidth = Math.max(12, availableWidth - 4);
+        List<String> lines = new ArrayList<>();
+        appendWrappedApprovalLine(lines, "", "  ", title, availableWidth);
+        appendWrappedApprovalLine(lines, "  ", "  ", sanitize(details.purpose()), contentWidth);
+        if (clarification && !expanded) {
+            if (!details.environment().isEmpty()) {
+                appendWrappedApprovalLine(lines, "  ", "  ", facts(details.environment()), contentWidth, theme::muted);
+            }
+            appendWrappedApprovalLine(
+                    lines,
+                    "  ",
+                    "  ",
+                    "Details · " + shortcuts.toggleExpansion() + " expand",
+                    contentWidth,
+                    theme::muted);
+            return String.join("\n", lines);
+        }
+        if (!clarification) {
+            appendWrappedApprovalLine(lines, "  ", "  ", sanitize(details.contentType()), contentWidth, theme::muted);
+        }
         List<String> contentLines = details.content().lines().toList();
         int visibleContentLines = expanded ? contentLines.size() : Math.min(contentLines.size(), 5);
-        content.append('\n')
-                .append(contentLines.stream()
-                        .limit(visibleContentLines)
-                        .map(line -> "    " + sanitize(line))
-                        .collect(Collectors.joining("\n")));
+        for (String line : contentLines.subList(0, visibleContentLines)) {
+            String clean = sanitize(line);
+            if (clean.isEmpty()) {
+                lines.add("    ");
+            } else {
+                appendWrappedApprovalLine(lines, "    ", "    ", clean, contentWidth);
+            }
+        }
         if (visibleContentLines < contentLines.size()) {
-            content.append('\n')
-                    .append(theme.muted(
-                            "    … " + contentLines.size() + " lines · " + shortcuts.toggleExpansion() + " expand"));
+            appendWrappedApprovalLine(
+                    lines,
+                    "    ",
+                    "    ",
+                    "… " + contentLines.size() + " lines · " + shortcuts.toggleExpansion() + " expand",
+                    contentWidth,
+                    theme::muted);
         }
         if (!details.environment().isEmpty()) {
-            content.append('\n').append("  ").append(theme.muted(facts(details.environment())));
+            appendWrappedApprovalLine(lines, "  ", "  ", facts(details.environment()), contentWidth, theme::muted);
         }
         if (!details.technical().isEmpty() || details.risk().isPresent()) {
             if (expanded) {
-                content.append('\n').append(theme.muted("  Technical details"));
+                lines.add(theme.muted("  Technical details"));
                 details.risk()
-                        .ifPresent(risk -> content.append('\n').append(theme.muted("    Risk: " + sanitize(risk))));
-                details.technical().forEach(fact -> content.append('\n')
-                        .append(theme.muted("    " + sanitize(fact.label() + ": " + fact.value()))));
+                        .ifPresent(risk -> appendWrappedApprovalLine(
+                                lines, "    ", "    ", "Risk: " + sanitize(risk), contentWidth, theme::muted));
+                for (ApprovalDetails.Fact fact : details.technical()) {
+                    appendWrappedApprovalLine(
+                            lines,
+                            "    ",
+                            "    ",
+                            sanitize(fact.label() + ": " + fact.value()),
+                            contentWidth,
+                            theme::muted);
+                }
             } else {
-                content.append('\n')
-                        .append(theme.muted("  Technical details · " + shortcuts.toggleExpansion() + " expand"));
+                appendWrappedApprovalLine(
+                        lines,
+                        "  ",
+                        "  ",
+                        "Technical details · " + shortcuts.toggleExpansion() + " expand",
+                        contentWidth,
+                        theme::muted);
             }
         }
         if (!details.allowedActions().isEmpty()) {
-            content.append('\n')
-                    .append(theme.muted("  Available actions: "
+            appendWrappedApprovalLine(
+                    lines,
+                    "  ",
+                    "  ",
+                    "Available actions: "
                             + details.allowedActions().stream()
                                     .map(ApprovalDetails::actionLabel)
-                                    .collect(Collectors.joining(" / "))));
+                                    .collect(Collectors.joining(" / ")),
+                    contentWidth,
+                    theme::muted);
         }
-        return content.toString();
+        return String.join("\n", lines);
+    }
+
+    private void appendWrappedApprovalLine(
+            List<String> lines, String prefix, String continuationPrefix, String text, int width) {
+        appendWrappedApprovalLine(lines, prefix, continuationPrefix, text, width, null);
+    }
+
+    private void appendWrappedApprovalLine(
+            List<String> lines,
+            String prefix,
+            String continuationPrefix,
+            String text,
+            int width,
+            java.util.function.UnaryOperator<String> style) {
+        int prefixWidth = Math.max(TextWidth.measureCellWidth(prefix), TextWidth.measureCellWidth(continuationPrefix));
+        int wrapWidth = Math.max(8, width - prefixWidth);
+        List<String> wrapped = textWrapper.wrap(text, wrapWidth, true).lines().toList();
+        if (wrapped.isEmpty()) wrapped = List.of("");
+        for (int index = 0; index < wrapped.size(); index++) {
+            String value = (index == 0 ? prefix : continuationPrefix) + wrapped.get(index);
+            lines.add(style == null ? value : style.apply(value));
+        }
     }
 
     private String facts(List<ApprovalDetails.Fact> facts) {
@@ -1080,80 +1212,204 @@ final class Tui4jTerminalView {
         return "  [" + message.kind().name().toLowerCase(Locale.ROOT) + "] " + sanitize(message.summary());
     }
 
-    private List<String> selector(TerminalSelector selector, int maximumVisibleOptions, int width) {
+    private List<String> selector(TerminalSelector selector, int maximumRows, int width) {
+        int safeMaxRows = Math.max(3, maximumRows);
+        int contentWidth = Math.max(8, width - 2);
         List<String> lines = new ArrayList<>();
-        lines.add(theme.focus("┌─ " + sanitize(selector.title())));
+        lines.add(theme.focus("┌─ " + Truncate.truncate(sanitize(selector.title()), Math.max(8, width - 3), "…")));
         if (selector.options().isEmpty()) {
             lines.add("│ No available items");
+            lines.add(selectorHint(selector, width));
+            return lines;
         }
-        int start = Math.max(
-                0,
-                Math.min(
-                        selector.selected() - maximumVisibleOptions / 2,
-                        selector.options().size() - maximumVisibleOptions));
-        int end = Math.min(selector.options().size(), start + maximumVisibleOptions);
-        String category = "";
+
         boolean answersAQuestion = selector.kind().startsWith(CLARIFICATION_SELECTOR_PREFIX);
-        for (int index = start; index < end; index++) {
-            boolean selected = index == selector.selected();
+        int selected = selector.selected();
+        List<SelectorOptionView> options = new ArrayList<>(selector.options().size());
+        for (int index = 0; index < selector.options().size(); index++) {
             TerminalSelectorDetail detail = selector.detail(index).orElse(null);
-            if (detail != null
-                    && !detail.category().isBlank()
-                    && !detail.category().equals(category)) {
-                category = detail.category();
-                lines.add(theme.muted("│ " + sanitize(category)));
-            }
-            StringBuilder option = new StringBuilder(selected ? "> " : "  ");
-            option.append(sanitize(selector.options().get(index)));
+            StringBuilder label = new StringBuilder(index == selected ? "> " : "  ");
+            label.append(sanitize(selector.options().get(index)));
             if (detail != null && !detail.badge().isBlank()) {
-                option.append(" [").append(sanitize(detail.badge())).append(']');
+                label.append(" [").append(sanitize(detail.badge())).append(']');
             }
-            String row = option.toString();
-            if (selected && answersAQuestion) {
-                row = enterAffordance(row, width);
+            int labelLineBudget = Math.max(
+                    1, safeMaxRows - 3 - (detail != null && !detail.category().isBlank() ? 1 : 0));
+            List<String> labelLines = selectorLabelLines(
+                    label.toString(), index == selected && answersAQuestion, contentWidth, labelLineBudget);
+            String description = detail == null ? "" : sanitize(detail.description());
+            List<String> descriptionLines = description.isBlank()
+                    ? List.of()
+                    : textWrapper
+                            .wrap(description, Math.max(8, width - 7), true)
+                            .lines()
+                            .toList();
+            String category = detail == null ? "" : sanitize(detail.category());
+            options.add(new SelectorOptionView(labelLines, descriptionLines, category));
+        }
+
+        int contentBudget = Math.max(1, safeMaxRows - 2);
+        int selectionBudget = Math.max(1, contentBudget - 1);
+        int start = selected;
+        int end = selected + 1;
+        while (true) {
+            boolean expanded = false;
+            if (start > 0 && selectorWindowRows(options, start - 1, end, selected) <= selectionBudget) {
+                start--;
+                expanded = true;
             }
-            lines.add("│ " + (selected ? theme.selected(row) : theme.unselected(row)));
-            if (detail != null && !detail.description().isBlank()) {
-                lines.add(theme.muted("│      " + selectorDescription(detail.description(), width)));
+            if (end < options.size() && selectorWindowRows(options, start, end + 1, selected) <= selectionBudget) {
+                end++;
+                expanded = true;
+            }
+            if (!expanded) break;
+        }
+        boolean overflow = start > 0 || end < options.size();
+
+        int labelRows = selectorWindowRows(options, start, end, false, selected);
+        int descriptionBudget = Math.max(0, contentBudget - labelRows - (overflow ? 1 : 0));
+        int[] descriptionRows = allocateSelectorDescriptionRows(options, start, end, selected, descriptionBudget);
+
+        String category = "";
+        for (int index = start; index < end; index++) {
+            SelectorOptionView option = options.get(index);
+            if (!option.category().isBlank() && !option.category().equals(category)) {
+                category = option.category();
+                lines.add(theme.muted("│ " + Truncate.truncate(category, Math.max(8, width - 2), "…")));
+            }
+            for (String labelLine : option.labelLines()) {
+                lines.add("│ " + (index == selected ? theme.selected(labelLine) : theme.unselected(labelLine)));
+            }
+            int visibleDescriptionRows = descriptionRows[index];
+            for (int row = 0; row < visibleDescriptionRows; row++) {
+                String description = option.descriptionLines().get(row);
+                if (row == visibleDescriptionRows - 1
+                        && visibleDescriptionRows < option.descriptionLines().size()) {
+                    description = description + "…";
+                }
+                lines.add(theme.muted("│      " + description));
             }
         }
-        if (selector.options().size() > maximumVisibleOptions) {
-            lines.add(theme.muted(
-                    "│ " + (start + 1) + "-" + end + " of " + selector.options().size()));
+        if (overflow) {
+            lines.add(theme.muted("│ " + (start + 1) + "-" + end + " of " + options.size()));
         }
+        lines.add(selectorHint(selector, width));
+        return lines;
+    }
+
+    private String selectorHint(TerminalSelector selector, int width) {
         String hint;
         if ("auth-wait".equals(selector.kind())) {
             hint = "└─ c copy link · o reopen browser · Enter select · Esc cancel sign-in";
         } else if ("auth-device".equals(selector.kind())) {
             hint = "└─ c copy device code · l copy link · o open page · Enter select · Esc cancel sign-in";
-        } else if (answersAQuestion) {
-            hint = "└─ enter select · space mark · escape close (editor preserved)";
+        } else if (selector.kind().startsWith(CLARIFICATION_SELECTOR_PREFIX)) {
+            hint = clarificationHint(selector.title());
         } else {
             hint = "└─ enter select · escape close (editor preserved)";
         }
-        lines.add(theme.muted(hint));
-        return lines;
+        return theme.muted(Truncate.truncate(hint, Math.max(8, width - 1), "…"));
     }
 
     /**
-     * Marks the focused answer row with the key that answers it, so an unmarked single-choice row cannot read as
-     * "press Space first". The badge is right aligned, so a long label never pushes it out of the frame.
+     * Keys for a clarification modal. A multi-question wizard advertises ← and →, and the review advertises the way
+     * back to a question. A single question keeps the mark-and-enter hint.
      */
-    private static String enterAffordance(String row, int width) {
-        String badge = " [enter]";
-        int badgeWidth = TextWidth.measureCellWidth(badge);
-        int available = Math.max(badgeWidth + 8, width - 2);
-        int rowWidth = TextWidth.measureCellWidth(row);
-        if (rowWidth + badgeWidth > available) {
-            row = Truncate.truncate(row, Math.max(8, available - badgeWidth), "…");
-            rowWidth = TextWidth.measureCellWidth(row);
+    private static String clarificationHint(String title) {
+        if (title.startsWith("Clarification · Review")) {
+            return "└─ ← back · enter edit or send · esc close";
         }
-        return row + " ".repeat(Math.max(0, available - rowWidth - badgeWidth)) + badge;
+        Matcher step = CLARIFICATION_STEP_COUNT.matcher(title);
+        if (step.find() && Integer.parseInt(step.group(1)) > 1) {
+            return "└─ ← previous · → next · enter select · space mark";
+        }
+        return "└─ enter select · space mark · escape close (editor preserved)";
     }
 
-    /** An option's rationale stays on one physical row, so the modal never grows past the rows it covers. */
-    private static String selectorDescription(String description, int width) {
-        return Truncate.truncate(sanitize(description), Math.max(8, width - 7), "…");
+    List<String> selectorLabelLines(String label, boolean enterAffordance, int contentWidth, int maximumLines) {
+        String badge = " [enter]";
+        int badgeWidth = TextWidth.measureCellWidth(badge);
+        int wrapWidth = enterAffordance ? Math.max(8, contentWidth - badgeWidth) : Math.max(1, contentWidth);
+        List<String> wrapped =
+                new ArrayList<>(textWrapper.wrap(label, wrapWidth, true).lines().toList());
+        if (wrapped.isEmpty()) wrapped.add("");
+        if (wrapped.size() > maximumLines) {
+            wrapped = new ArrayList<>(wrapped.subList(0, maximumLines));
+            int last = maximumLines - 1;
+            int suffixWidth = TextWidth.measureCellWidth("…");
+            int maximumLastWidth = Math.max(0, wrapWidth - suffixWidth);
+            String lastLine = maximumLastWidth == 0 ? "" : Truncate.truncate(wrapped.get(last), maximumLastWidth, "");
+            wrapped.set(last, lastLine + "…");
+        }
+        if (enterAffordance) {
+            String first = wrapped.get(0);
+            int available = Math.max(badgeWidth + 1, contentWidth);
+            if (TextWidth.measureCellWidth(first) + badgeWidth > available) {
+                first = Truncate.truncate(first, Math.max(1, available - badgeWidth), "…");
+            }
+            first += " ".repeat(Math.max(0, available - TextWidth.measureCellWidth(first) - badgeWidth)) + badge;
+            wrapped.set(0, first);
+        }
+        return wrapped;
+    }
+
+    private static int selectorWindowRows(List<SelectorOptionView> options, int start, int end, int selected) {
+        return selectorWindowRows(options, start, end, true, selected);
+    }
+
+    private static int selectorWindowRows(
+            List<SelectorOptionView> options, int start, int end, boolean includeDescriptionMinimum, int selected) {
+        int rows = 0;
+        String category = "";
+        for (int index = start; index < end; index++) {
+            SelectorOptionView option = options.get(index);
+            if (!option.category().isBlank() && !option.category().equals(category)) {
+                rows++;
+                category = option.category();
+            }
+            rows += option.labelLines().size();
+            if (includeDescriptionMinimum && !option.descriptionLines().isEmpty()) {
+                rows += index == selected
+                        ? Math.min(2, option.descriptionLines().size())
+                        : 1;
+            }
+        }
+        return rows;
+    }
+
+    private static int[] allocateSelectorDescriptionRows(
+            List<SelectorOptionView> options, int start, int end, int selected, int budget) {
+        int[] rows = new int[options.size()];
+        if (budget <= 0) return rows;
+        int remaining = budget;
+        if (selected >= start
+                && selected < end
+                && !options.get(selected).descriptionLines().isEmpty()) {
+            int selectedMaximum =
+                    Math.min(options.get(selected).descriptionLines().size(), MAX_SELECTOR_DESCRIPTION_LINES);
+            int selectedMinimum = Math.min(2, selectedMaximum);
+            while (remaining > 0 && rows[selected] < selectedMinimum) {
+                rows[selected]++;
+                remaining--;
+            }
+        }
+        List<Integer> order = new ArrayList<>();
+        for (int index = start; index < end; index++) {
+            if (index != selected && !options.get(index).descriptionLines().isEmpty()) order.add(index);
+        }
+        for (int index : order) {
+            if (remaining == 0) break;
+            rows[index] = 1;
+            remaining--;
+        }
+        for (int index = start; index < end; index++) {
+            int maximum = Math.min(options.get(index).descriptionLines().size(), MAX_SELECTOR_DESCRIPTION_LINES);
+            while (remaining > 0 && rows[index] < maximum) {
+                rows[index]++;
+                remaining--;
+            }
+        }
+        return rows;
     }
 
     private String timedActivityStatus(String status, Duration elapsed, String activityLabel) {

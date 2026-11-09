@@ -15,6 +15,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
@@ -253,6 +254,12 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public CodingSessionView presentationSnapshot(AgentSessionId sessionId) {
+        sessions.requireSessionInProject(sessionId, projectId);
+        return scoped(sessions.snapshotSession(sessionId));
+    }
+
+    @Override
     public CodingSessionView reconcile(AgentSessionId sessionId) {
         requireScoped(sessionId);
         return scoped(sessions.reconcileSession(sessionId));
@@ -272,8 +279,15 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
 
     @Override
     public CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
-        requireScoped(sessionId);
+        sessions.requireSessionInProject(sessionId, projectId);
         return history.map(value -> value.recent(sessionId, limit))
+                .orElseGet(() -> CodingSessionHistoryPage.empty(sessionId));
+    }
+
+    @Override
+    public CodingSessionHistoryPage history(AgentSessionId sessionId, int limit, long beforeSequence) {
+        sessions.requireSessionInProject(sessionId, projectId);
+        return history.map(service -> service.before(sessionId, beforeSequence, limit))
                 .orElseGet(() -> CodingSessionHistoryPage.empty(sessionId));
     }
 
@@ -310,7 +324,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
 
     @Override
     public List<CodingQueuedMessage> restorableMessages(AgentSessionId sessionId, int limit) {
-        requireScoped(sessionId);
+        sessions.requireSessionInProject(sessionId, projectId);
         return sessions.listRestorableMessages(sessionId, limit);
     }
 
@@ -418,6 +432,12 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public void cancel(AgentSessionId sessionId, AgentRunId requestedRunId, String idempotencyKey) {
+        requireScoped(sessionId);
+        sessions.abortActiveRun(sessionId, requestedRunId, idempotencyKey);
+    }
+
+    @Override
     public CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
         requireScoped(sessionId);
         return sessions.renameSession(sessionId, displayName, expectedRevision);
@@ -452,6 +472,34 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public CodingShellResult executeShell(String token, boolean approved) {
         return shell.orElseThrow(() -> new UnsupportedOperationException("Shell execution is unavailable"))
                 .execute(token, approved);
+    }
+
+    @Override
+    public boolean recoverableShell() {
+        return shell.map(CodingShellService::recoverable).orElse(false);
+    }
+
+    @Override
+    public CodingShellExecution startShell(String token, boolean approved) {
+        return shell.orElseThrow().start(token, approved);
+    }
+
+    @Override
+    public CodingShellExecution shellExecution(AgentSessionId sessionId, String executionId) {
+        sessions.requireSessionInProject(sessionId, projectId);
+        return shell.orElseThrow().execution(sessionId, executionId);
+    }
+
+    @Override
+    public List<CodingShellExecution> shellExecutions(AgentSessionId sessionId) {
+        sessions.requireSessionInProject(sessionId, projectId);
+        return shell.orElseThrow().executions(sessionId);
+    }
+
+    @Override
+    public CodingShellExecution cancelShell(AgentSessionId sessionId, String executionId) {
+        requireScoped(sessionId);
+        return shell.orElseThrow().cancel(sessionId, executionId);
     }
 
     @Override

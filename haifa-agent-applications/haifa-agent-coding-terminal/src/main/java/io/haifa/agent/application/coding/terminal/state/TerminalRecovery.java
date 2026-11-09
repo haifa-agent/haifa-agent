@@ -6,6 +6,18 @@ import java.util.Objects;
 /** Actionable presentation for stable product/terminal failure codes. */
 public record TerminalRecovery(Category category, String code, String action) {
     private static final Map<String, TerminalRecovery> KNOWN = Map.ofEntries(
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SHELL_OUTCOME_UNKNOWN",
+                    "Shell may still be active on the Host; use /shell to query its receipt. Do not blindly resend it."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SHELL_EXECUTION_UNAVAILABLE",
+                    "The Shell receipt is unavailable or expired (Host restart, 30-minute retention or capacity eviction). This does not prove the command did not run; inspect its effects before deciding what to do next."),
+            entry(
+                    Category.RETRYABLE,
+                    "SHELL_BUSY",
+                    "The Host already has eight active Shell commands; use /shell to inspect them or cancel a specific execution."),
             entry(Category.RETRYABLE, "EVENT_OUT_OF_ORDER", "Reconcile the session, then retry the last action."),
             entry(Category.RETRYABLE, "EVENT_RUN_MISMATCH", "Reconcile the session, then retry the last action."),
             entry(Category.RETRYABLE, "ACTIVE_RUN_SETTLED", "The session changed while submitting; retry the message."),
@@ -14,7 +26,58 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "ACTIVE_RUN_MISMATCH",
                     "The session changed while submitting; retry the message."),
             entry(Category.USER_ACTION_REQUIRED, "SESSION_REQUIRED", "Create or resume a session, then retry."),
-            entry(Category.USER_ACTION_REQUIRED, "SESSION_NOT_FOUND", "Use /resume to choose an available session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SESSION_NOT_FOUND",
+                    "The Session is unavailable; use /resume to choose an available session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SESSION_REVISION_STALE",
+                    "The Session changed in another operation; reopen it with /resume and review its current state before submitting again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "SESSION_REVISION_CONFLICT",
+                    "The Session changed in another operation; reopen it with /resume and review its current state before submitting again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "INTERACTION_REVISION_CONFLICT",
+                    "The approval or clarification changed; use /approval reopen to review the current request before responding."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REVISION_CONFLICT",
+                    "The target changed; refresh its current state and review it before submitting again."),
+            entry(
+                    Category.RETRYABLE,
+                    "HOST_BUSY",
+                    "The Host is at command capacity; wait for active commands to finish before retrying this rejected request."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "PAYLOAD_TOO_LARGE",
+                    "The request or response exceeds the Host byte limit; reduce the input or load a smaller history page. If this followed a command, inspect its outcome before resending."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_PAYLOAD_TOO_LARGE",
+                    "The request or response exceeds the remote byte limit; reduce the input or load a smaller history page. If this followed a command, inspect its outcome before resending."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "CLIENT_CONTEXT_REQUIRED",
+                    "The Host connection context expired or was restarted; background connection checks will reinitialize and reopen the Session. If recovery fails, reconnect with tui --connect. Do not rerun its task to reconnect."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_OUTCOME_UNKNOWN",
+                    "The Host may still be executing the command; inspect its authoritative outcome before deciding what to do next. Do not blindly retry or resend it."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_TRANSPORT_UNAVAILABLE",
+                    "The Host cannot be reached; check that it is running. Background connection checks continue; reconnect with tui --connect and reopen the Session if recovery does not finish."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_HOST_IDENTITY_CHANGED",
+                    "The endpoint now belongs to a different project; check the Host/workspace before connecting again. No command was resent."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "REMOTE_PROTOCOL_INCOMPATIBLE",
+                    "The Host and client could not agree on the protocol; check their versions before reconnecting."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "RESTORABLE_QUEUE_EMPTY",
@@ -50,11 +113,51 @@ public record TerminalRecovery(Category category, String code, String action) {
                     Category.USER_ACTION_REQUIRED,
                     "RUN_BUDGET_EXCEEDED",
                     "Start a new run with a smaller request or an explicitly larger budget."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RUN_INPUT_QUOTA_EXHAUSTED",
+                    "Input token quota exceeded; run /compact to reduce prompt size or start a new session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RUN_OUTPUT_QUOTA_EXHAUSTED",
+                    "Output token quota exceeded; request a more concise response or start a new run."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RUN_COST_QUOTA_EXHAUSTED",
+                    "Run cost quota exceeded; start a new run with an explicitly larger budget."),
             entry(Category.RETRYABLE, "MODEL_RATE_LIMITED", "Wait for backoff, then retry the request."),
+            entry(
+                    Category.RETRYABLE,
+                    "MODEL_PROVIDER_UNAVAILABLE",
+                    "Model provider is unavailable; retry or run /model to switch models."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "MODEL_AUTHENTICATION_REQUIRED",
                     "Not signed in or credentials unavailable; run /connect to connect or sign in again, or run /model to switch models."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_AUTHENTICATION_FAILED",
+                    "Model authentication failed; run /connect to configure credentials or run /model to switch models."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_CONTEXT_TOO_LONG",
+                    "Model context limit was exceeded; run /compact to compress conversation or start a new session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_NOT_FOUND",
+                    "Configured model was not found; run /model to choose another model."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "MODEL_CONTENT_REJECTED",
+                    "Model request content was rejected; adjust the request and retry."),
+            entry(
+                    Category.RETRYABLE,
+                    "MODEL_RESPONSE_INVALID",
+                    "Model returned an invalid response; retry the request."),
+            entry(
+                    Category.RETRYABLE,
+                    "MODEL_CALL_FAILED",
+                    "Model call failed; retry the request or check network connection."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "AUTH_PROVIDER_LIST_EMPTY",
@@ -107,7 +210,31 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "AUTH_DEVICE_CODE_DENIED",
-                    "Device code authorization was denied; retry or use browser sign-in."),
+                    "Device code authorization was denied; run /connect to request a new code."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_DEVICE_CODE_UNAVAILABLE",
+                    "The authorization-code service could not be reached; check your network and run /connect again."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_DEVICE_CODE_REQUEST_FAILED",
+                    "The authorization-code request was rejected; run /connect again in a moment."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_DEVICE_CODE_RESPONSE_INVALID",
+                    "The authorization-code response could not be read; run /connect again."),
+            entry(
+                    Category.RETRYABLE,
+                    "AUTH_DEVICE_CODE_POLL_FAILED",
+                    "Waiting for authorization failed; run /connect again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_DEVICE_RESPONSE_TOO_LARGE",
+                    "The authorization service returned an oversized response; run /connect again."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "AUTH_LOGIN_MODE_UNAVAILABLE",
+                    "This provider only supports authorization-code sign-in; run /connect and pick that method."),
             entry(
                     Category.USER_ACTION_REQUIRED,
                     "AUTH_SECRET_INVALID",
@@ -136,6 +263,14 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "TOOL_OUTCOME_UNKNOWN",
                     "Inspect the tool outcome before retrying; do not blindly replay the action."),
             entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "TOOL_REQUEST_REJECTED",
+                    "Tool request was rejected; check the tool arguments and retry."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "TOOL_APPROVAL_REJECTED",
+                    "Tool approval was rejected; proceed with an alternative approach."),
+            entry(
                     Category.RETRYABLE,
                     "TOOL_RESULT_PERSISTENCE_FAILED",
                     "Check the runtime store, then resume so the known tool result can be persisted."),
@@ -159,13 +294,14 @@ public record TerminalRecovery(Category category, String code, String action) {
     }
 
     public static TerminalRecovery fromCode(String code) {
-        String checked = require(code, "code");
+        String supplied = code == null ? "" : code.strip();
+        String checked = supplied.matches("[A-Z][A-Z0-9_.:-]{0,95}") ? supplied : "REMOTE_HOST_ERROR";
         return KNOWN.getOrDefault(
                 checked,
                 new TerminalRecovery(
                         Category.USER_ACTION_REQUIRED,
                         checked,
-                        "Review the request and retry; the editor draft is preserved."));
+                        "Review the current session state before deciding whether to retry; the editor draft is preserved."));
     }
 
     /** User-facing title; stable capability codes remain available through {@link #code()}. */

@@ -19,19 +19,7 @@ Pauses, resumes, or reports the VS Code Java language server for this workspace.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$pythonScript = Join-Path $PSScriptRoot 'java_language_server.py'
-$pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-$pythonArguments = @()
-if ($null -eq $pythonCommand) {
-    $pythonCommand = Get-Command py -ErrorAction SilentlyContinue
-    $pythonArguments = @('-3')
-}
-if ($null -eq $pythonCommand) {
-    throw 'Python 3 is required by the Java language server controller.'
-}
-
-$pythonArguments += $pythonScript
-$pythonArguments += $args
-
-& $pythonCommand.Source @pythonArguments
+& (Join-Path $PSScriptRoot 'invoke-python.ps1') `
+    -Script (Join-Path $PSScriptRoot 'java_language_server.py') `
+    -ScriptArguments $args
 exit $LASTEXITCODE

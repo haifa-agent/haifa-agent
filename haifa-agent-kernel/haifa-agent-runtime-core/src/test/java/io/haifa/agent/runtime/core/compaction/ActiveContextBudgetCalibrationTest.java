@@ -108,7 +108,7 @@ class ActiveContextBudgetCalibrationTest {
         for (int i = 1; i <= 4; i++) {
             ToolCallId callId = new ToolCallId("call-sc-a-" + i);
             ProviderToolCallCorrelationId corrId = new ProviderToolCallCorrelationId("corr-sc-a-" + i);
-            Map<String, Object> data = Map.of("largePayload", "data ".repeat(10_000));
+            Map<String, Object> data = Map.of("largePayload", "data ".repeat(10_000) + " TOOL_TAIL_PROBE");
 
             ToolCall call = new ToolCall(
                     callId,
@@ -118,7 +118,8 @@ class ActiveContextBudgetCalibrationTest {
                     new RuntimeIdempotencyKey("idemp-sc-a-" + i),
                     "file_read",
                     "1.0.0",
-                    new ToolArguments("input.schema", "1.0.0", Map.of("path", "file" + i + ".txt")),
+                    new ToolArguments(
+                            "input.schema", "1.0.0", Map.of("path", "file" + i + ".txt", "probe", "ARG_PROBE")),
                     NOW.plusSeconds(i * 10));
             call.beginValidation();
             call.beginPolicyCheck();
@@ -157,6 +158,8 @@ class ActiveContextBudgetCalibrationTest {
         AgentChatModel model = request -> {
             llmCalls.incrementAndGet();
             String prompt = request.messages().getLast().content();
+            assertThat(prompt.contains("TOOL_TAIL_PROBE") && prompt.contains("ARG_PROBE"))
+                    .isTrue();
             return new AgentChatResponse(
                     "res",
                     "model",
@@ -174,7 +177,38 @@ class ActiveContextBudgetCalibrationTest {
         assertThat(outcome.tier1PruningBypassedSummary()).isTrue();
         assertThat(outcome.omittedToolResultCount()).isGreaterThan(0);
         assertThat(outcome.omittedToolPayloadTokens()).isGreaterThan(20_000L);
+        assertThat(coordinator.evaluateAndCompactIfNeeded(run, 2, binding).tier1PruningBypassedSummary())
+                .isTrue();
+        assertThat(store.eventsFor(run.id()).stream()
+                        .anyMatch(event -> event.type().equals("session.compaction-failed")))
+                .isFalse();
         assertThat(llmCalls.get()).isZero();
+        var selected = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.ACTIVE_HISTORY_BUDGET,
+                new CompactionTriggerEvaluator(policy).calculateBreakdown(120000, 256, 0, 0, 200000));
+        var blocked = coordinator.evaluateSelected(
+                run, 2, createBindingWithContextWindow(store, run, model, 12000), selected);
+        assertThat(blocked.compacted()).isFalse();
+        assertThat(llmCalls.get()).isZero();
+        assertThat(store.latestVersion(session)).isZero();
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("failureCode", "SUMMARY_INPUT_BUDGET"));
+        var full = coordinator.evaluateSelected(
+                run, 3, createBindingWithContextWindow(store, run, model, 120000), selected);
+        assertThat(full.tier1PruningBypassedSummary()).isFalse();
+        assertThat(full.compacted()).isTrue();
+        assertThat(llmCalls.get()).isPositive();
+        assertThat(store.latestValid(session).orElseThrow().quality())
+                .isEqualTo(io.haifa.agent.context.compression.CompactionQuality.SEMANTIC_VALIDATED);
+        var snapshot = new io.haifa.agent.runtime.core.context.ActiveContextSnapshots(
+                        store, store, policy, new io.haifa.agent.context.compression.DeterministicContextCompressor())
+                .current(session)
+                .snapshot();
+        assertThat(snapshot.summary()).contains(store.latestValid(session).orElseThrow());
+        assertThat(snapshot.activeMessages()).hasSize(2);
+        assertThat(snapshot.activeMessages().getFirst().role()).isEqualTo(MessageRole.ASSISTANT);
     }
 
     @Test

@@ -1,0 +1,706 @@
+package io.haifa.coding.host.internal;
+
+import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
+import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
+import io.haifa.agent.skill.api.SkillAlias;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
+import java.net.URI;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+public record CliConfiguration(
+        Model model,
+        List<Model> availableModels,
+        Set<String> enabledTools,
+        List<McpServer> mcpServers,
+        Web web,
+        Skills skills,
+        Execution execution,
+        ApprovalMode approval,
+        CodingApprovalThreshold approvalThreshold,
+        Duration timeout,
+        int maxIterations,
+        long maxModelCalls,
+        long maxToolCalls,
+        ProjectPersistenceConfiguration persistence,
+        int modelMaxResponseBytes,
+        Duration abandonedRunStaleness,
+        Context context) {
+    private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
+    public static final int DEFAULT_MODEL_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+    public static final Duration DEFAULT_ABANDONED_RUN_STALENESS = Duration.ofMinutes(30);
+    private static final Set<String> DEFAULT_TOOLS = Set.of(
+            "file_list",
+            "file_stat",
+            "file_read",
+            "file_create",
+            "file_write",
+            "file_patch",
+            "file_delete",
+            "file_move",
+            "workspace_attach",
+            "ask_clarification",
+            "execution_run");
+    private static final Set<String> OPTIONAL_TOOLS = Set.of("file_search", "web_search", "web_fetch");
+    private static final Set<String> SUPPORTED_TOOLS = java.util.stream.Stream.concat(
+                    DEFAULT_TOOLS.stream(), OPTIONAL_TOOLS.stream())
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    private static final Set<String> DEFAULT_ENVIRONMENT = Set.of("*");
+
+    public CliConfiguration {
+        context = Objects.requireNonNull(context, "context must not be null");
+        model = Objects.requireNonNull(model, "model must not be null");
+        availableModels = List.copyOf(Objects.requireNonNull(availableModels, "availableModels must not be null"));
+        String selectedModelId = model.id();
+        if (availableModels.isEmpty()
+                || availableModels.stream().map(Model::id).distinct().count() != availableModels.size()
+                || availableModels.stream().noneMatch(value -> value.id().equals(selectedModelId))) {
+            throw new IllegalArgumentException("models must be non-empty, uniquely identified, and contain default");
+        }
+        enabledTools =
+                Set.copyOf(new LinkedHashSet<>(Objects.requireNonNull(enabledTools, "enabledTools must not be null")));
+        mcpServers = List.copyOf(Objects.requireNonNull(mcpServers, "mcpServers must not be null"));
+        web = Objects.requireNonNull(web, "web must not be null");
+        skills = Objects.requireNonNull(skills, "skills must not be null");
+        execution = Objects.requireNonNull(execution, "execution must not be null");
+        persistence = Objects.requireNonNull(persistence, "persistence must not be null");
+        if (enabledTools.contains("workspace_worktree_create")) {
+            throw new IllegalArgumentException(
+                    "tools.enabled contains the retired tool 'workspace_worktree_create'; remove it and use the"
+                            + " generic execution_run tool to run git worktree commands");
+        }
+        if (!SUPPORTED_TOOLS.containsAll(enabledTools)) {
+            throw new IllegalArgumentException("CLI supports only configured tools: " + SUPPORTED_TOOLS);
+        }
+        if (enabledTools.contains("web_search") != web.search().enabled()
+                || enabledTools.contains("web_fetch") != web.fetch().enabled()) {
+            throw new IllegalArgumentException("tools.enabled and web provider enabled flags must match");
+        }
+        if (mcpServers.stream().map(McpServer::id).distinct().count() != mcpServers.size()) {
+            throw new IllegalArgumentException("MCP server ids must be unique");
+        }
+        approval = Objects.requireNonNull(approval, "approval must not be null");
+        approvalThreshold = Objects.requireNonNull(approvalThreshold, "approvalThreshold must not be null");
+        timeout = Objects.requireNonNull(timeout, "timeout must not be null");
+        if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("timeout must be positive");
+        if (maxIterations < 1 || maxToolCalls < 1 || maxModelCalls < 1)
+            throw new IllegalArgumentException("runtime limits must be positive");
+        if (modelMaxResponseBytes < 1024 * 1024 || modelMaxResponseBytes > 32 * 1024 * 1024) {
+            throw new IllegalArgumentException("models.maxResponseBytes must be between 1048576 and 33554432");
+        }
+        abandonedRunStaleness = Objects.requireNonNull(abandonedRunStaleness, "abandonedRunStaleness must not be null");
+        if (abandonedRunStaleness.isNegative() || abandonedRunStaleness.isZero()) {
+            throw new IllegalArgumentException("runtime.abandonedRunStalenessMillis must be positive");
+        }
+    }
+
+    public static CliConfiguration defaults() {
+        Model responsesFlash = new Model(
+                "deepseek",
+                "DeepSeek",
+                "deepseek-v4-flash",
+                URI.create("https://api.deepseek.com"),
+                URI.create("https://api.deepseek.com"),
+                "model-auth://deepseek/default",
+                io.haifa.agent.model.api.ModelApiStyles.OPENAI_RESPONSES,
+                "deepseek-openai-responses",
+                true,
+                null,
+                null,
+                "deepseek-responses-flash",
+                "DeepSeek Responses Flash",
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
+                131_072,
+                8_192);
+        Model chatPro = new Model(
+                "deepseek",
+                "DeepSeek",
+                "deepseek-v4-pro",
+                URI.create("https://api.deepseek.com"),
+                URI.create("https://api.deepseek.com"),
+                "model-auth://deepseek/default",
+                io.haifa.agent.model.api.ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
+                true,
+                null,
+                null,
+                "deepseek-chat-pro",
+                "DeepSeek Chat Pro",
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
+                131_072,
+                8_192);
+        return new CliConfiguration(
+                responsesFlash,
+                List.of(responsesFlash, chatPro),
+                DEFAULT_TOOLS,
+                List.of(),
+                Web.defaults(),
+                Skills.defaults(),
+                new Execution(
+                        "host-guarded",
+                        "auto",
+                        null,
+                        Duration.ofMinutes(30),
+                        50 * 1024,
+                        2000,
+                        Optional.empty(),
+                        DEFAULT_ENVIRONMENT),
+                ApprovalMode.ASK,
+                CodingApprovalThreshold.LOW,
+                Duration.ofMinutes(5),
+                50,
+                DEFAULT_MAX_MODEL_CALLS,
+                32,
+                ProjectPersistenceConfiguration.memory(),
+                DEFAULT_MODEL_MAX_RESPONSE_BYTES,
+                DEFAULT_ABANDONED_RUN_STALENESS,
+                Context.defaults());
+    }
+
+    /** Coding context policy, frozen per Run by the product profile resolver. */
+    public record Context(String policy, int targetTokens, boolean historyRetrieval, boolean automaticMaintenance) {
+        public Context {
+            if (!Set.of("legacy", RuntimeControlOptions.UNIFIED_CONTEXT_V1).contains(policy))
+                throw new IllegalArgumentException("context.policy must be legacy or unified-context-v1");
+            try {
+                RuntimeControlOptions.validateWorkingSetTarget(targetTokens);
+            } catch (IllegalArgumentException invalid) {
+                throw new IllegalArgumentException("context.targetTokens must be between 128 and 65536");
+            }
+            if (policy.equals(RuntimeControlOptions.UNIFIED_CONTEXT_V1) && !historyRetrieval)
+                throw new IllegalArgumentException("unified context requires context.historyRetrieval");
+            if (automaticMaintenance)
+                throw new IllegalArgumentException("context.automaticMaintenance is not supported");
+        }
+
+        public static Context defaults() {
+            return new Context(
+                    RuntimeControlOptions.UNIFIED_CONTEXT_V1,
+                    RuntimeControlOptions.DEFAULT_WORKING_SET_TARGET,
+                    true,
+                    false);
+        }
+
+        public java.util.Map<String, Object> runtimeOptions() {
+            if (policy.equals("legacy")) return java.util.Map.of();
+            return RuntimeControlOptions.unifiedWorkingSetOptions(java.util.Map.of(), targetTokens);
+        }
+    }
+
+    public record Model(
+            String providerId,
+            String providerDisplayName,
+            String modelId,
+            URI providerEndpoint,
+            URI endpoint,
+            String credentialRef,
+            ApiStyleId style,
+            String dialect,
+            boolean nativeStreaming,
+            String workspaceId,
+            String region,
+            String id,
+            String displayName,
+            Set<ModelCapability> capabilities,
+            int contextWindow,
+            int maxOutputTokens,
+            ModelReasoningMode reasoningMode,
+            ModelReasoningEffort reasoningEffort,
+            boolean reasoningModeConfigured,
+            String originator,
+            String userAgent) {
+        public Model(
+                String providerId,
+                String providerDisplayName,
+                String modelId,
+                URI providerEndpoint,
+                URI endpoint,
+                String credentialRef,
+                ApiStyleId style,
+                String dialect,
+                boolean nativeStreaming,
+                String workspaceId,
+                String region,
+                String id,
+                String displayName,
+                Set<ModelCapability> capabilities,
+                int contextWindow,
+                int maxOutputTokens,
+                ModelReasoningMode reasoningMode,
+                String originator,
+                String userAgent) {
+            this(
+                    providerId,
+                    providerDisplayName,
+                    modelId,
+                    providerEndpoint,
+                    endpoint,
+                    credentialRef,
+                    style,
+                    dialect,
+                    nativeStreaming,
+                    workspaceId,
+                    region,
+                    id,
+                    displayName,
+                    capabilities,
+                    contextWindow,
+                    maxOutputTokens,
+                    reasoningMode,
+                    null,
+                    true,
+                    originator,
+                    userAgent);
+        }
+
+        public Model(
+                String providerId,
+                String providerDisplayName,
+                String modelId,
+                URI providerEndpoint,
+                URI endpoint,
+                String credentialRef,
+                ApiStyleId style,
+                String dialect,
+                boolean nativeStreaming,
+                String workspaceId,
+                String region,
+                String id,
+                String displayName,
+                Set<ModelCapability> capabilities,
+                int contextWindow,
+                int maxOutputTokens) {
+            this(
+                    providerId,
+                    providerDisplayName,
+                    modelId,
+                    providerEndpoint,
+                    endpoint,
+                    credentialRef,
+                    style,
+                    dialect,
+                    nativeStreaming,
+                    workspaceId,
+                    region,
+                    id,
+                    displayName,
+                    capabilities,
+                    contextWindow,
+                    maxOutputTokens,
+                    ModelReasoningMode.DISABLED,
+                    null,
+                    false,
+                    null,
+                    null);
+        }
+
+        public Model(
+                String providerId,
+                String providerDisplayName,
+                String modelId,
+                URI providerEndpoint,
+                URI endpoint,
+                String credentialRef,
+                ApiStyleId style,
+                String dialect,
+                boolean nativeStreaming,
+                String workspaceId,
+                String region,
+                String id,
+                String displayName,
+                Set<ModelCapability> capabilities,
+                int contextWindow,
+                int maxOutputTokens,
+                ModelReasoningMode reasoningMode) {
+            this(
+                    providerId,
+                    providerDisplayName,
+                    modelId,
+                    providerEndpoint,
+                    endpoint,
+                    credentialRef,
+                    style,
+                    dialect,
+                    nativeStreaming,
+                    workspaceId,
+                    region,
+                    id,
+                    displayName,
+                    capabilities,
+                    contextWindow,
+                    maxOutputTokens,
+                    reasoningMode,
+                    null,
+                    true,
+                    null,
+                    null);
+        }
+
+        public Model {
+            providerId = text(providerId, "model.providerId");
+            providerDisplayName = text(providerDisplayName, "model.providerDisplayName");
+            modelId = text(modelId, "model.modelId");
+            id = text(id, "model.id");
+            displayName = text(displayName, "model.displayName");
+            credentialRef = text(credentialRef, "model.credentialRef");
+            style = Objects.requireNonNull(style, "model.style must not be null");
+            dialect = text(dialect, "model.dialect");
+            capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "model.capabilities must not be null"));
+            reasoningMode = Objects.requireNonNull(reasoningMode, "model.reasoningMode must not be null");
+            if (reasoningEffort != null && reasoningModeConfigured && reasoningMode == ModelReasoningMode.DISABLED) {
+                throw new IllegalArgumentException("model.reasoningEffort requires enabled reasoning");
+            }
+            if (capabilities.isEmpty()) throw new IllegalArgumentException("model.capabilities must not be empty");
+            if (reasoningMode != ModelReasoningMode.DISABLED && !capabilities.contains(ModelCapability.REASONING)) {
+                throw new IllegalArgumentException("enabled model reasoning requires REASONING capability");
+            }
+            if (contextWindow < 1 || maxOutputTokens < 1 || maxOutputTokens > contextWindow) {
+                throw new IllegalArgumentException("model token limits are invalid");
+            }
+            if (!credentialRef.startsWith("env://")
+                    && !credentialRef.startsWith("model-auth://")
+                    && !credentialRef.startsWith("os://")) {
+                throw new IllegalArgumentException("model.credentialRef must use env://, os://, or model-auth://");
+            }
+            providerEndpoint = normalizeEndpoint(
+                    Objects.requireNonNull(providerEndpoint, "model.providerEndpoint must not be null"));
+            if (dialect.equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
+                if (!providerId.equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
+                    throw new IllegalArgumentException("aliyun-bailian-openai-chat requires providerId="
+                            + AliyunBailianProviderFactory.PROVIDER_ID.value());
+                }
+                var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
+                        "cli-v1", workspaceId, region, new CredentialRef(credentialRef));
+                URI derivedEndpoint = configuration.endpoint();
+                if (!providerEndpoint.equals(derivedEndpoint)
+                        || endpoint != null && !normalizeEndpoint(endpoint).equals(derivedEndpoint)) {
+                    throw new IllegalArgumentException(
+                            "model endpoints must match the endpoint derived from workspaceId and region");
+                }
+                workspaceId = configuration.workspaceId();
+                region = configuration.region();
+                endpoint = derivedEndpoint;
+            } else {
+                endpoint = normalizeEndpoint(Objects.requireNonNull(endpoint, "model.endpoint must not be null"));
+                workspaceId = optionalText(workspaceId);
+                region = optionalText(region);
+            }
+            originator = optionalText(originator);
+            userAgent = optionalText(userAgent);
+            if (dialect.equals(io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.OPENAI_CODEX)) {
+                if (!style.equals(io.haifa.agent.model.api.ModelApiStyles.OPENAI_RESPONSES)
+                        || !credentialRef.startsWith("model-auth://openai-codex/")
+                        || originator == null
+                        || userAgent == null) {
+                    throw new IllegalArgumentException(
+                            "openai-codex-responses requires Responses, Coding Auth, originator, and userAgent");
+                }
+            }
+        }
+
+        private static URI normalizeEndpoint(URI endpoint) {
+            String value = endpoint.normalize().toString();
+            while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+            return URI.create(value);
+        }
+
+        private static String optionalText(String value) {
+            return value == null || value.isBlank() ? null : value.trim();
+        }
+    }
+
+    public record Execution(
+            String provider,
+            String shell,
+            Path shellPath,
+            Duration maximumTimeout,
+            int maxOutputBytes,
+            int maxOutputLines,
+            Optional<Integer> maxProcesses,
+            Set<String> inheritEnvironment) {
+        private static final Set<String> PROVIDERS = Set.of("host-guarded");
+        private static final Set<String> SHELLS = Set.of("auto", "bash", "powershell");
+
+        public Execution(
+                String provider,
+                String shell,
+                Path shellPath,
+                Duration maximumTimeout,
+                int maxOutputBytes,
+                int maxOutputLines,
+                int maxProcesses,
+                Set<String> inheritEnvironment) {
+            this(
+                    provider,
+                    shell,
+                    shellPath,
+                    maximumTimeout,
+                    maxOutputBytes,
+                    maxOutputLines,
+                    Optional.of(maxProcesses),
+                    inheritEnvironment);
+        }
+
+        public Execution {
+            provider = text(provider, "execution.provider").toLowerCase(java.util.Locale.ROOT);
+            if (!PROVIDERS.contains(provider)) {
+                throw new IllegalArgumentException("execution.provider is unsupported");
+            }
+            shell = text(shell, "execution.shell").toLowerCase(java.util.Locale.ROOT);
+            if (!SHELLS.contains(shell)) throw new IllegalArgumentException("execution.shell is unsupported");
+            if (shellPath != null) {
+                if (!shellPath.isAbsolute()) throw new IllegalArgumentException("execution.shellPath must be absolute");
+                if (shell.equals("auto")) {
+                    throw new IllegalArgumentException("execution.shellPath requires bash or powershell");
+                }
+            }
+            positive(maximumTimeout, "execution.maximumTimeout");
+            if (maximumTimeout.compareTo(ExecutionLimits.MAXIMUM_ALLOWED_TIMEOUT) > 0) {
+                throw new IllegalArgumentException("execution timeout configuration is out of range");
+            }
+            if (maxOutputBytes < 1024 || maxOutputBytes > 1024 * 1024) {
+                throw new IllegalArgumentException("execution.maxOutputBytes is out of range");
+            }
+            if (maxOutputLines < 1 || maxOutputLines > 10_000) {
+                throw new IllegalArgumentException("execution.maxOutputLines is out of range");
+            }
+            if (maxProcesses == null) {
+                maxProcesses = Optional.empty();
+            }
+            if (maxProcesses.isPresent()) {
+                int limit = maxProcesses.get();
+                if (limit < 1 || limit > 64) {
+                    throw new IllegalArgumentException("execution.maxProcesses is out of range");
+                }
+            }
+            inheritEnvironment = Set.copyOf(
+                    Objects.requireNonNull(inheritEnvironment, "execution.inheritEnvironment must not be null"));
+            if (inheritEnvironment.stream()
+                    .anyMatch(name -> !name.equals("*") && !name.matches("[A-Za-z_][A-Za-z0-9_]*"))) {
+                throw new IllegalArgumentException("execution.inheritEnvironment contains an invalid name");
+            }
+            if (inheritEnvironment.stream()
+                    .map(name -> name.toUpperCase(java.util.Locale.ROOT))
+                    .anyMatch(Execution::looksSensitive)) {
+                throw new IllegalArgumentException("execution.inheritEnvironment contains a secret-like name");
+            }
+        }
+
+        private static boolean looksSensitive(String name) {
+            return name.contains("API_KEY")
+                    || name.contains("ACCESS_KEY")
+                    || name.contains("PRIVATE_KEY")
+                    || name.contains("PASSWORD")
+                    || name.contains("SECRET")
+                    || name.contains("TOKEN")
+                    || name.contains("CREDENTIAL")
+                    || name.endsWith("_PROXY")
+                    || name.equals("NO_PROXY")
+                    || (name.endsWith("_AUTH_SOCK") && !name.equals("SSH_AUTH_SOCK"))
+                    || name.equals("DOCKER_HOST")
+                    || name.equals("KUBECONFIG");
+        }
+
+        private static void positive(Duration value, String field) {
+            Objects.requireNonNull(value, field + " must not be null");
+            if (value.isZero() || value.isNegative()) throw new IllegalArgumentException(field + " must be positive");
+        }
+    }
+
+    public record Web(WebProvider search, WebProvider fetch) {
+        public Web {
+            search = Objects.requireNonNull(search, "web.search must not be null");
+            fetch = Objects.requireNonNull(fetch, "web.fetch must not be null");
+            if (!Set.of("aliyun", "brave", "tavily").contains(search.providerId())) {
+                throw new IllegalArgumentException("web.search.provider must be aliyun, brave, or tavily");
+            }
+            if (!Set.of("aliyun", "browserless", "tavily").contains(fetch.providerId())) {
+                throw new IllegalArgumentException("web.fetch.provider must be aliyun, browserless, or tavily");
+            }
+        }
+
+        public static Web defaults() {
+            return new Web(
+                    new WebProvider(
+                            false,
+                            "aliyun",
+                            io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
+                            "env://ALIYUN_IQS_API_KEY",
+                            Duration.ofSeconds(30),
+                            2 * 1024 * 1024),
+                    new WebProvider(
+                            false,
+                            "aliyun",
+                            io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
+                            "env://ALIYUN_IQS_API_KEY",
+                            Duration.ofSeconds(30),
+                            4 * 1024 * 1024));
+        }
+    }
+
+    public record WebProvider(
+            boolean enabled,
+            String providerId,
+            URI endpoint,
+            String credentialRef,
+            Duration timeout,
+            int maxResponseBytes) {
+        public WebProvider {
+            providerId = text(providerId, "web providerId").toLowerCase(java.util.Locale.ROOT);
+            endpoint = Objects.requireNonNull(endpoint, "web endpoint must not be null")
+                    .normalize();
+            if (!endpoint.isAbsolute()
+                    || endpoint.getHost() == null
+                    || !endpoint.getScheme().equalsIgnoreCase("https")) {
+                throw new IllegalArgumentException("web endpoint must be an absolute HTTPS URI");
+            }
+            credentialRef = text(credentialRef, "web credentialRef");
+            boolean validRef = (credentialRef.startsWith("env://") && credentialRef.length() > "env://".length())
+                    || (credentialRef.startsWith("os://") && credentialRef.length() > "os://".length());
+            if (!validRef) {
+                throw new IllegalArgumentException("web credentialRef must use env:// or os://");
+            }
+            Objects.requireNonNull(timeout, "web timeout must not be null");
+            if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(Duration.ofMinutes(2)) > 0) {
+                throw new IllegalArgumentException("web timeout is out of range");
+            }
+            if (maxResponseBytes < 1024 || maxResponseBytes > 16 * 1024 * 1024) {
+                throw new IllegalArgumentException("web maxResponseBytes is out of range");
+            }
+        }
+    }
+
+    public record Skills(Set<String> allowedAliases, List<LocalSkillDirectory> localDirectories) {
+        public Skills {
+            Objects.requireNonNull(allowedAliases, "skill allowedAliases must not be null");
+            allowedAliases = allowedAliases.stream()
+                    .map(SkillAlias::new)
+                    .map(SkillAlias::value)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            localDirectories =
+                    List.copyOf(Objects.requireNonNull(localDirectories, "skill localDirectories must not be null"));
+            if (localDirectories.stream()
+                            .map(LocalSkillDirectory::id)
+                            .distinct()
+                            .count()
+                    != localDirectories.size()) {
+                throw new IllegalArgumentException("skill local directory ids must be unique");
+            }
+            if (localDirectories.stream()
+                            .map(LocalSkillDirectory::root)
+                            .distinct()
+                            .count()
+                    != localDirectories.size()) {
+                throw new IllegalArgumentException("skill local directory roots must be unique");
+            }
+        }
+
+        public static Skills defaults() {
+            return new Skills(Set.of("task-planning", "result-verification"), List.of());
+        }
+    }
+
+    public record LocalSkillDirectory(
+            String id, Path root, int priority, SkillParserMode parserMode, SkillOrigin origin) {
+        public LocalSkillDirectory {
+            id = text(id, "skill local directory id").toLowerCase(java.util.Locale.ROOT);
+            if (!id.matches("[a-z][a-z0-9-]{0,63}")) {
+                throw new IllegalArgumentException("skill local directory id must be lowercase kebab-case");
+            }
+            Path configuredRoot = Objects.requireNonNull(root, "skill local directory root must not be null");
+            if (!configuredRoot.isAbsolute()) {
+                throw new IllegalArgumentException("skill local directory root must be absolute");
+            }
+            root = configuredRoot.normalize();
+            if (priority < 0 || priority > 10_000) {
+                throw new IllegalArgumentException("skill local directory priority is out of range");
+            }
+            parserMode = Objects.requireNonNull(parserMode, "skill parserMode must not be null");
+            origin = Objects.requireNonNull(origin, "skill origin must not be null");
+            if (origin != SkillOrigin.CREATED && origin != SkillOrigin.IMPORTED) {
+                throw new IllegalArgumentException("skill local directory origin must be CREATED or IMPORTED");
+            }
+        }
+    }
+
+    public record McpServer(
+            String id,
+            String displayName,
+            URI endpoint,
+            boolean allowLoopbackHttp,
+            Set<String> allowedTools,
+            String aliasNamespace,
+            String policyProfile,
+            Duration connectTimeout,
+            Duration requestTimeout,
+            Duration idleTimeout,
+            int maxBodyBytes,
+            int maxHeaderBytes,
+            int maxReconnectAttempts) {
+        public McpServer {
+            id = text(id, "mcp server id");
+            displayName = text(displayName, "mcp server displayName");
+            endpoint = Objects.requireNonNull(endpoint, "mcp server endpoint must not be null");
+            allowedTools = Set.copyOf(Objects.requireNonNull(allowedTools, "mcp allowedTools must not be null"));
+            if (allowedTools.isEmpty()) throw new IllegalArgumentException("mcp allowedTools must not be empty");
+            aliasNamespace = text(aliasNamespace, "mcp aliasNamespace");
+            policyProfile = text(policyProfile, "mcp policyProfile");
+            if (!Set.of("conservative", "utility").contains(policyProfile)) {
+                throw new IllegalArgumentException("mcp policyProfile must be conservative or utility");
+            }
+            positive(connectTimeout, "mcp connectTimeout");
+            positive(requestTimeout, "mcp requestTimeout");
+            positive(idleTimeout, "mcp idleTimeout");
+            if (maxBodyBytes < 1024 || maxBodyBytes > 16 * 1024 * 1024) {
+                throw new IllegalArgumentException("mcp maxBodyBytes is out of range");
+            }
+            if (maxHeaderBytes < 1024 || maxHeaderBytes > 256 * 1024) {
+                throw new IllegalArgumentException("mcp maxHeaderBytes is out of range");
+            }
+            if (maxReconnectAttempts < 0 || maxReconnectAttempts > 8) {
+                throw new IllegalArgumentException("mcp maxReconnectAttempts is out of range");
+            }
+        }
+
+        private static void positive(Duration value, String field) {
+            Objects.requireNonNull(value, field + " must not be null");
+            if (value.isZero() || value.isNegative()) {
+                throw new IllegalArgumentException(field + " must be positive");
+            }
+        }
+    }
+
+    public static String text(String value, String field) {
+        String normalized =
+                Objects.requireNonNull(value, field + " must not be null").trim();
+        if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
+        return normalized;
+    }
+
+    public static Set<String> defaultTools() {
+        return DEFAULT_TOOLS;
+    }
+}

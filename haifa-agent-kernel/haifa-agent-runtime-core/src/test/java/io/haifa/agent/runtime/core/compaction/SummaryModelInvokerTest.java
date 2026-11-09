@@ -1,32 +1,30 @@
 package io.haifa.agent.runtime.core.compaction;
 
+import static io.haifa.agent.runtime.core.compaction.CompactionTestSupport.consumeModelCalls;
+import static io.haifa.agent.runtime.core.compaction.CompactionTestSupport.createRun;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
-import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.run.AgentRun;
-import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.runtime.api.AgentRunRequest;
-import io.haifa.agent.runtime.api.RuntimeOverrides;
-import io.haifa.agent.runtime.core.DefaultAgentRuntime;
-import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
+import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
-import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
-import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -77,13 +75,25 @@ class SummaryModelInvokerTest {
                     Optional.of(VALID_SUMMARY_MAP));
         };
 
-        FrozenModelBinding binding = bindingWithMaxOutput(store, run, chatModel, 65_536);
+        Map<String, Object> responseFormat = Map.of("type", "json_object");
+        FrozenModelBinding binding = bindingWithMaxOutput(
+                store, run, chatModel, 65_536, Map.of("response_format", responseFormat, "temperature", 0.1));
 
         invoker.invoke(binding, run, 1, "system prompt", "user prompt", 1, false);
 
         assertThat(capturedRequest.get()).isNotNull();
         // Capped at 32768, NOT the old hardcoded 4096!
         assertThat(capturedRequest.get().maxOutputTokens()).isEqualTo(32_768);
+        assertThat(capturedRequest.get().tools()).isEmpty();
+        assertThat(capturedRequest.get().options())
+                .doesNotContainKey("response_format")
+                .containsEntry("temperature", 0.1);
+        assertThat(binding.configuration().modelRequestOptions()).containsEntry("response_format", responseFormat);
+        assertThat(capturedRequest.get().structuredOutput()).hasValueSatisfying(requirement -> {
+            assertThat(requirement.responseName()).isEqualTo("SemanticConversationSummaryV1");
+            assertThat(requirement.jsonSchema())
+                    .isEqualTo(io.haifa.agent.context.compression.SemanticSummarySchema.jsonSchema());
+        });
     }
 
     @Test
@@ -124,43 +134,152 @@ class SummaryModelInvokerTest {
         assertThat(capturedRequest.get().maxOutputTokens()).isEqualTo(8_192);
     }
 
-    private static AgentRun createRun(InMemoryRuntimeStore store) {
+    @Test
+    void timeoutIsClippedToRemainingActiveWallTime() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicReference<Instant> clock =
+                new AtomicReference<>(NOW.plusMillis(run.limits().maxWallTimeMillis() - 7));
+        SummaryModelInvoker invoker = invoker(store, new RunControlRegistry(), clock);
+        AtomicReference<AgentChatRequest> captured = new AtomicReference<>();
+        invoker.invoke(
+                bindingWithMaxOutput(
+                        store,
+                        run,
+                        request -> {
+                            captured.set(request);
+                            return structuredResponse();
+                        },
+                        8192),
+                run,
+                1,
+                "system",
+                "source",
+                0,
+                false);
+        assertThat(captured.get().timeout().toMillis()).isEqualTo(7);
+    }
+
+    @Test
+    void exactlyExpiredWallTimeDoesNotDispatchOrConsumeACall() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicReference<Instant> clock =
+                new AtomicReference<>(NOW.plusMillis(run.limits().maxWallTimeMillis()));
+        SummaryModelInvoker invoker = invoker(store, new RunControlRegistry(), clock);
+        AtomicInteger calls = new AtomicInteger();
+        assertThatThrownBy(() -> invoker.invoke(
+                        bindingWithMaxOutput(
+                                store,
+                                run,
+                                request -> {
+                                    calls.incrementAndGet();
+                                    return structuredResponse();
+                                },
+                                8192),
+                        run,
+                        1,
+                        "system",
+                        "source",
+                        0,
+                        false))
+                .isInstanceOf(RuntimeLimitExceededException.class)
+                .hasFieldOrPropertyWithValue("resource", "wallTimeMillis");
+        assertThat(calls).hasValue(0);
+        assertThat(run.usage().modelCalls()).isZero();
+    }
+
+    @Test
+    void lastAdmittedCallReturnsButDoesNotAdmitRepair() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        consumeModelCalls(store, run, run.limits().maxModelCalls() - 1);
+        SummaryModelInvoker invoker = invoker(store, new RunControlRegistry(), new AtomicReference<>(NOW));
+        AtomicInteger calls = new AtomicInteger();
+        FrozenModelBinding binding = bindingWithMaxOutput(
+                store,
+                run,
+                request -> {
+                    calls.incrementAndGet();
+                    return structuredResponse();
+                },
+                8192);
+        assertThat(invoker.invoke(binding, run, 1, "system", "source", 0, false))
+                .isNotNull();
+        assertThatThrownBy(() -> invoker.invoke(binding, run, 1, "system", "repair", 1, true))
+                .isInstanceOf(RuntimeLimitExceededException.class)
+                .hasFieldOrPropertyWithValue("resource", "modelCalls");
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void responseUsageIsRetainedWhenStopOrDeadlineIsObservedAfterReturn() {
+        for (boolean deadline : List.of(false, true)) {
+            responseUsageIsRetainedWhenStopOrDeadlineIsObservedAfterReturn(deadline);
+        }
+    }
+
+    private void responseUsageIsRetainedWhenStopOrDeadlineIsObservedAfterReturn(boolean deadline) {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        AtomicReference<Instant> clock = new AtomicReference<>(NOW);
+        RunControlRegistry controls = new RunControlRegistry();
+        SummaryModelInvoker invoker = invoker(store, controls, clock);
+        FrozenModelBinding binding = bindingWithMaxOutput(
+                store,
+                run,
+                request -> {
+                    if (deadline) clock.set(NOW.plusMillis(run.limits().maxWallTimeMillis()));
+                    else controls.requestCancel(run.id());
+                    return structuredResponse();
+                },
+                8192);
+        assertThatThrownBy(() -> invoker.invoke(binding, run, 1, "system", "source", 0, false))
+                .isInstanceOf(deadline ? RuntimeLimitExceededException.class : CancellationObservedException.class);
+        assertThat(run.usage().modelCalls()).isEqualTo(1);
+        assertThat(run.usage().inputTokens()).isEqualTo(10);
+        assertThat(run.usage().outputTokens()).isEqualTo(10);
+    }
+
+    private static SummaryModelInvoker invoker(
+            InMemoryRuntimeStore store, RunControlRegistry controls, AtomicReference<Instant> clock) {
         AtomicInteger ids = new AtomicInteger();
-        DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
-                .registerChatModel(
-                        "openai-compatible",
-                        "1.0.0",
-                        request -> new AgentChatResponse(
-                                "test-response",
-                                "test-model",
-                                "done",
-                                List.of(),
-                                ModelFinishReason.STOP,
-                                ModelUsage.unpriced(1, 1),
-                                "",
-                                Map.of()))
-                .persistence(RuntimePersistencePorts.inMemory(store))
-                .scheduler(new ManualExecutionScheduler())
-                .identifierGenerator(() -> "run-" + ids.incrementAndGet())
-                .timeProvider(() -> NOW)
-                .build();
-        var accepted = runtime.start(new AgentRunRequest(
-                "summary-invoker-run",
-                new AgentDefinitionId("summary-invoker-agent"),
-                Optional.empty(),
-                "default",
-                new AgentSessionId("summary-invoker-session"),
-                Optional.empty(),
-                "initial user turn",
+        IdentifierGenerator generator = () -> "guard-" + ids.incrementAndGet();
+        TimeProvider time = clock::get;
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, generator, time, new RunAwaiter(), store);
+        return new SummaryModelInvoker(transitions, controls, generator, time, CompressionPolicy.defaults());
+    }
+
+    private static AgentChatResponse structuredResponse() {
+        return new AgentChatResponse(
+                "response",
+                "model",
+                "",
                 List.of(),
-                RuntimeOverrides.NONE));
-        return store.find(accepted.runId()).orElseThrow();
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(10, 10),
+                "",
+                Map.of(),
+                Optional.empty(),
+                Optional.of(VALID_SUMMARY_MAP));
     }
 
     private static FrozenModelBinding bindingWithMaxOutput(
             InMemoryRuntimeStore store, AgentRun run, AgentChatModel model, int maxOutputTokens) {
+        return bindingWithMaxOutput(store, run, model, maxOutputTokens, Map.of());
+    }
+
+    private static FrozenModelBinding bindingWithMaxOutput(
+            InMemoryRuntimeStore store,
+            AgentRun run,
+            AgentChatModel model,
+            int maxOutputTokens,
+            Map<String, Object> requestOptions) {
         RuntimeConfigurationSnapshot configuration =
                 store.configuration(run.configurationSnapshot()).orElseThrow();
+        Map<String, Object> options = new HashMap<>(configuration.modelRequestOptions());
+        options.putAll(requestOptions);
         ResolvedModelSnapshot original = configuration.model();
         ResolvedModelSnapshot resized = ResolvedModelSnapshot.create(
                 original.providerId(),
@@ -199,7 +318,7 @@ class SummaryModelInvokerTest {
                 configuration.overrides(),
                 configuration.capabilities(),
                 resized,
-                configuration.modelRequestOptions(),
+                options,
                 configuration.structuredOutput());
         return new FrozenModelBinding(resizedConfiguration, model, List.of());
     }

@@ -16,7 +16,8 @@ final class AuthenticationProviderPresentation {
             "zhipu", "Zhipu AI",
             "kimi", "Kimi",
             "siliconflow", "SiliconFlow",
-            "tokenrhythm", "TokenRhythm");
+            "tokenrhythm", "TokenRhythm",
+            "opencode-go", "OpenCode Go");
 
     private static final Map<String, String> HELP_URLS = Map.of(
             "deepseek", "https://platform.deepseek.com/api_keys",
@@ -25,7 +26,8 @@ final class AuthenticationProviderPresentation {
             "kimi", "https://platform.moonshot.cn/console/api-keys",
             "siliconflow", "https://cloud.siliconflow.cn/account/ak",
             "openai-codex", "https://chatgpt.com/",
-            "google-antigravity", "https://antigravity.google/");
+            "google-antigravity", "https://antigravity.google/",
+            "opencode-go", "https://opencode.ai/v2/docs/console/go/");
 
     private AuthenticationProviderPresentation() {}
 

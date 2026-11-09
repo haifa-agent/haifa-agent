@@ -56,6 +56,11 @@ Spring 不拥有 Runtime 语义。
 
 Coding Agent 与 Personal Assistant 是具体 Product Assembly。
 
+Coding 的实验性 `haifa-coding-api` 仍属于 Application 层：公共合同只依赖 JDK，产品 engine
+拥有事实映射和有界展示发布，CLI Host 负责可选 native 接线。该模块不进入基础 SDK BOM，也不把
+产品审批或展示概念提升到 Core/Runtime。合同与恢复语义见
+[模块 README](../../haifa-agent-applications/haifa-coding-api/README.md)。
+
 产品概念应停留在 Application Layer，除非有独立证据证明某个低层 Invariant 稳定且可复用。
 
 ## Dependency Rule
@@ -71,6 +76,10 @@ Coding Agent 与 Personal Assistant 是具体 Product Assembly。
 
 ## 当前 Non-goals
 
-0.1.4 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
+0.1.5 baseline 不宣称已经提供 Distributed Worker / Control Plane、Graph / Workflow Runtime、Enterprise IAM Product 或强内建 Sandbox。
 
 详见 [Runtime 与模块边界](runtime-and-module-boundaries.md)。
+
+Coding 产品装配现位于 `haifa-coding-host`，不依赖 CLI/TUI；公共 owner/options 只使用 JDK/API 类型。
+engine 拥有安全 DTO 映射和 embedded binding；`haifa-coding-client` 仅依赖产品 API/Jackson。CLI 保留
+发行、参数、Terminal 和旧 native 兼容入口。可选浏览器边界见 [Host SDK](../../haifa-agent-applications/haifa-coding-host/README.md)。

@@ -60,6 +60,12 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Map<String, String> pastedContent = new LinkedHashMap<>();
     private final LongSupplier monotonicNanos;
     private final boolean pollWindowSize;
+    /**
+     * Whether the owning Program claims process signals. A remote thin client does not, so an exit signal stops
+     * only that client and the keyboard stays the one place that can interrupt the Host's Run.
+     */
+    private final boolean signalHandlerOwnsInterrupt;
+
     private boolean mouseReportingEnabled;
     private final TerminalClipboard clipboard;
     private final TerminalTextSelection selection = new TerminalTextSelection();
@@ -74,6 +80,9 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean followTranscript = true;
     private boolean newOutputPending;
     private int pendingTranscriptScrollRows;
+    /** Screen row of the sidebar press currently held, or -1 when no sidebar row is pressed. */
+    private int sidebarPressRow = -1;
+
     private String displayedTranscriptContent = "";
     private long selectionAutoScrollSequence;
     private int selectionAutoScrollDirection;
@@ -125,9 +134,21 @@ final class Tui4jCodingTerminalModel implements Model {
             TerminalHostInfo hostInfo,
             boolean mouseReportingEnabled,
             TerminalClipboard clipboard) {
+        this(controller, pump, monotonicNanos, hostInfo, mouseReportingEnabled, clipboard, true);
+    }
+
+    Tui4jCodingTerminalModel(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            LongSupplier monotonicNanos,
+            TerminalHostInfo hostInfo,
+            boolean mouseReportingEnabled,
+            TerminalClipboard clipboard,
+            boolean signalHandlerOwnsInterrupt) {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.signalHandlerOwnsInterrupt = signalHandlerOwnsInterrupt;
         this.composer = new ComposerInput(monotonicNanos);
         this.mouseReportingEnabled = mouseReportingEnabled;
         this.clipboard = clipboard;
@@ -192,6 +213,10 @@ final class Tui4jCodingTerminalModel implements Model {
             command = completeCopy(copied);
         } else if (message instanceof PollMessage) {
             controller.drainEvents();
+            // Bounded D6 refresh: the controller rate-limits and skips a hidden sidebar, so this stays off the
+            // per-delta path and does not turn every tool event into a session/list call.
+            controller.refreshConnection();
+            controller.refreshSessionRows();
             syncComponents();
             command = nextTick();
             if (pollWindowSize && ++windowSizePollTicks >= WINDOW_SIZE_POLL_TICKS) {
@@ -266,6 +291,15 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
         if (mouse.isWheel()) {
+            if (view.sidebarSessionsAt(mouse.row())) {
+                // The sidebar Session list scrolls on its own: the wheel moves its window instead of the transcript.
+                if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
+                    controller.moveSessionRow(-1);
+                } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
+                    controller.moveSessionRow(1);
+                }
+                return Command.none();
+            }
             if (!region.contains(mouse.row(), mouse.column())) {
                 return Command.none();
             }
@@ -281,6 +315,14 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (mouse.getAction() == MouseAction.MouseActionPress && mouse.getButton() == MouseButton.MouseButtonLeft) {
+            // A sidebar row owns its click: transcript selection must not swallow it, and selecting a Session must
+            // never look like a transcript drag.
+            if (view.sidebarSessionAt(mouse.row()).isPresent()) {
+                // Remember the pressed row: some terminal backends report the release without a button, so the
+                // release alone cannot be trusted to name the row that was clicked.
+                sidebarPressRow = mouse.row();
+                return Command.none();
+            }
             Optional<TerminalTextSelection.Point> point = transcriptPoint(mouse, false);
             if (point.isEmpty()) {
                 clearSelection();
@@ -299,6 +341,27 @@ final class Tui4jCodingTerminalModel implements Model {
         if (mouse.getAction() == MouseAction.MouseActionMotion && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::extend);
             return updateSelectionAutoScroll(mouse, region);
+        }
+        if (mouse.getAction() == MouseAction.MouseActionRelease && mouse.getButton() == MouseButton.MouseButtonLeft) {
+            // The press on a sidebar row deliberately started no selection, so the release is the activation point.
+            Optional<io.haifa.agent.core.session.AgentSessionId> sidebarTarget =
+                    view.sidebarSessionAt(sidebarPressRow >= 0 ? sidebarPressRow : mouse.row());
+            sidebarPressRow = -1;
+            if (sidebarTarget.isPresent()) {
+                controller.openSidebarRow(sidebarTarget.orElseThrow());
+                syncComponents();
+                return Command.none();
+            }
+        }
+        if (mouse.getAction() == MouseAction.MouseActionRelease) {
+            // A release that names no usable button still ends the press; never let the row leak into the next click.
+            Optional<io.haifa.agent.core.session.AgentSessionId> pressedRow = view.sidebarSessionAt(sidebarPressRow);
+            sidebarPressRow = -1;
+            if (pressedRow.isPresent()) {
+                controller.openSidebarRow(pressedRow.orElseThrow());
+                syncComponents();
+                return Command.none();
+            }
         }
         if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::finish);
@@ -1115,6 +1178,16 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private Command selectorKey(KeyPressMessage key) {
+        if (pageScrollableSelectorOpen()) {
+            if (key.type() == KeyType.KeyPgUp) {
+                requestTranscriptScroll(-Math.max(1, transcript.getHeight() - 1));
+                return Command.none();
+            }
+            if (key.type() == KeyType.KeyPgDown) {
+                requestTranscriptScroll(Math.max(1, transcript.getHeight() - 1));
+                return Command.none();
+            }
+        }
         boolean providerSearch = controller
                 .state()
                 .selector()
@@ -1216,6 +1289,8 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.SELECT_NEXT);
         } else if (key.type() == KeyType.KeyLeft) {
             accept(TerminalInput.Kind.NAVIGATE_BACK);
+        } else if (key.type() == KeyType.KeyRight) {
+            accept(TerminalInput.Kind.NAVIGATE_FORWARD);
         } else if (key.type() == KeyType.keyCR) {
             accept(TerminalInput.Kind.SUBMIT);
         } else if (key.type() == KeyType.KeySpace && clarificationSelectorOpen()) {
@@ -1233,6 +1308,15 @@ final class Tui4jCodingTerminalModel implements Model {
                 .state()
                 .selector()
                 .map(selector -> selector.kind().startsWith("clarification:"))
+                .orElse(false);
+    }
+
+    private boolean pageScrollableSelectorOpen() {
+        return controller
+                .state()
+                .selector()
+                .map(selector -> selector.kind().startsWith("clarification:")
+                        || selector.kind().startsWith("interaction:"))
                 .orElse(false);
     }
 
@@ -1658,11 +1742,20 @@ final class Tui4jCodingTerminalModel implements Model {
      * resize with no change does not make the tui4j renderer clear its line cache and repaint.
      */
     Message filterMessage(Message message) {
-        if (message instanceof KeyPressMessage key
+        if (message instanceof TerminalInterruptSignal.Interrupted) {
+            if (controller.secureInputRequested()) return null;
+            // A process interrupt without a selection only detaches this client. It must not take
+            // the ordinary key interrupt path, which can cancel a Run owned by the remote Host.
+            return selection.range().isPresent() ? new CtrlCRequestedMessage() : new QuitMessage();
+        }
+        if (signalHandlerOwnsInterrupt
+                && message instanceof KeyPressMessage key
                 && key.type() == KeyType.keyETX
                 && !controller.secureInputRequested()) {
             // Ctrl-C is handled through the terminal SIGINT handler below so the
             // signal-driven QuitMessage cannot race the copy and exit the process.
+            // Only a Program that claims signals can rely on that; a remote thin client never
+            // claims them, so there the key itself must keep reaching the interrupt path.
             return null;
         }
         if (message instanceof QuitMessage) {

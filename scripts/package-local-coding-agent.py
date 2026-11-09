@@ -6,15 +6,19 @@ import shutil
 import subprocess
 import sys
 import time
-import zipfile
 from pathlib import Path
 from typing import Optional
 
 
-REQUIRED_SHADED_JAR_ENTRIES = (
-    "io/haifa/agent/cli/HaifaCliMain.class",
-    "com/williamcallahan/tui4j/compat/bubbletea/ProgramCore.class",
-    "com/williamcallahan/tui4j/compat/bubbletea/ProgramCleanup.class",
+# The Coding Agent commands share one contracts module; keep the import usable when
+# this file is loaded by path (tests) instead of being run as a script.
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[1] / "dist-support" / "scripts")
+)
+from distribution_contracts import (  # noqa: E402 - repository scripts run unpackaged
+    cli_build_command,
+    validate_model_configuration,
+    validate_shaded_jar,
 )
 
 
@@ -49,30 +53,11 @@ def resolve_output_directory(repository_directory: Path, value: Optional[str]) -
     return output_directory
 
 
-def cli_build_command(maven_wrapper: Path) -> list[str]:
-    return [
-        str(maven_wrapper),
-        "--batch-mode",
-        "--no-transfer-progress",
-        "-pl",
-        ":haifa-agent-cli",
-        "-am",
-        "-DskipUnitTests=true",
-        "clean",
-        "package",
-    ]
-
-
 def build_cli(repository_directory: Path) -> Path:
-    wrapper_name = "mvnw.cmd" if os.name == "nt" else "mvnw"
-    maven_wrapper = repository_directory / wrapper_name
-    if not maven_wrapper.is_file():
-        raise FileNotFoundError(f"Maven Wrapper is missing: {maven_wrapper}")
-
     print("Building the Haifa Coding Agent shaded JAR...", flush=True)
     build_started_ns = time.time_ns()
     subprocess.run(
-        cli_build_command(maven_wrapper), cwd=repository_directory, check=True
+        cli_build_command(repository_directory), cwd=repository_directory, check=True
     )
 
     target_directory = (
@@ -103,25 +88,6 @@ def build_cli(repository_directory: Path) -> Path:
     return jar_file
 
 
-def validate_shaded_jar(jar_file: Path) -> None:
-    try:
-        with zipfile.ZipFile(jar_file) as archive:
-            entries = set(archive.namelist())
-            manifest = archive.read("META-INF/MANIFEST.MF").decode(
-                "utf-8", errors="strict"
-            )
-    except (OSError, KeyError, UnicodeError, zipfile.BadZipFile) as error:
-        raise RuntimeError(f"The shaded CLI JAR is invalid: {jar_file}") from error
-    missing = [entry for entry in REQUIRED_SHADED_JAR_ENTRIES if entry not in entries]
-    if missing:
-        raise RuntimeError(
-            "The shaded CLI JAR is missing required runtime classes: "
-            + ", ".join(missing)
-        )
-    if "Main-Class: io.haifa.agent.cli.HaifaCliMain" not in manifest:
-        raise RuntimeError("The shaded CLI JAR has an invalid Main-Class manifest")
-
-
 def deploy_jar(jar_file: Path, output_directory: Path) -> None:
     target = output_directory / "haifa-agent.jar"
     temporary = output_directory / f".haifa-agent-{os.getpid()}.tmp"
@@ -138,6 +104,17 @@ def write_windows_launcher(output_directory: Path) -> None:
     launcher = """@echo off
 setlocal
 set "HAIFA_DISTRIBUTION_DIR=%~dp0"
+set "HAIFA_JAVA_EXE=java.exe"
+if defined JAVA_HOME if exist "%JAVA_HOME%\\bin\\java.exe" set "HAIFA_JAVA_EXE=%JAVA_HOME%\\bin\\java.exe"
+
+rem The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
+rem --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if /i "%~1"=="auth" goto :haifa_auth
+if /i "%~1"=="tui" (
+    "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" %*
+    exit /b %ERRORLEVEL%
+)
+
 if not exist "%HAIFA_DISTRIBUTION_DIR%data\\transcripts" mkdir "%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
 if errorlevel 1 exit /b %ERRORLEVEL%
 if not exist "%HAIFA_DISTRIBUTION_DIR%logs" mkdir "%HAIFA_DISTRIBUTION_DIR%logs"
@@ -145,9 +122,28 @@ if errorlevel 1 exit /b %ERRORLEVEL%
 if not defined HAIFA_SQLITE_DATABASE_PATH set "HAIFA_SQLITE_DATABASE_PATH=%HAIFA_DISTRIBUTION_DIR%data\\runtime.db"
 if not defined HAIFA_TRANSCRIPT_ROOT set "HAIFA_TRANSCRIPT_ROOT=%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
 if not defined HAIFA_LOG_DIR set "HAIFA_LOG_DIR=%HAIFA_DISTRIBUTION_DIR%logs"
-set "HAIFA_JAVA_EXE=java.exe"
-if defined JAVA_HOME if exist "%JAVA_HOME%\\bin\\java.exe" set "HAIFA_JAVA_EXE=%JAVA_HOME%\\bin\\java.exe"
+
+rem The host subcommand must stay the first JVM argument, so the bundled configuration is inserted after it and an
+rem explicit --config still wins because the parser keeps the last value.
+if /i "%~1"=="host" goto :haifa_host
+
 "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" --config "%HAIFA_DISTRIBUTION_DIR%haifa-coding.yaml" %*
+exit /b %ERRORLEVEL%
+
+:haifa_host
+set "HAIFA_HOST_ARGS="
+shift
+:haifa_host_args
+if "%~1"=="" goto :haifa_host_run
+set "HAIFA_HOST_ARGS=%HAIFA_HOST_ARGS% "%~1""
+shift
+goto :haifa_host_args
+:haifa_host_run
+call "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" host --config "%HAIFA_DISTRIBUTION_DIR%haifa-coding.yaml" %HAIFA_HOST_ARGS%
+exit /b %ERRORLEVEL%
+
+:haifa_auth
+"%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" %*
 exit /b %ERRORLEVEL%
 """
     with (output_directory / "haifa-coding.cmd").open(
@@ -163,6 +159,23 @@ umask 077
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 data_dir="${script_dir}/data"
 log_dir="${script_dir}/logs"
+
+# The remote TUI is a thin client: pass its argument vector through untouched. It must not receive the bundled
+# --config (the Host owns the workspace, Runtime and credentials) and it must not create local data directories.
+if [ "${1:-}" = "auth" ]; then
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+        exec "${JAVA_HOME}/bin/java" -jar "${script_dir}/haifa-agent.jar" "$@"
+    fi
+    exec java -jar "${script_dir}/haifa-agent.jar" "$@"
+fi
+
+if [ "${1:-}" = "tui" ]; then
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+        exec "${JAVA_HOME}/bin/java" -jar "${script_dir}/haifa-agent.jar" "$@"
+    fi
+    exec java -jar "${script_dir}/haifa-agent.jar" "$@"
+fi
+
 mkdir -p "${data_dir}/transcripts" "${log_dir}"
 : "${HAIFA_SQLITE_DATABASE_PATH:=${data_dir}/runtime.db}"
 : "${HAIFA_TRANSCRIPT_ROOT:=${data_dir}/transcripts}"
@@ -173,6 +186,16 @@ if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
 else
     java_executable=java
 fi
+
+# The host subcommand must stay the first JVM argument, so the bundled configuration is inserted after it and an
+# explicit --config still wins because the parser keeps the last value.
+if [ "${1:-}" = "host" ]; then
+    subcommand=$1
+    shift
+    exec "$java_executable" -jar "${script_dir}/haifa-agent.jar" "$subcommand" \\
+        --config "${script_dir}/haifa-coding.yaml" "$@"
+fi
+
 exec "$java_executable" -jar "${script_dir}/haifa-agent.jar" --config "${script_dir}/haifa-coding.yaml" "$@"
 """
     launcher_file = output_directory / "haifa-coding"
@@ -183,35 +206,6 @@ exec "$java_executable" -jar "${script_dir}/haifa-agent.jar" --config "${script_
 
 def yaml_single_quoted(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
-
-
-def validate_model_configuration(content: str) -> None:
-    required_fragments = (
-        "allowedBindings:",
-        "deepseek-responses-flash",
-        "deepseek-chat-pro",
-        "model-auth://deepseek/default",
-    )
-    missing = [fragment for fragment in required_fragments if fragment not in content]
-    if missing:
-        raise ValueError(
-            "Coding Agent configuration template is missing the current model API structure: "
-            + ", ".join(missing)
-        )
-    forbidden_fragments = (
-        "apiBindings:",
-        "dialectId:",
-        "dialectVersion:",
-        "styleVersion:",
-        "adapterType:",
-        "CHATGPT2API_",
-    )
-    present = [fragment for fragment in forbidden_fragments if fragment in content]
-    if present:
-        raise ValueError(
-            "Coding Agent configuration template contains retired model configuration: "
-            + ", ".join(present)
-        )
 
 
 def render_configuration(

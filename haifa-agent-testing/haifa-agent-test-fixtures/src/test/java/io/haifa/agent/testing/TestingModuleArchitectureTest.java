@@ -4,8 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPathConstants;
@@ -22,10 +26,12 @@ class TestingModuleArchitectureTest {
     @Test
     void productionModulesDoNotDependOnTestingModules() throws Exception {
         Path repositoryRoot = findRepositoryRoot();
+        Set<Path> reactorModules = reactorModuleDirectories(repositoryRoot);
         List<String> violations = new ArrayList<>();
 
         try (var paths = Files.walk(repositoryRoot)) {
             for (Path pom : paths.filter(path -> path.getFileName().toString().equals("pom.xml"))
+                    .filter(path -> reactorModules.contains(path.getParent()))
                     .filter(path -> !isBuildOutput(repositoryRoot, path))
                     .filter(path -> !isNestedGitWorktree(repositoryRoot, path))
                     .filter(path -> !isTestingModule(repositoryRoot, path))
@@ -41,14 +47,7 @@ class TestingModuleArchitectureTest {
 
     private static void inspectDirectDependencies(Path repositoryRoot, Path pom, List<String> violations)
             throws Exception {
-        var factory = DocumentBuilderFactory.newInstance();
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
-        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-
-        var document = factory.newDocumentBuilder().parse(pom.toFile());
+        var document = newDocumentFactory().newDocumentBuilder().parse(pom.toFile());
         var xpath = XPathFactory.newInstance().newXPath();
         NodeList dependencies = (NodeList) xpath.evaluate(
                 "/*[local-name()='project']/*[local-name()='dependencies']/*[local-name()='dependency']",
@@ -113,5 +112,54 @@ class TestingModuleArchitectureTest {
             current = current.getParent();
         }
         throw new IllegalStateException("cannot locate repository root from Maven basedir");
+    }
+
+    /**
+     * Directories of the modules this repository declares, starting from the root POM. Checkouts of the same project
+     * that merely live inside the working tree are not part of the Reactor and must not be inspected.
+     */
+    private static Set<Path> reactorModuleDirectories(Path root) throws Exception {
+        Set<Path> modules = new LinkedHashSet<>();
+        Deque<Path> pending = new ArrayDeque<>();
+        pending.add(root);
+        while (!pending.isEmpty()) {
+            Path directory = pending.removeFirst();
+            Path pom = directory.resolve("pom.xml");
+            if (!Files.isRegularFile(pom) || !modules.add(directory)) {
+                continue;
+            }
+            for (String module : declaredModules(pom)) {
+                Path child = directory.resolve(module).normalize();
+                if (child.startsWith(root) && !modules.contains(child)) {
+                    pending.add(child);
+                }
+            }
+        }
+        return modules;
+    }
+
+    private static List<String> declaredModules(Path pom) throws Exception {
+        var document = newDocumentFactory().newDocumentBuilder().parse(pom.toFile());
+        NodeList nodes = (NodeList) XPathFactory.newInstance()
+                .newXPath()
+                .evaluate(
+                        "/*[local-name()='project']/*[local-name()='modules']/*[local-name()='module']",
+                        document,
+                        XPathConstants.NODESET);
+        List<String> modules = new ArrayList<>();
+        for (int index = 0; index < nodes.getLength(); index++) {
+            modules.add(nodes.item(index).getTextContent().trim());
+        }
+        return modules;
+    }
+
+    private static DocumentBuilderFactory newDocumentFactory() throws Exception {
+        var factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        return factory;
     }
 }

@@ -1,16 +1,17 @@
 # 安装
 
-Haifa Agent 0.1.4 面向 Java 21。
+Haifa Agent 0.1.5 面向 Java 21。下文以 0.1.5 SDK 为例。
 
-正式 SDK 通过 [GitHub Release](https://github.com/haifa-agent/haifa-agent/releases/tag/v0.1.4)
-的 `haifa-agent-sdk-v0.1.4.zip` 分发；当前不承诺 Maven Central 上存在这些坐标。
+SDK 通过 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases) 的
+`haifa-agent-sdk-v<version>.zip` 分发。下载可用版本，或从对应源码构建发行包，再使用与 ZIP 相同的 BOM 版本。
+当前不承诺 Maven Central 上存在这些坐标。
 解压后配置 `repository/` 文件仓库，再按下文导入 BOM。第三方依赖仍从 Maven Central 下载。
 
 ~~~xml
 <repositories>
     <repository>
         <id>haifa-release</id>
-        <url>file:///D:/packages/haifa-agent-sdk-v0.1.4/repository</url>
+        <url>file:///D:/packages/haifa-agent-sdk-v0.1.5/repository</url>
     </repository>
 </repositories>
 ~~~
@@ -60,7 +61,7 @@ Set-Location haifa-agent
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-bom</artifactId>
-            <version>0.1.4</version>
+            <version>0.1.5</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -85,7 +86,7 @@ Spring 应用应导入 Spring BOM，并使用 Spring Boot Starter，而不是再
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-spring-bom</artifactId>
-            <version>0.1.4</version>
+            <version>0.1.5</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

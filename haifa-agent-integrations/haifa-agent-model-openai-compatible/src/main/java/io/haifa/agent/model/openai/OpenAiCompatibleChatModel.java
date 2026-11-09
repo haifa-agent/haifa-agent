@@ -11,6 +11,7 @@ import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialResolver;
 import io.haifa.agent.model.api.ImageDataPart;
 import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelErrorMapping;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -155,14 +156,15 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "model request cannot be serialized",
                     exception);
         }
-        HttpRequest httpRequest = HttpRequest.newBuilder(
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(
                         chatCompletionsUri(request.model().endpoint()))
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .header("Authorization", "Bearer " + credential.value().trim())
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        dialect(request).applyHeaders(requestBuilder, request);
+        HttpRequest httpRequest = requestBuilder.build();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() == 402) {
@@ -250,14 +252,15 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "model request cannot be serialized",
                     exception);
         }
-        HttpRequest httpRequest = HttpRequest.newBuilder(
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(
                         chatCompletionsUri(request.model().endpoint()))
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 .header("Authorization", "Bearer " + credential.value().trim())
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        dialect(request).applyHeaders(requestBuilder, request);
+        HttpRequest httpRequest = requestBuilder.build();
         ModelStreamObservation observation = new ModelStreamObservation();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
@@ -616,7 +619,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         if (request.structuredOutput().isEmpty() || !toolCalls.isEmpty()) return java.util.Optional.empty();
         try {
             JsonNode value = json.readTree(content);
-            if (!value.isObject()) throw new IllegalArgumentException("structured output must be an object");
+            if (value == null || !value.isObject() || containsNull(value)) {
+                throw new IllegalArgumentException("structured output must be an object without null values");
+            }
             return java.util.Optional.of(json.convertValue(value, new TypeReference<Map<String, Object>>() {}));
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             throw failure(
@@ -628,6 +633,14 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "provider returned invalid structured output",
                     null);
         }
+    }
+
+    private static boolean containsNull(JsonNode node) {
+        if (node.isNull()) return true;
+        for (JsonNode child : node) {
+            if (containsNull(child)) return true;
+        }
+        return false;
     }
 
     private static String requireAdapterType(ModelProviderDefinition provider) {
@@ -890,26 +903,140 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     }
 
     private ModelUsage parseUsage(AgentChatRequest request, JsonNode usage) {
-        if (!usage.isObject()) {
+        try {
+            if (!usage.isObject()) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        false,
+                        200,
+                        "missing_usage",
+                        "provider response is missing token usage",
+                        null);
+            }
+            long directCacheHit = nonNegativeLong(request, usage, "prompt_cache_hit_tokens", false);
+            long standardCached = nonNegativeLong(request, usage.path("prompt_tokens_details"), "cached_tokens", false);
+            // The Console gateway also reports billed tokens and a priced cost under a namespaced usage extension.
+            JsonNode consoleTokens = usage.path("opencode").path("tokens");
+            long consoleCacheRead = nonNegativeLong(request, consoleTokens, "cache_read", false);
+            long cacheHitTokens = usage.hasNonNull("prompt_cache_hit_tokens")
+                    ? directCacheHit
+                    : usage.path("prompt_tokens_details").hasNonNull("cached_tokens")
+                            ? standardCached
+                            : consoleCacheRead;
+            long reasoningTokens =
+                    nonNegativeLong(request, usage.path("completion_tokens_details"), "reasoning_tokens", false);
+            if (reasoningTokens == 0) reasoningTokens = nonNegativeLong(request, consoleTokens, "reasoning", false);
+            java.util.OptionalLong costMinorUnits = consoleCostMinorUnits(request, usage);
+            var details = usage.path("prompt_tokens_details");
+            boolean readKnown = usage.hasNonNull("prompt_cache_hit_tokens")
+                    || details.hasNonNull("cached_tokens")
+                    || consoleTokens.hasNonNull("cache_read");
+            var writes = details.hasNonNull("cache_write_tokens")
+                    ? java.util.OptionalLong.of(nonNegativeLong(request, details, "cache_write_tokens", false))
+                    : java.util.OptionalLong.empty();
+            // Console's documented billed input excludes cache reads and both cache-write lanes.
+            // Admit only this reviewed Go binding; absent lanes remain unknown, including absent writes.
+            if ("opencode-go".equals(request.model().providerId().value())
+                    && "deepseek-v4.1-flash".equals(request.model().providerModelId())
+                    && ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(
+                            request.model().apiStyle())
+                    && OpenAiCompatibleDialects.OPENCODE_GO.equals(
+                            request.model().dialect())
+                    && consoleTokens.isObject()) {
+                var uncached = consoleTokens.hasNonNull("input")
+                        ? java.util.OptionalLong.of(nonNegativeLong(request, consoleTokens, "input", false))
+                        : java.util.OptionalLong.empty();
+                var read = consoleTokens.hasNonNull("cache_read")
+                        ? java.util.OptionalLong.of(consoleCacheRead)
+                        : java.util.OptionalLong.empty();
+                var written = consoleTokens.hasNonNull("cache_write_5m") && consoleTokens.hasNonNull("cache_write_1h")
+                        ? java.util.OptionalLong.of(Math.addExact(
+                                nonNegativeLong(request, consoleTokens, "cache_write_5m", false),
+                                nonNegativeLong(request, consoleTokens, "cache_write_1h", false)))
+                        : java.util.OptionalLong.empty();
+                var billed = ModelUsage.exclusiveInput(
+                        uncached, nonNegativeLong(request, usage, "completion_tokens", true), read, written);
+                return new ModelUsage(
+                        billed.inputTokens(),
+                        billed.outputTokens(),
+                        billed.cacheHitTokens(),
+                        billed.cacheMissTokens(),
+                        reasoningTokens,
+                        costMinorUnits.isPresent(),
+                        costMinorUnits.orElse(0),
+                        billed.cacheWriteTokens(),
+                        billed.inputTokensKnown(),
+                        billed.cacheHitTokensKnown(),
+                        billed.cacheMissTokensKnown());
+            }
+            boolean inclusive = ("openai".equals(request.model().providerId().value())
+                            && io.haifa.agent.model.api.ModelApiBindingDefinition.STANDARD_DIALECT.equals(
+                                    request.model().dialect()))
+                    || ("deepseek".equals(request.model().providerId().value())
+                            && OpenAiCompatibleBindingRegistry.isAdmitted(
+                                    request.model().providerId().value(),
+                                    request.model().providerModelId(),
+                                    request.model().apiStyle(),
+                                    request.model().dialect()));
+            if (!inclusive) {
+                return new ModelUsage(
+                        nonNegativeLong(request, usage, "prompt_tokens", true),
+                        nonNegativeLong(request, usage, "completion_tokens", true),
+                        cacheHitTokens,
+                        nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false),
+                        reasoningTokens,
+                        costMinorUnits.isPresent(),
+                        costMinorUnits.orElse(0),
+                        writes,
+                        false,
+                        readKnown,
+                        usage.hasNonNull("prompt_cache_miss_tokens"));
+            }
+            return ModelUsage.inclusiveInput(
+                    java.util.OptionalLong.of(nonNegativeLong(request, usage, "prompt_tokens", true)),
+                    nonNegativeLong(request, usage, "completion_tokens", true),
+                    readKnown ? java.util.OptionalLong.of(cacheHitTokens) : java.util.OptionalLong.empty(),
+                    writes,
+                    usage.hasNonNull("prompt_cache_miss_tokens")
+                            ? java.util.OptionalLong.of(
+                                    nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false))
+                            : java.util.OptionalLong.empty(),
+                    reasoningTokens,
+                    costMinorUnits.isPresent(),
+                    costMinorUnits.orElse(0));
+
+        } catch (IllegalArgumentException | ArithmeticException invalidUsage) {
             throw failure(
                     request,
                     ModelErrorCategory.MALFORMED_RESPONSE,
                     false,
                     200,
-                    "missing_usage",
-                    "provider response is missing token usage",
+                    "invalid_usage",
+                    "invalid input usage",
                     null);
         }
-        long directCacheHit = nonNegativeLong(request, usage, "prompt_cache_hit_tokens", false);
-        long standardCached = nonNegativeLong(request, usage.path("prompt_tokens_details"), "cached_tokens", false);
-        return new ModelUsage(
-                nonNegativeLong(request, usage, "prompt_tokens", true),
-                nonNegativeLong(request, usage, "completion_tokens", true),
-                directCacheHit == 0 ? standardCached : directCacheHit,
-                nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false),
-                nonNegativeLong(request, usage.path("completion_tokens_details"), "reasoning_tokens", false),
-                false,
-                0);
+    }
+
+    /**
+     * Reads the Console usage cost, which is priced in US dollars, as integer minor units (cents).
+     *
+     * <p>Sub-cent amounts round to the nearest cent so a reported cost never inflates a Run budget.
+     */
+    private java.util.OptionalLong consoleCostMinorUnits(AgentChatRequest request, JsonNode usage) {
+        JsonNode cost = usage.path("cost");
+        if (cost.isMissingNode() || cost.isNull()) return java.util.OptionalLong.empty();
+        if (!cost.isNumber() || !Double.isFinite(cost.asDouble()) || cost.asDouble() < 0) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "invalid_usage_cost",
+                    "provider usage cost is not a non-negative number",
+                    null);
+        }
+        return java.util.OptionalLong.of(Math.round(cost.asDouble() * 100));
     }
 
     private long nonNegativeLong(AgentChatRequest request, JsonNode object, String field, boolean required) {

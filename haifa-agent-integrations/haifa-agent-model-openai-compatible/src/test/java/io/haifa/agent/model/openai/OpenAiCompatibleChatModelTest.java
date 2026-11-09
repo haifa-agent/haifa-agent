@@ -96,6 +96,8 @@ class OpenAiCompatibleChatModelTest {
         assertThat(actual.finishReason()).isEqualTo(ModelFinishReason.STOP);
         assertThat(actual.usage().inputTokens()).isEqualTo(12);
         assertThat(actual.usage().cacheHitTokens()).isEqualTo(3);
+        assertThat(actual.usage().cacheWriteTokens()).isEmpty();
+        assertThat(actual.usage().cacheMissTokensKnown()).isTrue();
         assertThat(actual.usage().costKnown()).isFalse();
         JsonNode sent = json.readTree(requestBody.get());
         assertThat(sent.path("model").asText()).isEqualTo("deepseek-v4-pro");
@@ -103,6 +105,25 @@ class OpenAiCompatibleChatModelTest {
         assertThat(sent.path("thinking").path("type").asText()).isEqualTo("disabled");
         assertThat(sent.path("max_tokens").asInt()).isEqualTo(1024);
         assertThat(authorization.get()).isEqualTo("Bearer test-secret");
+    }
+
+    @Test
+    void explicitZeroCacheReadWinsOverFallbackAndMissingWritesRemainUnknown() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"zero","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],
+                 "usage":{"prompt_tokens":12,"completion_tokens":1,"prompt_cache_hit_tokens":0,
+                          "prompt_tokens_details":{"cached_tokens":7}}}
+                """));
+        var usage = model().invoke(request(List.of(ModelMessage.text(ModelMessageRole.USER, "hello")), List.of()))
+                .usage();
+        assertThat(usage.cacheHitTokensKnown()).isTrue();
+        assertThat(usage.cacheHitTokens()).isZero();
+        assertThat(usage.cacheWriteTokens()).isEmpty();
+        assertThat(usage.cacheMissTokensKnown()).isFalse();
     }
 
     @Test

@@ -754,7 +754,9 @@ public final class ToolPipeline {
         FrozenToolBinding binding = binding(run, request);
         var definition = binding.definition();
         ToolResult result = resultNormalizer.normalize(binding, rawResult);
-        boolean externalizationRequired = largeResultPolicy.requiresExternalization(rawResult);
+        boolean externalizationRequired =
+                !binding.definition().providerId().equals(io.haifa.agent.runtime.core.history.HistoryToolProvider.ID)
+                        && largeResultPolicy.requiresExternalization(rawResult);
         boolean externalized = false;
         if (externalizationRequired) {
             var reference = putResultAssetWithOnePersistenceRetry(call, rawResult);

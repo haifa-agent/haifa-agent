@@ -20,6 +20,7 @@ public final class TerminalCompletionProvider {
             "/reload",
             "/rename",
             "/export",
+            "/shell",
             "/archive",
             "/delete",
             "/commands",
@@ -30,9 +31,15 @@ public final class TerminalCompletionProvider {
     private static final int MAX_CANDIDATES = 20;
 
     private final Supplier<List<String>> logicalPaths;
+    private final CodingTerminalConnectionOptions options;
 
     public TerminalCompletionProvider(Supplier<List<String>> logicalPaths) {
+        this(logicalPaths, CodingTerminalConnectionOptions.embedded());
+    }
+
+    public TerminalCompletionProvider(Supplier<List<String>> logicalPaths, CodingTerminalConnectionOptions options) {
         this.logicalPaths = Objects.requireNonNull(logicalPaths, "logicalPaths must not be null");
+        this.options = Objects.requireNonNull(options, "options must not be null");
     }
 
     public List<String> suggestions(String word) {
@@ -45,7 +52,7 @@ public final class TerminalCompletionProvider {
         if (word.startsWith("/")) {
             return COMMANDS.stream()
                     .filter(value -> value.startsWith(word))
-                    .limit(MAX_CANDIDATES)
+                    .filter(value -> options.unavailableReason(value).isEmpty())
                     .toList();
         }
         if (word.startsWith("@")) {

@@ -1,0 +1,86 @@
+name: Coding Browser Preparation
+
+on:
+  pull_request:
+    paths:
+      - 'haifa-agent-applications/haifa-coding-api/contract/**'
+      - 'haifa-agent-applications/haifa-coding-browser-client/**'
+      - 'haifa-agent-applications/haifa-coding-web/**'
+      - 'examples/coding-browser-ui/**'
+      - 'haifa-agent-testing/scripts/coding-browser-b3-preparation.py'
+      - '.github/workflows/coding-browser-preparation.yml'
+  push:
+    branches: [feat-044-b3-browser-sdk-web]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coding-browser-preparation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  independent-preparation:
+    name: Package, contracts and synthetic browser UI (no Host)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            haifa-agent-applications/haifa-coding-api/contract/package-lock.json
+            haifa-agent-applications/haifa-coding-browser-client/package-lock.json
+            haifa-agent-applications/haifa-coding-web/package-lock.json
+            examples/coding-browser-ui/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Canonical contract
+        working-directory: haifa-agent-applications/haifa-coding-api/contract
+        run: |
+          npm ci
+          npm run contract:check
+      - name: SDK package
+        working-directory: haifa-agent-applications/haifa-coding-browser-client
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          mkdir -p artifacts
+          npm run pack:preview
+      - name: Prepared Web
+        working-directory: haifa-agent-applications/haifa-coding-web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Synthetic browser prerequisites
+        run: |
+          python -m pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+      - name: Outside-repository consumers and synthetic renderer checks
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              browser = p.chromium.executable_path
+          subprocess.run(['python', 'haifa-agent-testing/scripts/coding-browser-b3-preparation.py',
+              '--run-root', os.environ['RUNNER_TEMP'] + '/coding-browser-preparation',
+              '--expected-sha', os.environ['SOURCE_SHA'], '--chromium', browser], check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coding-browser-independent-preparation
+          path: |
+            ${{ runner.temp }}/coding-browser-preparation/manifest.json
+            ${{ runner.temp }}/coding-browser-preparation/unpaired-*.png
+            ${{ runner.temp }}/coding-browser-preparation/*-build.log
+            ${{ runner.temp }}/coding-browser-preparation/*-install.log

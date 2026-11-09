@@ -1,5 +1,205 @@
 # Haifa Agent Runtime Core
 
+Saved history previews revalidate source identity before projection. Initial excerpts and refreshed excerpts derive
+both text and source truncation from the materialized result; truncation of an inline asset preview does not mark
+the complete saved source as truncated. Version, current access and withdrawal checks still apply.
+
+## History baseline and retrieval limits
+
+`ContextLifecycleHistoryFixture` and `RuntimeCoreTest.contextLifecycleBaseline` preserve fixed
+synthetic constraint/decision/evidence while scaling unrelated historical Tool results by 1/10/100.
+The 100x fixture exceeds the 4,096-message active snapshot bound. These are existing-policy baselines,
+not a history-selection optimization or a semantic-quality score. A cold-start page that cannot
+advance a valid summary can still fail before any model request; input accounting then has no
+model-bound event. Snapshot source reads and failed admission must be reported separately.
+
+`SessionMessageRepository` provides cursor windows, ID lookup and supported Run paging. It does
+not expose keyword/full-text retrieval. Tool result externalization retains `structuredData` and
+adds asset references. Opt-in `history_search` / `history_read` recover the saved text/JSON representation
+and standard immutable Tool-result assets; arbitrary asset or Artifact bodies have no such reader. Runtime has
+no automatic post-terminal summary owner or budget. Terminal Run usage remains immutable and
+model calls stay outside persistence transactions.
+
+`history_search` combines filters with AND. Search pathless checks by `toolName` and file evidence by exact saved
+path. Keyword searches scoped to an exact Run or message can scan multiple text windows within the same
+`scanLimit`. When the response includes `nextCursor`, continue the search with the same filters.
+Search results supply the versioned reference for `history_read`. Its `paths` field carries up to eight
+saved paths or artifact labels of at most 256 characters each. For another page, preserve the reference and
+`fromLine` and pass `nextOffset` as `offset`.
+
+For a follow-up with the Run working set enabled, an exact path named in the request gives the saved Tool result
+priority within the bounded history candidates. It remains optional quoted data and uses the same access checks
+and versioned readback as other excerpts.
+Consecutive unified excerpts from one saved Run share its Run identifier in the request. Adjacent saved Tool
+excerpts from that Run share one untrusted data message. Each excerpt keeps its message identifier, version, range
+and body, and is revalidated independently. A saved Tool excerpt is marked full only when it starts at the
+beginning and neither the stored source nor the selected window is truncated.
+Without an explicit cache contract, historical-only selections can show a message sequence as m:<sequence>
+and the exact version digest in decimal as d:<digits>. Copy these into the existing history_read messageId and
+version fields with the quoted Run. The reader resolves the sequence in the authorized Session and checks the
+full original version. Readback still returns canonical identifiers. A full row covers the source from offset
+zero and partial rows carry their explicit range. For files the current request confirms unchanged, a full saved
+read can support an edit without a preliminary reread. Changes are still verified after editing. Current Run
+checkpoints retain their continuation instructions.
+
+Without an explicit cache contract, unified working-set requests with only current Run messages omit
+the historical-data instruction. The instruction remains for saved excerpts, summaries and history
+reader calls. A cache contract keeps it in the fixed prefix from warmup onward so it can be reused
+when history is selected.
+
+`model.usage-accounted` records one returned usage aggregate per physical ordinary/summary/repair
+call, independently of streaming usage updates. Missing input lanes are `UNKNOWN`; cost-weighted
+input defaults to `UNAVAILABLE`. Frozen `haifa.runtime.input_price_ratios` may provide exact
+`modelConfigurationDigest`, public `source`, ISO `date`, and nonnegative numeric `uncached`,
+`cacheRead`, `cacheWrite` relative prices; it is never forwarded to a Provider. Mixed write TTLs
+need an applicable aggregate ratio; do not supply a guessed single price. These diagnostics do not
+change authoritative Run usage or budgets.
+
+Request evidence includes a canonical visible fixed-instruction/tool prefix identity and start time.
+It never hashes protected reasoning, and is not the full Provider wire prefix. With the default continuous policy, reuse predictions and previous reusable request time remain unknown.
+The opt-in Run working-set policy can make bounded predictions from caller-supplied frozen contracts.
+TTL and identity agreement are prediction inputs only; response usage is the actual cache evidence.
+`previousSummaryInputShare` is the accurate name for the old `compactionSummaryCacheHitRate`; the
+old event/trace field and record accessor remain as compatibility aliases. Provider usage, active
+snapshot reuse and summary rendering metrics are separate.
+
+## Unified model-bound budgeting
+
+SDK `enableRunWorkingSet()` also selects frozen `haifa.runtime.context_budget_policy=unified-context-v1`.
+Runtime-only callers must set that version explicitly alongside working sets and both authorized built-in
+history readers. Missing versions and explicit `legacy` preserve the previous path; disabled selection or
+an allowlist excluding a reader also retains legacy behavior. These controls never reach the Provider.
+
+The unified path selects sources, confirms saved-result views, prepares the actual model messages, then
+checks one model-window budget including output reserve, safety margin, visible schemas and protocol.
+When a large-model minimum headroom would consume the entire available Session capacity, trigger evaluation
+uses the configured percentage instead of creating a zero-token soft threshold. Optional Memory and other
+optional items yield before semantic compaction. Required evidence can exceed
+the soft target within frozen retention and hard admission. A final check before each physical call,
+including a final answer without tools, rejects over-budget input without invoking the Provider.
+Media uses an explicit conservative policy reserve per item; protected continuation uses byte-length
+metadata only. Actual vendor formatting, media tokenization and cache/cost remain unknown without evidence.
+
+Large saved Tool results first enter the context as a deterministic bounded preview only when the
+individual result exceeds the target/capacity threshold, an authorized reader confirms its saved version,
+and the saving reaches the frozen minimum. `haifa.runtime.context_preview_chars` defaults to 2,048
+(128..8,192); `haifa.runtime.context_min_saving_tokens` defaults to 256 (1..8,192). This is target-pressure
+reduction, not a claim that actual cache-adjusted cost always falls. Original arguments, result records,
+versions and occurrences remain unchanged. Built-in history reader responses are already bounded and are
+not externalized recursively. No reader exists for arbitrary Artifact bodies or old write-argument sections;
+those required contents stay whole and may fail hard admission. Missing saved bodies never produce fake references.
+
+The unified projection does not omit results by age. A stable public context-phase identity changes on
+Steer, summary or required-prefix reselection; protected continuations from an earlier phase are not replayed.
+Their visible completed protocol becomes untrusted historical data with source identities. Same-phase
+continuation retains existing exact-binding rules. Source revalidation still precedes the physical call.
+Selection and previews never advance summary coverage: the existing semantic compactor processes the true
+contiguous source plus the previous valid summary and retains its validation, repair, CAS and recovery limits.
+Complete-source summaries may split a long single Run between completed atomic Tool groups. Existing cutoff
+validation still keeps each call/result pair together; the summary's versioned source label allows snapshot
+rebuilds to retain that valid assistant-led tail. Unreadable or unprocessable groups never authorize coverage.
+For the unified soft threshold, a removable prefix smaller than the configured minimum saving waits
+for more eligible source. Complete-source batching checks the full rendered request, including the
+previous summary and carry-forward items, before dispatch. Source-only estimates do not reserve a
+fixed fraction of the window for those fields.
+When a valid summary covers the current Run, its full semantic representation is required input, even for
+an objective beginning with `New task` or a retained tail larger than the working-set target. It stays in the
+untrusted data lane and participates in hard admission; an optional cross-Run handoff cannot replace it.
+Unrelated new Runs retain the existing sparse-history policy. Summary authorization checks every bounded
+source reference, using the active compaction window bound rather than the smaller handoff candidate limit.
+
+If a complete-source soft compaction has already called the model and a later batch cannot fit, the unchanged
+prefix backs off within the existing time bound. When the ordinary input fits, a validated soft checkpoint
+that would leave the estimated active history unchanged or larger does not advance coverage. During the
+existing backoff window, a matching prefix can retry once its removable history grows by at least the
+configured minimum saving and enough to exceed the observed excess. Hard capacity recovery can still
+evaluate these sources immediately.
+
+Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
+`SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain
+unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that
+compaction fails explicitly. Only physical model calls consume model-call accounting.
+
+Compaction calls use the semantic summary schema in place of the Run's ordinary response format.
+The model request labels a required summary covering the current Run as a checkpoint for continuation.
+Runtime instructions tell the model how to use recorded successful reads to resume unfinished work.
+Cross-Run handoffs retain their separate historical-data annotation.
+The optional first unified soft checkpoint waits for a removable prefix larger than the retained-tail
+target while both the selected ordinary request and the original active history fit their respective
+input budgets. This lets several small completed groups be summarized together. If the original active
+history exceeds the summary input budget or the ordinary request needs hard recovery, the wait does
+not apply.
+For compaction model calls, `GENERATION` names the invocation boundary (including Provider/transport failures);
+`failureCode` retains the exact normalized model category and is not a content-quality verdict.
+Compaction failure stages distinguish request rejection, response parsing, empty generation, schema mapping,
+semantic validation, planning, source validation and persistence. A locally exhausted single forced rebuild
+reports `MODEL_CONTEXT_TOO_LONG` with `contextFailure=REBUILD_EXHAUSTED` even when it escapes through the outer attempt executor.
+The typed rebuild failure owns that classification; the Run error, structured failure log and `runtime.error` trace
+share the same safe reason, distinct from `REQUIRED_CONTEXT_TOO_LARGE`. This does not
+admit another call or relax required input, semantic validation, repair or CAS limits.
+
+Terminal automatic summary maintenance remains deferred; terminal Run usage is immutable.
+
+## Optional Run working sets
+
+SDK `enableRunWorkingSet()` enables history readers and deterministic `run-working-set-v1` selection;
+Runtime products may freeze `haifa.runtime.working_set=true` with both built-in readers authorized.
+Default behavior stays continuous. An allowlist that excludes either reader retains the legacy path.
+The policy does not create another history, summary, lifecycle state or background model caller.
+
+Selection queries first 32 / previous 64 candidates, up to 16 explicit `[history:message-id]` references,
+and indexed required history. The initiating USER and latest applied USER/Steer stay verbatim even after
+a valid summary covers them. Actual current/recovery Tool protocol remains grouped and correlated.
+Prior sparse text/JSON is a versioned, revalidated USER data excerpt, never protected continuation replay.
+Continue, follow-up, new-task, ambiguous input and checkpoint recovery have deterministic handling;
+old pending plans are recorded handoff data and never become completed because they were omitted.
+With the unified policy, a continuation can reuse up to eight recent Tool results from the immediately prior
+terminal Run. These are optional, versioned excerpts within the same selection budget and are never replayed as Tools.
+Quoted next steps do not authorize work outside the current request; already authorized pending work may resume within that scope. Products must freeze read-only scope
+with the existing Run profile Tool allowlist; selection does not infer permissions from natural language.
+Summary handoff is a bounded inferred view (up to 64 source identities, four entries per section), separate from verified original Tool evidence; larger source sets are omitted conservatively.
+
+Project constraints (`Project constraint:` / `项目约束`), imported messages without a Run,
+and source parts without a historical reader are required history, even if a summary covers their cursors. The two built-in stores index these facts.
+At most 64 such records and 4,096 current-tail rows are admitted; unsupported protocol/source or excess
+required content fails closed rather than silently removing it. Summarization/coverage remain governed
+by the existing validated contiguous compressor. Arbitrary media/asset bodies do not gain a reader.
+Third-party stores must implement `requiredHistory` before enabling this policy; no full-history fallback
+is hidden in that query. Override `latestUserMessage` for bounded Run-local Memory selection as well.
+
+`haifa.runtime.working_set_target_tokens` defaults to 2,048 (128..65,536); required input may exceed it.
+`haifa.runtime.working_set_retention_tokens` defaults to 20,000 (128..131,072), capped by hard admission.
+Optional `haifa.runtime.working_set_cache_contract` requires exact `modelConfigurationDigest`, public
+HTTPS `source`, ISO `date`, and `ttlMillis` (1..3,600,000), together with exact-model `input_price_ratios`.
+Unknown cost remains unavailable. Retain/reselect predictions use cache-read/write/uncached lanes,
+not token count alone. Retention requires matching model, instructions/tools/schema, Provider options,
+contract, source versions, authorization and valid summary. It is limited to two deferred physical calls,
+retention capacity and the original physical call's start plus TTL; goal change/Steer/recovery forces
+reselection. Tool protocol, protected continuation and unreadable media do not qualify for v1 cache deferral. Rebuildable caches hold at most
+16 Runs/Sessions and are safely lost on restart. Predictions do not establish actual cache hits or savings.
+
+Results read or retrieved in the current Run after a valid summary stay in use until summary commit or
+safe Steer reselection; Tier 1 does not drop them merely because two newer groups exist. Omission notices
+point to history readers and occurrence IDs, without instructing automatic redispatch. Source withdrawal
+removes the evidence; completed built-in retrievals can supply only their revalidated UNAVAILABLE result.
+Selection/handoff/read never advance summary coverage. Hard admission and forced recovery remain active;
+unifying sparse selection with reduction/coverage is a separate change.
+
+## Model input accounting
+
+`model.input-accounted` is optional aggregate evidence for each physical ordinary, summary or regeneration
+attempt, including calls before Context Build. `sourceEstimatedTokens` classifies the actual assembled visible
+content; tool/response schemas and protocol estimates are separate additive components. Raw and Tier 1 history
+estimates are stage measurements, not additional input. Repeated selected message identities are counted, not
+silently removed. Protocol rewrites whose source cannot be retained use `protocolProjection`.
+`modelBoundVisibleEstimatedTokens` excludes unknown Provider formatting, options, media and protected
+continuation costs. Those appear in `unknownComponents`; this estimate is neither Provider usage nor the
+existing hard-admission budget. Protected reasoning is only counted by presence, never read or hashed.
+Diagnostics contain no Prompt, arguments, output, endpoint or credentials and do not affect request assembly.
+The frozen boolean option `haifa.runtime.input_accounting_enabled` defaults to true, can disable this event,
+and is removed from Provider options. Diagnostic persistence is best effort. Existing lifecycle events and
+Run usage remain authoritative for physical admission and completion.
+
 `ToolCallViewProjector` 为 Tool 参数投影提供顶层 `completeFields`：字段内容或名称发生截断、脱敏，
 以及嵌套节点超出预算时，均不认证该字段。展示预算和原始 Tool 参数保持各自语义；结果展示可能经过派生处理，
 因此不认证完整字段，避免调用方把结果展示误认为原始值。
@@ -52,6 +252,10 @@ Run 会持久化累计人工等待和当前等待起点；AgentLoop、模型重�
 活动执行时间。进程重启后继续等待或批准恢复，都不会把人工等待计入 `maxWallTimeMillis`。
 
 ## Tool outcome convergence
+
+After an approval or intentional pause, pending tools use the same request-rejection handling as a new batch.
+Invalid arguments, denied policy and unsupported authorization protocols return safe Tool results to the model
+so it can repair the request. Completed calls are not replayed, and other pending calls retain their own checks.
 
 Journal retains dispatch evidence and a bounded pending result until the authoritative ToolCall result is saved.
 COMPLETED is only a marker and clears the pending payload. Recovery reads ToolCall first; missing ToolCall/Step/message
@@ -429,3 +633,84 @@ describes creation/admission, while the Child's typed `RunLifecycle` status `RUN
 预算百分比按精确整数向下取整并限制在 0–100，包括 `Long.MAX_VALUE` 的工具额度；
 大额度的乘法不会溢出为零或触发虚假的 `BUDGET_THRESHOLD` 收敛通知。
 真实的 50/25/10 百分比阈值和既有模型消息角色保持不变。
+
+## Conversation compaction outcomes
+
+Compaction failures retain the existing `failureCategory` / `validationErrorCode` fields and add safe
+`failureStage` / `failureCode` classifications. Parsing, schema mapping, provenance, carry-forward,
+safety and physical evaluation-allowance failures are distinguishable without storing exception or model text.
+The local physical-call allowance is a `PLAN_BUDGET` failure; Run hard limits and typed persistence failures
+propagate instead of entering ordinary compaction degradation.
+
+`evaluationId` associates a semantic attempt with its `session.compaction-recovery` result. A failed semantic
+attempt may be followed by `DETERMINISTIC_COMMITTED`; `degraded` alone does not prove a summary was written.
+Recovery reports the selected summary identity/version/quality, distinguishes a concurrent valid winner from
+this evaluation's own commit, and reports `CAS_CONFLICT`, `SOURCE_INVALIDATED`, `STORAGE_FAILED` or
+`NO_REDUCTION` when appropriate. CAS conflict recovery performs one fresh snapshot read and never retries
+writes in a loop. If an unavailable store also rejects the failure event, the original summary-write
+failure is preserved and that diagnostic event may be absent. Successful deterministic commits now report `compacted=true`; selecting another writer's
+summary does not claim this evaluation committed. Before/after history token estimates remain estimates of
+the captured source and selected summary/tail, not subsequent Provider-reported request usage.
+
+Every summary call observes Run controls and remaining active wall time. Its timeout is capped by that
+remaining time and the existing idle limit; zero remaining time is never admitted. Usage from a returned
+response is recorded before observing a subsequent stop, and controls are checked again before summary
+commit. The last admitted model call may commit a valid result at the call-count limit, but cannot admit
+another repair. This does not change Core terminal accounting or promise immediate remote cancellation.
+Before dispatch, compaction plans whole-turn batches against the remaining evaluation and Run call allowances.
+Each rendered summary request includes its previous valid summary, source, schema, output reserve and safety
+margin in the input admission check; batches shrink only at turn boundaries. An impossible plan leaves the
+summary and coverage unchanged unless deterministic degradation was explicitly enabled.
+Empty, malformed, schema-invalid or semantically invalid outputs may regenerate once per batch, sharing the
+same physical-call allowance and reserving calls needed by later batches. Feedback contains only a stable
+validation code and authorized source, never the rejected output. Non-STOP responses do not regenerate.
+The default physical-call ceiling and explicit deterministic-degradation configuration are unchanged.
+
+For configured active-history targets, recoverable failures may continue only while projected summary plus
+history is at most `min(availableSessionTokens, T + floor(T / 5))`, where `T` is the existing resolved history
+target. The complete assembled request still passes its independent hard input check. Exceeding this temporary
+allowance after recovery fails closes the Run instead of waiting for model-window overflow. Without an active
+target configuration, the existing capacity behavior is retained.
+An unchanged failed prefix backs off across Runs for 60 seconds in a transient, 1,024-entry cache scoped by
+Session, owner, frozen configuration/model digests, policy and summary version. Tail appends do not reset the
+prefix. Source invalidation, expiry and version changes permit a new bounded evaluation; explicit force and
+capacity recovery bypass this cache. Only classified recoverable failures enter it; planning failures do not.
+The cache may be lost when reopening Runtime and is never a source of conversation facts.
+
+Context assembly retains the initiating Run USER message by authoritative Run/message identity and selected
+cursor, even after its range is summarized. It is included once, with its original role/content/provenance,
+and charged to the actual request budget; an oversized mandatory input still fails. Built-in stores look up
+one original record, including redacted identities so later USER inputs cannot silently replace it. Imported
+transcripts without a Run USER retain compatibility. Deterministic summaries remain explicitly lossy and
+`DETERMINISTIC_DEGRADED`; their fact limit and text truncation are unchanged, and source records remain stored.
+
+## Java 21 transition scheduling
+
+Run transitions retain their per-Run reentrant lock across the existing Unit of Work, including terminal output,
+input settlement and after-commit observation. The lock uses `ReentrantLock`: a transition waiting for a storage
+writer can unmount from its virtual-thread carrier, allowing the writer's owner to resume even on low-core hosts.
+Core lifecycle rules and transaction boundaries remain authoritative; increasing scheduler parallelism or SQLite
+writer timeouts is not required for progress.
+
+## Historical data retrieval
+
+`HistoryToolProvider` implements bounded `history_search`/`history_read` over existing message cursors,
+Run visibility, Tool occurrences and immutable Tool-result assets. SDK registration is explicit and off by
+default; see the SDK README for arguments and limits. Search/read execute in the existing read-only Unit of Work
+and never advance summary coverage, redispatch Tools or read current workspace files. Reads use persisted
+Run/message/occurrence versions, and all results carry an untrusted-data label.
+
+Only completed visible USER/ASSISTANT/TOOL text and safe Tool-result data are projected. Hidden/internal/admin
+messages, metadata and continuation lanes are excluded. Existing redaction is applied; protected or credential
+field names are omitted from structured results. Results are revalidated for model assembly, semantic-summary
+source projection and public Tool views. Redacting a source propagates to dependent retrieval messages through
+existing redaction notifications and summary invalidation. This is a paged scan on redaction, not a new dependency
+Store. The current hosting `RunAccessValidator` is used in addition to owner/Session/Project checks.
+
+Keyword scans bound rows and source windows, with explicit continuation across both. Existing Store codecs still
+load a selected persisted message/result object; this does not provide byte-range disk I/O or a full-text index.
+Unsupported oversized/deep structured representations fail unavailable instead of claiming a complete search.
+No Run-aware selection, Tier 1 retention change or terminal automatic maintenance is enabled here.
+
+Product assemblies and SDK working-set opt-in share `RuntimeControlOptions.unifiedWorkingSetOptions`;
+it validates the shared target range and fills missing controls while preserving explicit profile overrides.

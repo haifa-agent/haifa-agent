@@ -4,20 +4,29 @@
     Publishes the Haifa Agent SDK to the local Maven repository with versioned coordinates.
 .DESCRIPTION
     Follows ENG-SdkWorktreeVersionedPublish rules:
-    - Main checkout on 'dev': publishes baseline 0.1.4-SNAPSHOT.
-    - Other worktrees: publishes 0.1.4-<identifier>-SNAPSHOT where <identifier> is the worktree directory name.
+    - Main checkout on 'dev': publishes baseline 0.1.5-SNAPSHOT.
+    - Other worktrees: publishes 0.1.5-<identifier>-SNAPSHOT where <identifier> is the worktree directory name.
     - Requires clean working tree and runs 'clean install'.
     - Deletes old manifest before publish starts, verifies installed artifacts, and atomically writes haifa-sdk-publish-manifest.json.
 #>
 [CmdletBinding()]
 param(
-    [string]$LocalRepo = $null
+    [string]$LocalRepo = $null,
+    [ValidateSet("sdk", "coding-product-preview")][string]$Mode = "sdk"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+
+if ($Mode -eq 'coding-product-preview') {
+    $forward = @('coding-product-preview')
+    if ($LocalRepo) { $forward += @('--local-repo', $LocalRepo) }
+    & (Join-Path $repoRoot 'build-support/scripts/invoke-python.ps1') -Script (Join-Path $PSScriptRoot 'publish-local-sdk.py') -ScriptArguments $forward
+    if ($LASTEXITCODE -ne 0) { throw 'Coding product preview publish failed.' }
+    return
+}
 
 # Load shared publishing support functions
 . (Join-Path $PSScriptRoot 'lib\sdk-publish-support.ps1')

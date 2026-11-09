@@ -9,6 +9,8 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelectorDetail;
+import io.haifa.agent.application.coding.terminal.state.TerminalSessionRow;
+import io.haifa.agent.application.coding.terminal.state.TerminalSessionView;
 import io.haifa.agent.application.coding.terminal.state.TerminalThemes;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -20,6 +22,7 @@ import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -42,6 +45,9 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
+import io.haifa.coding.api.CodingClient;
+import io.haifa.coding.api.CodingClientException;
+import io.haifa.coding.api.CodingProtocol;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +58,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
@@ -68,8 +73,10 @@ public final class CodingTerminalController implements AutoCloseable {
     private static final int PAGE_SIZE = 200;
     private static final int HISTORY_LIMIT = 100;
     private static final int MAX_REPLAY_EVENTS = 2_000;
+    private static final int MAX_REPLAY_PAGES = 10;
     private static final int CONTROL_COMPLETION_QUEUE_CAPACITY = 64;
     private static final int COMPLETION_QUEUE_CAPACITY = 256;
+    private static final int DEFAULT_MAX_OBSERVATIONS = 8;
     private static final Set<String> RETRYABLE_SESSION_RACES =
             Set.of("ACTIVE_RUN_SETTLED", "ACTIVE_RUN_MISMATCH", "CODING_SESSION_ACTIVE");
     private final ProjectId projectId;
@@ -86,7 +93,12 @@ public final class CodingTerminalController implements AutoCloseable {
     private final ArrayBlockingQueue<Runnable> controlCompletions =
             new ArrayBlockingQueue<>(CONTROL_COMPLETION_QUEUE_CAPACITY);
     private final ArrayBlockingQueue<Runnable> effectCompletions = new ArrayBlockingQueue<>(COMPLETION_QUEUE_CAPACITY);
-    private final ConcurrentLinkedQueue<AutoCloseable> deferredSubscriptionCloses = new ConcurrentLinkedQueue<>();
+    private int observationCapacity = DEFAULT_MAX_OBSERVATIONS;
+    private final Object observationLock = new Object();
+    private final java.util.Set<AutoCloseable> ownedObservations = new java.util.HashSet<>();
+    private final java.util.Set<ObservationPermit> liveObservations = new java.util.HashSet<>();
+    final java.util.concurrent.ThreadPoolExecutor cleanupEffects = newCleanupExecutor(DEFAULT_MAX_OBSERVATIONS * 3);
+    private final ArrayBlockingQueue<Runnable> deferredCleanup = new ArrayBlockingQueue<>(DEFAULT_MAX_OBSERVATIONS * 3);
     private final AtomicLong completionRequestIds = new AtomicLong();
     private final TerminalCommandRouter commands = new TerminalCommandRouter();
     private final TerminalCompletionProvider completions;
@@ -94,9 +106,15 @@ public final class CodingTerminalController implements AutoCloseable {
     private String activeTranscriptItemId = "";
     private RunEventSubscription subscription;
     private RunOutputSubscription outputSubscription;
+    private ObservationPermit subscriptionPermit;
     private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previewSubscription;
+    private ObservationPermit previewPermit;
     private ToolOutputPreviewPublisher previewPublisher = ToolOutputPreviewPublisher.noop();
+    private boolean observationRecoveryPending;
     private AgentRunId previewRunId;
+    private long previewGeneration;
+    private long previewEpoch;
+    private long nextPreviewEpoch;
     private io.haifa.agent.core.run.AgentRunId outputRunId;
     private RunOutputCursor outputCursor = RunOutputCursor.BEFORE_FIRST;
     private boolean awaitingNewSessionMessage;
@@ -124,10 +142,16 @@ public final class CodingTerminalController implements AutoCloseable {
     private long lastAuthenticationCountdownSecond = -1;
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
+    private final Map<AgentSessionId, java.util.Set<String>> observedShells = new java.util.HashMap<>();
+    private final Map<String, String> shellLabels = new java.util.LinkedHashMap<>();
+    private boolean shellPollInFlight;
+    private long shellPolledAtMillis;
     private String preservedDraftBuffer;
     private int preservedDraftCursor;
+    private static final int MAX_CACHED_SESSION_DRAFTS = 32;
+    private final Map<AgentSessionId, ComposerDraft> sessionDrafts = new java.util.LinkedHashMap<>(16, 0.75f, true);
     private boolean renamingSession;
-    private boolean modelSwitchInProgress;
+    private final Map<SelectionToken, Long> modelSwitchesInFlight = new java.util.HashMap<>();
 
     public enum BailianConfigStep {
         NONE,
@@ -149,15 +173,55 @@ public final class CodingTerminalController implements AutoCloseable {
     private String existingBailianRegion;
     private String pendingNewSessionModelId;
     private RunEventCursor pendingAcknowledgement;
-    private boolean acknowledgementInFlight;
-    private boolean reconcileInFlight;
+    private final Map<SelectionToken, Long> acknowledgementsInFlight = new java.util.HashMap<>();
+    private final Map<SelectionToken, Long> reconcilesInFlight = new java.util.HashMap<>();
     private InteractionHydrationRequest interactionHydrationInFlight;
     private ClarificationDraft clarificationDraft;
     private boolean awaitingClarificationText;
     private InteractionView activeInteraction;
+    private CodingProtocol.Target productPendingTarget;
+    private String productPendingViewId;
+    private List<CodingProtocol.Action> productInteractionOptions = List.of();
     private long activeCompletionRequestId;
     private static final long CANCEL_ARMED_TIMEOUT_MILLIS = 5_000L;
+    private static final String REMOTE_CREDENTIAL_SETUP_GUIDANCE =
+            "Model sign-in and API key setup are managed by the Host application; use its local interface";
+    private static final String REMOTE_SESSION_CONSENT_GUIDANCE =
+            "Session approval changes are unavailable in remote mode; approve or reject each request";
     private long cancelArmedAtMillis = 0L;
+    /** Bounded sidebar refresh cadence; well above the event poll so the list never follows tool deltas (D6). */
+    private static final long SESSION_ROWS_POLL_INTERVAL_MILLIS = 2_000L;
+
+    private boolean sessionRowsInFlight;
+    private long sessionRowsFetchedAtMillis;
+    private final CodingTerminalConnectionOptions connectionOptions;
+    private long configurationSummaryRequest;
+    private long sessionSelectorRequest;
+    private boolean connectionCheckInFlight;
+    private boolean connectionUnavailable;
+    private String connectionFailureCode;
+    private long connectionCheckedAtMillis;
+    private final Map<SelectionToken, Long> productMetadataInFlight = new java.util.HashMap<>();
+    private final TerminalSelection selection = new TerminalSelection();
+    private CodingClient productClient;
+    private CodingProtocol.ConnectionInfo productConnection;
+    private TerminalProductObservation productObservation;
+    private String productSession;
+    private CodingProtocol.Snapshot productSnapshot;
+    private Long productHistoryBefore;
+    private int productHistoryPages;
+    private boolean productHistoryPending;
+    private long nextObservationEpoch;
+    private long observationEpoch;
+    private long nextOperationEpoch;
+    private AgentRunId observedRunId;
+    private long observedRunVersion = -1L;
+    private boolean observedRunTerminal;
+    private boolean staleSnapshotRecoveryRequested;
+    /** The settled Run whose single follow-up handoff reconcile was already requested. */
+    private AgentRunId handoffRecoveryForRun;
+
+    private volatile boolean closed;
 
     public CodingTerminalController(
             ProjectId projectId,
@@ -172,6 +236,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 newEffectExecutor("haifa-coding-terminal-control"),
                 newEffectExecutor("haifa-coding-terminal-effects"),
                 newEffectExecutor("haifa-coding-terminal-maintenance"),
@@ -192,6 +257,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 newEffectExecutor("haifa-coding-terminal-control"),
                 newEffectExecutor("haifa-coding-terminal-effects"),
                 newEffectExecutor("haifa-coding-terminal-maintenance"),
@@ -212,6 +278,106 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
+                effects,
+                effects,
+                effects,
+                false);
+    }
+
+    /** Production composition with owned lanes and explicit UI capability input. */
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
+                newEffectExecutor("haifa-coding-terminal-control"),
+                newEffectExecutor("haifa-coding-terminal-effects"),
+                newEffectExecutor("haifa-coding-terminal-maintenance"),
+                true);
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
+            Executor controlEffects,
+            Executor effects,
+            Executor maintenanceEffects) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
+                controlEffects,
+                effects,
+                maintenanceEffects,
+                false);
+    }
+
+    CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
+            int observationCapacity,
+            Executor controlEffects,
+            Executor effects,
+            Executor maintenanceEffects) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
+                controlEffects,
+                effects,
+                maintenanceEffects,
+                false);
+        if (observationCapacity < 1) throw new IllegalArgumentException("observationCapacity must be positive");
+        this.observationCapacity = observationCapacity;
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
+            Executor effects) {
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
                 effects,
                 effects,
                 effects,
@@ -226,7 +392,18 @@ public final class CodingTerminalController implements AutoCloseable {
             TerminalUiReducer reducer,
             TerminalUiState initialState,
             Executor effects) {
-        this(projectId, client, authentication, pump, reducer, initialState, effects, effects, effects, false);
+        this(
+                projectId,
+                client,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                CodingTerminalConnectionOptions.embedded(),
+                effects,
+                effects,
+                effects,
+                false);
     }
 
     public CodingTerminalController(
@@ -244,6 +421,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 effects,
                 effects,
                 maintenanceEffects,
@@ -266,6 +444,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 pump,
                 reducer,
                 initialState,
+                CodingTerminalConnectionOptions.embedded(),
                 controlEffects,
                 effects,
                 maintenanceEffects,
@@ -279,12 +458,13 @@ public final class CodingTerminalController implements AutoCloseable {
             TerminalEventPump pump,
             TerminalUiReducer reducer,
             TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions,
             Executor controlEffects,
             Executor effects,
             Executor maintenanceEffects,
             boolean ownsEffects) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
-        this.client = Objects.requireNonNull(client, "client must not be null");
+        this.client = client;
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
         this.pump = Objects.requireNonNull(pump, "pump must not be null");
         this.reducer = Objects.requireNonNull(reducer, "reducer must not be null");
@@ -292,10 +472,11 @@ public final class CodingTerminalController implements AutoCloseable {
         this.controlEffects = Objects.requireNonNull(controlEffects, "controlEffects must not be null");
         this.effects = Objects.requireNonNull(effects, "effects must not be null");
         this.maintenanceEffects = Objects.requireNonNull(maintenanceEffects, "maintenanceEffects must not be null");
+        this.connectionOptions = Objects.requireNonNull(connectionOptions, "connectionOptions must not be null");
         this.ownedControlEffects = ownsEffects ? (ExecutorService) controlEffects : null;
         this.ownedEffects = ownsEffects ? (ExecutorService) effects : null;
         this.ownedMaintenanceEffects = ownsEffects ? (ExecutorService) maintenanceEffects : null;
-        this.completions = new TerminalCompletionProvider(client::logicalPaths);
+        this.completions = new TerminalCompletionProvider(() -> readTerminalPaths(""), connectionOptions);
     }
 
     private static ExecutorService newEffectExecutor(String threadName) {
@@ -313,8 +494,326 @@ public final class CodingTerminalController implements AutoCloseable {
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
+    private static java.util.concurrent.ThreadPoolExecutor newCleanupExecutor(int capacity) {
+        return new java.util.concurrent.ThreadPoolExecutor(
+                1,
+                1,
+                0,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(capacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "haifa-coding-terminal-cleanup");
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+    }
+
     public boolean mouseReportingEnabled() {
         return mouseReportingEnabled;
+    }
+
+    static CodingTerminalController product(
+            ProjectId projectId,
+            CodingClient product,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            CodingTerminalConnectionOptions connectionOptions) {
+        var controller = new CodingTerminalController(
+                projectId,
+                null,
+                authentication,
+                pump,
+                reducer,
+                initialState,
+                connectionOptions,
+                newEffectExecutor("haifa-coding-terminal-control"),
+                newEffectExecutor("haifa-coding-terminal-effects"),
+                newEffectExecutor("haifa-coding-terminal-maintenance"),
+                true);
+        try {
+            controller.attachProductClient(product);
+            return controller;
+        } catch (RuntimeException failure) {
+            controller.close();
+            throw failure;
+        }
+    }
+
+    void attachProductClient(CodingClient product) {
+        this.productConnection = product.connection();
+        if (!productConnection.projectId().equals(projectId.value())
+                || !productConnection
+                        .capabilities()
+                        .containsAll(List.of(
+                                "coding-product-v1", "session-presentation-v1", "native-terminal-activity-v1"))) {
+            throw new CodingClientException("PRODUCT_CAPABILITY_UNSUPPORTED", false);
+        }
+        this.productClient = product;
+    }
+
+    private void observeProductSession(String sessionId) {
+        if (productClient == null || sessionId.equals(productSession)) return;
+        closeProductObservation();
+        productSession = sessionId;
+        productObservation = new TerminalProductObservation(productClient, productConnection, sessionId);
+    }
+
+    private void closeProductObservation() {
+        if (productObservation != null) productObservation.close();
+        productObservation = null;
+        productSession = null;
+        productSnapshot = null;
+        clearProductInteraction();
+        productHistoryBefore = null;
+        productHistoryPages = 0;
+        productHistoryPending = false;
+    }
+
+    private void refreshProductSessionFacts() {
+        var observation = productObservation;
+        var snapshot = productSnapshot;
+        var token = currentSelection();
+        if (observation == null
+                || snapshot == null
+                || token.sessionId() == null
+                || isOperationInFlight(productMetadataInFlight, token)) return;
+        var requested = snapshot.session();
+        long operation = beginOperation(productMetadataInFlight, token);
+        submitMaintenanceEffect(
+                () -> {
+                    var view = reconcileTerminalView(token.sessionId());
+                    var pending = readPendingQueue(token.sessionId());
+                    return () -> {
+                        completeOperation(productMetadataInFlight, token, operation);
+                        if (productObservation != observation || !isCurrentSelection(token)) return;
+                        apply(new TerminalUiAction.ProductSessionChanged(view, pending));
+                        if (productSnapshot != null
+                                && !productSnapshot.session().equals(requested)
+                                && productFactsNeedRefresh(productSnapshot.session())) refreshProductSessionFacts();
+                    };
+                },
+                code -> {
+                    completeOperation(productMetadataInFlight, token, operation);
+                    if (productObservation == observation && isCurrentSelection(token)) {
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    }
+                });
+    }
+
+    private boolean productFactsNeedRefresh(CodingProtocol.Session observed) {
+        return state.session()
+                .map(displayed -> observed.revision() > displayed.summary().revision()
+                        || observed.modelRevision() != displayed.model().revision()
+                        || !Objects.equals(
+                                observed.run() == null ? null : observed.run().id(),
+                                displayed
+                                        .activeRun()
+                                        .map(value -> value.runId().value())
+                                        .orElse(null)))
+                .orElse(false);
+    }
+
+    private void drainProductObservation() {
+        var observation = productObservation;
+        if (observation == null) return;
+        AgentRunId previousRun = state.currentRunId().orElse(null);
+        var next = observation.takeSnapshot();
+        boolean metadataChanged = false;
+        if (next != null) {
+            var previous = productSnapshot;
+            productSnapshot = next;
+            var run = next.session().run();
+            if (run != null && !isTerminalStatus(run.status())) {
+                var id = new AgentRunId(run.id());
+                if (!id.equals(observedRunId) || (!observedRunTerminal && run.revision() >= observedRunVersion)) {
+                    observedRunId = id;
+                    observedRunVersion = run.revision();
+                    observedRunTerminal = false;
+                    apply(new TerminalUiAction.ProductRunSelected(run));
+                }
+            }
+            metadataChanged = productFactsNeedRefresh(next.session());
+            var history = productHistoryEntries(next);
+            if (previous == null
+                    || !history.equals(productHistoryEntries(previous))
+                    || !Objects.equals(next.live(), previous.live())) {
+                apply(new TerminalUiAction.ProductHistoryUpdated(history, next.live()));
+            }
+            var previousTools = previous == null ? List.<CodingProtocol.Entry>of() : previous.entries();
+            var tools = next.entries().stream()
+                    .filter(entry -> entry.toolDetails() != null && !previousTools.contains(entry))
+                    .toList();
+            if (next.activity() == null && !tools.isEmpty()) apply(new TerminalUiAction.ProductToolsChanged(tools));
+            updateProductInteraction(next);
+            var entries = deliveryEntries(next);
+            if (previous == null
+                    || !entries.equals(deliveryEntries(previous))
+                    || !next.notices().equals(previous.notices())) {
+                apply(new TerminalUiAction.ProductDeliveryChanged(entries, next.notices()));
+            }
+        }
+        if (productObservation != observation) return;
+        var activities = observation.takeActivity(PAGE_SIZE);
+        if (!activities.isEmpty()) {
+            if (observedRunId != null
+                    && activities.stream()
+                            .anyMatch(entry -> "run-state".equals(entry.role())
+                                    && observedRunId.value().equals(entry.runId())
+                                    && isTerminalStatus(entry.status()))) {
+                observedRunTerminal = true;
+            }
+            apply(new TerminalUiAction.ProductActivityChanged(activities));
+        }
+        AgentRunId currentRun = state.currentRunId().orElse(null);
+        if (!Objects.equals(previousRun, currentRun)) {
+            replacePreviewSubscription(currentRun, selection.current());
+        }
+        if (metadataChanged && productSnapshot != null && "ready".equals(productSnapshot.hydration()))
+            refreshProductSessionFacts();
+        String failure = observation.takeFailure();
+        if (failure != null) {
+            closeProductObservation();
+            apply(new TerminalUiAction.RecoverableFailure(failure));
+        }
+    }
+
+    private static List<CodingProtocol.Entry> productHistoryEntries(CodingProtocol.Snapshot snapshot) {
+        return snapshot.entries().stream()
+                .filter(entry -> entry.sequence() != null)
+                .toList();
+    }
+
+    private static List<CodingProtocol.Entry> deliveryEntries(CodingProtocol.Snapshot snapshot) {
+        return snapshot.entries().stream()
+                .filter(entry -> "notice".equals(entry.kind()) && "delivery".equals(entry.role()))
+                .toList();
+    }
+
+    private void loadEarlierProductHistory() {
+        if (productObservation == null || productSnapshot == null) {
+            apply(new TerminalUiAction.RecoverableFailure("PRODUCT_VIEW_NOT_READY"));
+            return;
+        }
+        if (productHistoryPending) return;
+        if (productHistoryBefore == null || productHistoryPages >= 6) {
+            apply(new TerminalUiAction.StatusChanged("No earlier history in the available window"));
+            return;
+        }
+        var observation = productObservation;
+        String session = productSession;
+        Long before = productHistoryBefore;
+        productHistoryPending = true;
+        apply(new TerminalUiAction.StatusChanged("Loading earlier history"));
+        submitEffect(
+                () -> {
+                    var page = readProductHistory(session, 25, before);
+                    return () -> {
+                        if (productObservation != observation) return;
+                        productHistoryPending = false;
+                        productHistoryPages++;
+                        productHistoryBefore = page.history().beforeSequence();
+                        apply(new TerminalUiAction.ProductHistoryLoaded(
+                                page.entries(), productHistoryBefore != null && productHistoryPages < 6));
+                        apply(new TerminalUiAction.StatusChanged("Earlier history loaded"));
+                    };
+                },
+                code -> {
+                    if (productObservation != observation) return;
+                    productHistoryPending = false;
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private CodingProtocol.HistoryPage readProductHistory(String session, int limit, Long before) {
+        var page = productClient.history(session, limit, before);
+        var next = page.history().beforeSequence();
+        if (!session.equals(page.sessionId())
+                || (before != null && next != null && next >= before)
+                || !page.history().hasEarlier() && next != null) {
+            throw new CodingClientException("INVALID_HISTORY_SCOPE", false);
+        }
+        return page;
+    }
+
+    private void executeProductAction(
+            String operation,
+            String choice,
+            String session,
+            String run,
+            String interaction,
+            Long revision,
+            List<CodingProtocol.QuestionAnswer> answers) {
+        var snapshot = productSnapshot;
+        if (snapshot == null
+                || productObservation == null
+                || !productObservation.hasAuthority(snapshot.scope().viewId())
+                || !snapshot.scope().sessionId().equals(session)
+                || !"ready".equals(snapshot.hydration())) {
+            apply(new TerminalUiAction.RecoverableFailure("PRODUCT_VIEW_NOT_READY"));
+            return;
+        }
+        var candidates = interaction == null
+                ? snapshot.actions().stream()
+                : snapshot.entries().stream()
+                        .map(CodingProtocol.Entry::interaction)
+                        .filter(Objects::nonNull)
+                        .filter(value -> value.id().equals(interaction))
+                        .flatMap(value -> value.actions().stream());
+        var action = candidates
+                .filter(value ->
+                        value.available() && value.kind().equals(operation) && Objects.equals(value.choice(), choice))
+                .filter(value -> value.target().sessionId().equals(session)
+                        && Objects.equals(value.target().runId(), run)
+                        && Objects.equals(value.target().interactionId(), interaction)
+                        && (revision == null || Objects.equals(value.target().targetRevision(), revision)))
+                .findFirst()
+                .orElse(null);
+        if (action == null) {
+            apply(new TerminalUiAction.RecoverableFailure("PRODUCT_ACTION_UNAVAILABLE"));
+            return;
+        }
+        var target = action.target();
+        String requestId = UUID.randomUUID().toString();
+        var command = new CodingProtocol.Command(
+                "command",
+                action.kind(),
+                requestId,
+                requestId,
+                new CodingProtocol.CommandTarget(
+                        productConnection.projectId(),
+                        target.sessionId(),
+                        target.runId(),
+                        target.interactionId(),
+                        target.targetRevision()),
+                null,
+                action.choice(),
+                null,
+                List.of());
+        var request =
+                new CodingProtocol.CommandRequest(command, new CodingProtocol.CommandOptions(false, false, answers));
+        var token = currentSelection();
+        submitControlEffect(
+                () -> {
+                    var receipt = productClient.execute(request).receipt();
+                    return () -> {
+                        if (!isCurrentSelection(token)) return;
+                        switch (receipt.disposition()) {
+                            case "accepted" -> {
+                                /* The product observation owns the next visible state. */
+                            }
+                            case "unknown" -> apply(new TerminalUiAction.RecoverableFailure("REMOTE_OUTCOME_UNKNOWN"));
+                            default ->
+                                apply(new TerminalUiAction.RecoverableFailure(
+                                        Objects.requireNonNullElse(receipt.reasonCode(), "PRODUCT_ACTION_REJECTED")));
+                        }
+                    };
+                },
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     public void initializeMouseReporting(boolean enabled) {
@@ -323,6 +822,128 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public TerminalUiState state() {
         return state;
+    }
+
+    private boolean isCurrentSelection(SelectionToken token) {
+        if (token.generation() != selection.current()) return false;
+        return Objects.equals(
+                token.sessionId(),
+                state.session().map(value -> value.summary().sessionId()).orElse(null));
+    }
+
+    private SelectionToken currentSelection() {
+        return new SelectionToken(
+                selection.current(),
+                state.session().map(value -> value.summary().sessionId()).orElse(null));
+    }
+
+    private boolean isCurrentStream(long generation, AgentRunId runId, AgentSessionId sessionId) {
+        if (closed) return false;
+        if (generation != 0L && generation != selection.current()) return false;
+        boolean sameSession = state.session()
+                .map(value -> value.summary().sessionId().equals(sessionId))
+                .orElse(false);
+        // Generation 0 is the unscoped convenience constructor that reducers and direct tests still use; it has no
+        // selection to compare against, so it may pass without a loaded Session. A scoped action always has to match
+        // the selected Session before its events may touch the transcript.
+        if (!sameSession && generation != 0L) return false;
+        Optional<AgentRunId> known = state.currentRunId()
+                .or(() ->
+                        state.session().flatMap(TerminalSessionView::activeRun).map(value -> value.runId()))
+                .or(() -> state.session()
+                        .flatMap(TerminalSessionView::pendingInteraction)
+                        .map(TerminalSessionView.Pending::runId));
+        // Without a known Run identity only the unscoped form may pass; a scoped action must match the visible Run.
+        return known.map(runId::equals).orElse(generation == 0L);
+    }
+
+    private boolean isCurrentOutputStream(long generation, AgentRunId runId) {
+        if (closed) return false;
+        if (generation != 0L && generation != selection.current()) return false;
+        if (runId.equals(outputRunId)
+                || state.currentRunId().filter(runId::equals).isPresent()) return true;
+        return generation == 0L && outputRunId == null && state.currentRunId().isEmpty();
+    }
+
+    private boolean isCurrentPreviewStream(long generation, AgentRunId runId) {
+        if (closed) return false;
+        if (generation != 0L && generation != selection.current()) return false;
+        return previewRunId != null && previewRunId.equals(runId);
+    }
+
+    private boolean isOperationInFlight(Map<SelectionToken, Long> operations, SelectionToken token) {
+        return operations.containsKey(token);
+    }
+
+    private long beginOperation(Map<SelectionToken, Long> operations, SelectionToken token) {
+        long operation = ++nextOperationEpoch;
+        operations.put(token, operation);
+        return operation;
+    }
+
+    private void completeOperation(Map<SelectionToken, Long> operations, SelectionToken token, long operation) {
+        operations.computeIfPresent(token, (key, value) -> value == operation ? null : value);
+    }
+
+    private void clearOperationsForPreviousSelection() {
+        reconcilesInFlight.clear();
+        productMetadataInFlight.clear();
+        acknowledgementsInFlight.clear();
+        modelSwitchesInFlight.clear();
+    }
+
+    private boolean isCurrentStreamScope(long generation, AgentSessionId sessionId, AgentRunId runId) {
+        if (closed || generation != selection.current()) return false;
+        boolean sameSession = state.session()
+                .map(value -> value.summary().sessionId().equals(sessionId))
+                .orElse(false);
+        if (!sameSession) return false;
+        return state.currentRunId().filter(runId::equals).isPresent()
+                || state.session()
+                        .flatMap(TerminalSessionView::activeRun)
+                        .map(value -> value.runId())
+                        .filter(runId::equals)
+                        .isPresent();
+    }
+
+    private ObservationPermit admitObservation() {
+        synchronized (observationLock) {
+            if (closed || liveObservations.size() >= observationCapacity) return null;
+            ObservationPermit permit = new ObservationPermit();
+            liveObservations.add(permit);
+            return permit;
+        }
+    }
+
+    private void releaseObservation(ObservationPermit permit) {
+        if (permit == null) return;
+        synchronized (observationLock) {
+            liveObservations.remove(permit);
+        }
+    }
+
+    private void rejectObservationAdmission() {
+        observationRecoveryPending = true;
+        if (!closed) apply(new TerminalUiAction.RecoverableFailure("TERMINAL_OBSERVATION_CAPACITY"));
+    }
+
+    private void tryObservationRecovery() {
+        if (!observationRecoveryPending || closed) return;
+        if (state.session().isEmpty()) {
+            observationRecoveryPending = false;
+            return;
+        }
+        synchronized (observationLock) {
+            if (liveObservations.size() >= observationCapacity) return;
+        }
+        observationRecoveryPending = false;
+        scheduleReconcile();
+    }
+
+    private void completeSelectionFailure(long generation, String code) {
+        boolean pending = selection.abandon(generation);
+        if (!pending && generation != selection.current()) return;
+        apply(new TerminalUiAction.RecoverableFailure(code));
     }
 
     public void attachToolOutputPreviewPublisher(ToolOutputPreviewPublisher publisher) {
@@ -390,7 +1011,15 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(submission, "submission must not be null");
         try {
             CodingSessionView view;
-            if (submission.sessionId().isEmpty()) {
+            if (productClient != null) {
+                AgentSessionId acceptedSession = executeProductMessage(submission);
+                try {
+                    return MessageSubmissionResult.succeeded(
+                            submission, readProductSession(acceptedSession, submission.selectionGeneration()));
+                } catch (RuntimeException failure) {
+                    return MessageSubmissionResult.acceptedWithoutView(submission, acceptedSession);
+                }
+            } else if (submission.sessionId().isEmpty()) {
                 CodingSessionCreateOptions options = submission
                         .initialModelId()
                         .map(CodingSessionCreateOptions::withInitialModel)
@@ -407,9 +1036,10 @@ public final class CodingTerminalController implements AutoCloseable {
                         true);
                 view = client.reconcile(sessionId);
             }
-            LoadedSession loaded =
-                    readSession(view, submission.appliedCursor(), submission.outputRunId(), submission.outputCursor());
-            return MessageSubmissionResult.succeeded(submission, loaded);
+            return MessageSubmissionResult.succeeded(submission, readSubmissionSession(view, submission));
+        } catch (CodingClientException exception) {
+            return MessageSubmissionResult.failed(
+                    submission, exception.outcomeUnknown() ? "REMOTE_OUTCOME_UNKNOWN" : exception.code());
         } catch (ProjectProductException exception) {
             return MessageSubmissionResult.failed(submission, exception.code());
         } catch (IllegalArgumentException
@@ -420,12 +1050,79 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    private LoadedSession readSubmissionSession(CodingSessionView view, PreparedMessageSubmission submission) {
+        return readSession(
+                view,
+                submission.selectionGeneration(),
+                submission.appliedCursor(),
+                submission.outputRunId(),
+                submission.outputCursor());
+    }
+
+    private AgentSessionId executeProductMessage(PreparedMessageSubmission submission) {
+        String session = submission.sessionId().map(AgentSessionId::value).orElse(null);
+        String run = submission.activeRunId().map(AgentRunId::value).orElse(null);
+        String operation =
+                session == null ? "create" : run == null ? "submit" : submission.followUp() ? "followUp" : "steer";
+        var command = new CodingProtocol.Command(
+                "command",
+                operation,
+                submission.idempotencyKey(),
+                submission.idempotencyKey(),
+                new CodingProtocol.CommandTarget(productConnection.projectId(), session, run, null, null),
+                submission.text(),
+                submission.initialModelId().orElse(null),
+                null,
+                List.of());
+        var result = productClient.execute(command);
+        if ("unknown".equals(result.receipt().disposition())) {
+            throw new CodingClientException("REMOTE_OUTCOME_UNKNOWN", true);
+        }
+        if (!"accepted".equals(result.receipt().disposition())) {
+            throw new CodingClientException(
+                    Objects.requireNonNullElse(result.receipt().reasonCode(), "PRODUCT_ACTION_REJECTED"), false);
+        }
+        if (session == null && result.session() != null)
+            session = result.session().sessionId();
+        if (session == null) throw new CodingClientException("PRODUCT_RECEIPT_SCOPE_MISSING", true);
+        return new AgentSessionId(session);
+    }
+
     /** Applies a completed background submission on the single terminal UI thread. */
     public void completeMessageSubmission(MessageSubmissionResult result) {
         Objects.requireNonNull(result, "result must not be null");
+        long generation = result.submission().selectionGeneration();
+        boolean stale = generation != selection.current() && generation != selection.pending();
+        if (result.acceptedSessionWithoutView().isPresent()) {
+            if (stale) return;
+            AgentSessionId accepted = result.acceptedSessionWithoutView().orElseThrow();
+            clearSendingDraft();
+            apply(new TerminalUiAction.StatusChanged("Message accepted; restoring session view"));
+            submitMaintenanceEffect(
+                    () -> {
+                        LoadedSession loaded =
+                                readProductSession(accepted, result.submission().selectionGeneration());
+                        return () -> completeMessageSubmission(
+                                MessageSubmissionResult.succeeded(result.submission(), loaded));
+                    },
+                    code -> {
+                        if (!selection.acceptsLoad(generation)) return;
+                        selection.abandon(generation);
+                        apply(new TerminalUiAction.StatusChanged(
+                                "Message accepted; use /resume to restore the session"));
+                    });
+            return;
+        }
         if (result.failureCode().isPresent()) {
+            selection.abandon(generation);
+            if (stale) return;
             String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
+            if (productClient != null && "REMOTE_OUTCOME_UNKNOWN".equals(code)) {
+                clearSendingDraft();
+                apply(new TerminalUiAction.RecoverableFailure(code));
+                return;
+            }
             Optional<WaitingMessage> sending =
                     state.waiting().filter(value -> value.phase() == WaitingMessage.Phase.SENDING);
             if (sending.isPresent()) {
@@ -458,22 +1155,45 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         try {
             applyLoadedSession(result.loadedSession().orElseThrow());
-            if (result.submission().sessionId().isEmpty()) pendingNewSessionModelId = null;
+            if (selection.current() == generation
+                    && result.submission().sessionId().isEmpty()) {
+                pendingNewSessionModelId = null;
+            }
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
+        if (selection.current() == generation) clearSendingDraft();
+    }
+
+    private void clearSendingDraft() {
         if (state.waiting()
                 .filter(value -> value.phase() == WaitingMessage.Phase.SENDING)
                 .isPresent()) {
-            // Delivered: an in-flight draft must not outlive a successful submission.
             apply(new TerminalUiAction.WaitingChanged(Optional.empty()));
         }
     }
 
-    /** Loads an explicitly selected session; interactive session changes use background effects. */
+    /**
+     * Startup/test helper that loads an explicit Session before the tui4j update loop exists.
+     *
+     * <p>Interactive Session changes ({@code /resume}, automatic last-session load) use bounded background effects;
+     * this method must not be invoked from an update path.
+     */
     public void open(AgentSessionId sessionId) {
         automaticLastSessionLoadPending = false;
-        applyLoadedSession(readSession(client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST));
+        openSynchronously(sessionId);
+    }
+
+    private void openSynchronously(AgentSessionId sessionId) {
+        long generation = selection.begin();
+        LoadedSession loaded;
+        try {
+            loaded = loadSession(sessionId, false, generation, Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+        } catch (RuntimeException exception) {
+            selection.abandon(generation);
+            throw exception;
+        }
+        applyLoadedSession(loaded);
     }
 
     /** Starts a bounded startup intent without blocking the terminal event loop. */
@@ -482,13 +1202,13 @@ public final class CodingTerminalController implements AutoCloseable {
         try {
             switch (startup.mode()) {
                 case EMPTY -> {}
-                case SELECTOR -> showResumeOptions(client.list(projectId, 50));
+                case SELECTOR -> showResumeOptions(readTerminalSessions(null, 50));
                 case AUTO_LAST -> {
                     startAutomaticLastSessionLoad();
                     return;
                 }
                 case LAST -> {
-                    List<CodingSessionSummary> sessions = client.list(projectId, 1);
+                    List<CodingSessionSummary> sessions = readTerminalSessions(null, 1);
                     if (sessions.isEmpty()) {
                         apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
                         return;
@@ -498,6 +1218,8 @@ public final class CodingTerminalController implements AutoCloseable {
                 case SESSION -> openForResume(startup.sessionId().orElseThrow(), startup.prompt());
             }
             offerAuthenticationOnboarding();
+        } catch (CodingClientException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         } catch (IllegalArgumentException
@@ -510,36 +1232,49 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startAutomaticLastSessionLoad() {
         automaticLastSessionLoadPending = true;
+        long generation = selection.begin();
         apply(new TerminalUiAction.StatusChanged("Loading most recent session"));
         submitEffect(
                 () -> {
-                    List<CodingSessionSummary> sessions = client.list(projectId, 1);
+                    List<CodingSessionSummary> sessions = readTerminalSessions(null, 1);
                     Optional<LoadedSession> loaded = sessions.isEmpty()
                             ? Optional.empty()
-                            : Optional.of(readSession(
-                                    client.open(sessions.getFirst().sessionId()),
+                            : Optional.of(loadSession(
+                                    sessions.getFirst().sessionId(),
+                                    false,
+                                    generation,
                                     Optional.empty(),
                                     null,
                                     RunOutputCursor.BEFORE_FIRST));
-                    return () -> completeAutomaticLastSessionLoad(loaded);
+                    return () -> completeAutomaticLastSessionLoad(generation, loaded);
                 },
-                this::completeAutomaticLastSessionLoadFailure);
+                code -> completeAutomaticLastSessionLoadFailure(generation, code));
     }
 
-    private void completeAutomaticLastSessionLoad(Optional<LoadedSession> loaded) {
-        if (!automaticLastSessionLoadCanApply()) return;
+    private void completeAutomaticLastSessionLoad(long generation, Optional<LoadedSession> loaded) {
+        if (!selection.isPending(generation)) return;
+        if (!automaticLastSessionLoadCanApply()) {
+            selection.abandon(generation);
+            return;
+        }
         automaticLastSessionLoadPending = false;
         if (loaded.isPresent()) {
             applyLoadedSession(loaded.orElseThrow());
         } else {
+            selection.abandon(generation);
             apply(new TerminalUiAction.StatusChanged("Idle"));
         }
         offerAuthenticationOnboarding();
     }
 
-    private void completeAutomaticLastSessionLoadFailure(String code) {
-        if (!automaticLastSessionLoadCanApply()) return;
+    private void completeAutomaticLastSessionLoadFailure(long generation, String code) {
+        if (!selection.isPending(generation)) return;
+        if (!automaticLastSessionLoadCanApply()) {
+            selection.abandon(generation);
+            return;
+        }
         automaticLastSessionLoadPending = false;
+        selection.abandon(generation);
         apply(new TerminalUiAction.RecoverableFailure(code));
         offerAuthenticationOnboarding();
     }
@@ -553,12 +1288,20 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void offerAuthenticationOnboarding() {
         if (state.selector().isEmpty() && authentication.connectionRequired()) {
+            if (!connectionOptions.credentialSetupEnabled()) {
+                showRemoteCredentialGuidance();
+                return;
+            }
             apply(new TerminalUiAction.StatusChanged("No model is connected yet; choose a provider"));
             openConnectionCenter("");
         }
     }
 
     private void openConnectionCenter(String argument) {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            showRemoteCredentialGuidance();
+            return;
+        }
         String normalized = argument == null ? "" : argument.strip();
         if (!normalized.isEmpty()) {
             routeConnectionArgument(normalized);
@@ -669,6 +1412,14 @@ public final class CodingTerminalController implements AutoCloseable {
             startAntigravityLogin();
             return;
         }
+        if ("opencode".equals(provider) || "opencode-go".equals(provider)) {
+            if (parts.length > 1 && "device".equals(parts[1])) {
+                startOpenCodeGoLogin();
+            } else {
+                openProviderMethods("opencode-go");
+            }
+            return;
+        }
         openProviderMethods(provider);
     }
 
@@ -723,6 +1474,10 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void startAuthenticationMethod(
             CodingAuthenticationProviderView provider, CodingAuthenticationMethodView method) {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            showRemoteCredentialGuidance();
+            return;
+        }
         if (!method.available()) {
             apply(new TerminalUiAction.RecoverableFailure(
                     method.unavailableReason().orElse("AUTH_METHOD_UNSUPPORTED")));
@@ -741,12 +1496,32 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
             }
             case "google-antigravity" -> startAntigravityLogin();
+            case "opencode-go" -> startOpenCodeGoLogin();
             default -> apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
         }
     }
 
+    private final java.util.Map<
+                    AgentSessionId,
+                    io.haifa.agent.application.project.product.coding.client.CodingSessionApprovalStatus.State>
+            approvalStates = new java.util.HashMap<>();
+
+    private void showRemoteCredentialGuidance() {
+        apply(new TerminalUiAction.StatusChanged(REMOTE_CREDENTIAL_SETUP_GUIDANCE));
+        connectionOptions
+                .credentialSetupInstructions()
+                .ifPresent(instructions -> apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                        "remote-auth-guidance",
+                        "Authenticate locally on the Host",
+                        List.of("Local repair instructions", "Close"),
+                        0,
+                        List.of(
+                                TerminalSelectorDetail.plain(instructions),
+                                TerminalSelectorDetail.plain("Close these instructions"))))));
+    }
+
     private void openForResume(AgentSessionId sessionId, Optional<String> prompt) {
-        open(sessionId);
+        openSynchronously(sessionId);
         if (prompt.isEmpty()) return;
         String text = prompt.orElseThrow();
         if (state.currentRunId().isPresent()) {
@@ -758,20 +1533,178 @@ public final class CodingTerminalController implements AutoCloseable {
         completeMessageSubmission(executeMessageSubmission(submission));
     }
 
+    /** Connection maintenance is independent of sidebar visibility and stays on the maintenance lane. */
+    public void refreshConnection() {
+        refreshConnection(System.currentTimeMillis());
+    }
+
+    void refreshConnection(long nowMillis) {
+        refreshShell(nowMillis);
+        if (closed || connectionCheckInFlight) return;
+        if (nowMillis >= connectionCheckedAtMillis && nowMillis - connectionCheckedAtMillis < 15_000) return;
+        connectionCheckInFlight = true;
+        connectionCheckedAtMillis = nowMillis;
+        Optional<AgentSessionId> consentSession = connectionOptions.sessionConsentEnabled()
+                ? state.session().map(value -> value.summary().sessionId())
+                : Optional.empty();
+        submitMaintenanceEffect(
+                () -> {
+                    if (productClient != null) productClient.renew();
+                    var currentProduct = productClient == null ? null : productClient.connection();
+                    var renewedProduct = Objects.equals(currentProduct, productConnection) ? null : currentProduct;
+                    boolean replacedProduct = renewedProduct != null;
+                    boolean replaced = productClient == null && client.renewConnection();
+                    var consent = productClient == null
+                            ? consentSession.flatMap(client::sessionApprovalStatus)
+                            : Optional
+                                    .<io.haifa.agent.application.project.product.coding.client
+                                                    .CodingSessionApprovalStatus>
+                                            empty();
+                    return () -> {
+                        consent.ifPresent(value -> {
+                            AgentSessionId id = consentSession.orElseThrow();
+                            var previous = approvalStates.get(id);
+                            approvalStates.clear();
+                            approvalStates.put(id, value.state());
+                            if (state.session()
+                                            .map(session -> session.summary().sessionId())
+                                            .filter(id::equals)
+                                            .isPresent()
+                                    && value.state() != previous
+                                    && (previous != null
+                                            || value.state()
+                                                    != io.haifa.agent.application.project.product.coding.client
+                                                            .CodingSessionApprovalStatus.State.ASK)) {
+                                apply(new TerminalUiAction.StatusChanged(
+                                        switch (value.state()) {
+                                            case ACTIVE ->
+                                                "Session approval active · client lease; /approval reset to revoke";
+                                            case PENDING -> "Session approval requested · awaiting application";
+                                            case ASK -> "Session approval expired or revoked · ask each time";
+                                        }));
+                            }
+                        });
+                        connectionCheckInFlight = false;
+                        if (renewedProduct != null) {
+                            productConnection = renewedProduct;
+                            closeProductObservation();
+                            closePreviewSubscription();
+                        }
+                        if (replaced || replacedProduct || connectionUnavailable) {
+                            connectionUnavailable = false;
+                            connectionFailureCode = null;
+                            apply(new TerminalUiAction.ConnectionRestored("Host connection restored"));
+                        }
+                        if (replaced
+                                || replacedProduct
+                                || (productClient != null
+                                        && productObservation == null
+                                        && state.session().isPresent()
+                                        && !awaitingNewSessionMessage)) {
+                            scheduleReconcile(true);
+                        }
+                    };
+                },
+                code -> {
+                    connectionCheckInFlight = false;
+                    connectionUnavailable = true;
+                    if (!code.equals(connectionFailureCode)) {
+                        connectionFailureCode = code;
+                        if (state.recoverableError()
+                                .filter("REMOTE_OUTCOME_UNKNOWN"::equals)
+                                .isPresent()) {
+                            apply(new TerminalUiAction.StatusChanged(
+                                    "Host connection unavailable; previous command outcome remains unknown"));
+                        } else {
+                            apply(new TerminalUiAction.RecoverableFailure(code));
+                        }
+                    }
+                });
+    }
+
+    /**
+     * Refreshes the sidebar task list at most once per interval.
+     *
+     * <p>D6 freezes the sidebar to bounded {@code session/list} polling without cursor pagination, so this runs on the
+     * periodic tick and is skipped while another refresh is still in flight. It never runs per tool delta, and it never
+     * touches the transcript, the selection generation or the current Run: a stale list only mislabels rows until the
+     * next poll, while a cancelled Run would be unrecoverable.
+     */
+    public void refreshSessionRows() {
+        // The list only exists to fill the sidebar, so a collapsed sidebar must not poll the Host at all.
+        if (!state.sidebarVisible()) return;
+        long now = System.currentTimeMillis();
+        if (sessionRowsInFlight || now - sessionRowsFetchedAtMillis < SESSION_ROWS_POLL_INTERVAL_MILLIS) return;
+        sessionRowsInFlight = true;
+        submitControlEffect(
+                () -> {
+                    List<TerminalSessionRow> rows =
+                            TerminalSessionRow.ordered(readTerminalSessions(null, TerminalUiState.MAX_SESSION_ROWS));
+                    return () -> {
+                        sessionRowsInFlight = false;
+                        sessionRowsFetchedAtMillis = System.currentTimeMillis();
+                        apply(new TerminalUiAction.SessionRowsLoaded(rows));
+                    };
+                },
+                code -> {
+                    sessionRowsInFlight = false;
+                    sessionRowsFetchedAtMillis = System.currentTimeMillis();
+                });
+    }
+
+    /** Moves the sidebar cursor by a bounded delta from the keyboard. */
+    public void moveSessionRow(int delta) {
+        apply(new TerminalUiAction.SessionRowMoved(delta));
+    }
+
+    /**
+     * Opens the Session under the sidebar cursor, or a specific row, without cancelling the current Run.
+     *
+     * <p>Switching only changes what this TUI observes. The previous Session's Run keeps running on the Host: the old
+     * observation subscription is replaced by the load path, and this method never calls {@code cancel}. A failed load
+     * reports the stable error and leaves the current Session installed instead of showing a half-loaded one.
+     */
+    public void openSidebarSelection() {
+        state.selectedSessionRow().ifPresent(row -> openSidebarRow(row.sessionId()));
+    }
+
+    public void openSidebarRow(AgentSessionId sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        if (state.session()
+                .map(current -> current.summary().sessionId().equals(sessionId))
+                .orElse(false)) {
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("Opening session"));
+        long generation = selection.begin();
+        submitEffect(
+                () -> {
+                    LoadedSession loaded = loadSession(
+                            sessionId, false, generation, Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                    return () -> applyLoadedSession(loaded);
+                },
+                code -> completeSelectionFailure(generation, code));
+    }
+
     public void drainEvents() {
         try {
             drainEventsGuarded();
+        } catch (CodingClientException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
     }
 
     private void drainEventsGuarded() {
+        drainDeferredCleanup();
+        tryObservationRecovery();
         drainEffectCompletions();
+        drainProductObservation();
         boolean reconcile = pump.consumeOverflow();
         for (TerminalUiAction action : pump.drain(PAGE_SIZE)) {
             apply(action);
-            interactionHydration(action).ifPresent(this::scheduleInteractionHydration);
+            if (productClient == null) interactionHydration(action).ifPresent(this::scheduleInteractionHydration);
         }
         if (subscription != null
                 && subscription.closed()
@@ -793,7 +1726,7 @@ public final class CodingTerminalController implements AutoCloseable {
         drainEffectCompletions();
     }
 
-    private static Optional<InteractionHydrationRequest> interactionHydration(TerminalUiAction action) {
+    private Optional<InteractionHydrationRequest> interactionHydration(TerminalUiAction action) {
         if (!(action instanceof TerminalUiAction.RunEventReceived received)
                 || !(received.event().payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle)) {
             return Optional.empty();
@@ -801,7 +1734,165 @@ public final class CodingTerminalController implements AutoCloseable {
         if (!lifecycle.state().equals("PENDING") && !lifecycle.state().equals("REQUESTED")) {
             return Optional.empty();
         }
-        return Optional.of(new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId()));
+        return Optional.of(
+                new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId(), selection.current()));
+    }
+
+    private void updateProductInteraction(CodingProtocol.Snapshot snapshot) {
+        if (!"ready".equals(snapshot.hydration())) return;
+        var pending = snapshot.entries().stream()
+                .filter(entry -> "interaction".equals(entry.kind()) && "PENDING".equals(entry.status()))
+                .filter(entry -> entry.interaction() != null)
+                .findFirst()
+                .orElse(null);
+        var target = pending == null
+                ? null
+                : new CodingProtocol.Target(
+                        snapshot.scope().sessionId(),
+                        pending.runId(),
+                        pending.interaction().id(),
+                        pending.interaction().revision());
+        String viewId = snapshot.scope().viewId();
+        if (Objects.equals(productPendingTarget, target) && Objects.equals(productPendingViewId, viewId)) return;
+        clearProductInteraction();
+        productPendingViewId = viewId;
+        productPendingTarget = target;
+        if (target != null) prepareProductInteraction(target);
+    }
+
+    private void clearProductInteraction() {
+        var previous = productPendingTarget;
+        productPendingTarget = null;
+        productPendingViewId = null;
+        productInteractionOptions = List.of();
+        if (previous == null) return;
+        if (clarificationDraft != null && previous.equals(clarificationDraft.productTarget())) {
+            clarificationDraft = null;
+            awaitingClarificationText = false;
+        }
+        state.selector()
+                .filter(selector -> selector.kind().equals("interaction:" + previous.interactionId())
+                        || selector.kind().equals("clarification:" + previous.interactionId()))
+                .ifPresent(ignored -> apply(new TerminalUiAction.SelectorClosed()));
+    }
+
+    private void prepareProductInteraction(CodingProtocol.Target target) {
+        var observation = productObservation;
+        String viewId = productPendingViewId;
+        if (observation == null || !ownsProductInteraction(observation, viewId, target)) return;
+        String requestId = UUID.randomUUID().toString();
+        var request = new CodingProtocol.Command(
+                "command",
+                "prepareApproval",
+                requestId,
+                null,
+                new CodingProtocol.CommandTarget(
+                        projectId.value(),
+                        target.sessionId(),
+                        target.runId(),
+                        target.interactionId(),
+                        target.targetRevision()),
+                null,
+                null,
+                null,
+                List.of());
+        submitControlEffect(
+                () -> {
+                    if (!observation.hasAuthority(viewId)) return () -> {};
+                    var result = requireAcceptedProductResult(productClient.execute(request));
+                    return () -> {
+                        if (!ownsProductInteraction(observation, viewId, target)) return;
+                        if (result.interaction() != null) showProductInteraction(target, result.interaction());
+                    };
+                },
+                code -> {
+                    if (ownsProductInteraction(observation, viewId, target)) {
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    }
+                });
+    }
+
+    private boolean ownsProductInteraction(
+            TerminalProductObservation observation, String viewId, CodingProtocol.Target target) {
+        return productObservation == observation
+                && productSnapshot != null
+                && productSnapshot.scope().viewId().equals(viewId)
+                && observation.hasAuthority(viewId)
+                && "ready".equals(productSnapshot.hydration())
+                && target.equals(productPendingTarget);
+    }
+
+    private void showProductInteraction(CodingProtocol.Target target, CodingProtocol.Entry entry) {
+        var interaction = entry.interaction();
+        if (interaction == null
+                || !Objects.equals(entry.runId(), target.runId())
+                || !interaction.id().equals(target.interactionId())
+                || interaction.revision() != target.targetRevision()
+                || interaction.actions().stream().anyMatch(action -> !target.equals(action.target()))) {
+            throw new CodingClientException("INTERACTION_TARGET_MISMATCH", false);
+        }
+        var actions = interaction.actions().stream()
+                .filter(CodingProtocol.Action::available)
+                .filter(action -> !"allowForSession".equals(action.kind()) || connectionOptions.sessionConsentEnabled())
+                .toList();
+        var questions = interaction.input().questions();
+        if (!questions.isEmpty()) {
+            var clarification = new ClarificationDetails(
+                    entry.title(),
+                    questions.stream()
+                            .map(q -> new ClarificationDetails.Question(
+                                    q.header(),
+                                    q.question(),
+                                    q.multiple(),
+                                    q.allowCustom(),
+                                    q.options().stream()
+                                            .map(option -> new ClarificationDetails.Option(
+                                                    option.id(),
+                                                    option.label(),
+                                                    Optional.ofNullable(option.description())))
+                                            .toList()))
+                            .toList());
+            apply(new TerminalUiAction.InteractionCardChanged(
+                    entry.id(), entry.status(), true, clarification.toApprovalDetails()));
+            if (actions.stream().noneMatch(action -> "submit".equals(action.choice()))) return;
+            if (clarificationDraft == null || !target.equals(clarificationDraft.productTarget())) {
+                clarificationDraft = new ClarificationDraft(null, target, clarification);
+            }
+            if (!clarificationSelectorOpen()) {
+                apply(new TerminalUiAction.StatusChanged("Awaiting your clarification answer"));
+                openClarificationSelector(0);
+            }
+            return;
+        }
+        var review = interaction.review();
+        List<String> choices = actions.stream()
+                .map(action -> "allowForSession".equals(action.kind())
+                        ? ApprovalDetails.SESSION_APPROVAL_ACTION
+                        : action.choice())
+                .toList();
+        if (review != null) {
+            var details = new ApprovalDetails(
+                    entry.title(),
+                    review.purpose(),
+                    review.contentType(),
+                    review.content(),
+                    review.environment().stream()
+                            .map(fact -> new ApprovalDetails.Fact(fact.label(), fact.value()))
+                            .toList(),
+                    review.technical().stream()
+                            .map(fact -> new ApprovalDetails.Fact(fact.label(), fact.value()))
+                            .toList(),
+                    Optional.ofNullable(review.risk()),
+                    choices);
+            apply(new TerminalUiAction.InteractionCardChanged(entry.id(), entry.status(), false, details));
+        }
+        if (actions.isEmpty()) return;
+        productInteractionOptions = actions;
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "interaction:" + interaction.id(),
+                "Approval · " + entry.title(),
+                choices.stream().map(ApprovalDetails::actionLabel).toList(),
+                0)));
     }
 
     private void scheduleInteractionHydration(InteractionHydrationRequest request) {
@@ -815,8 +1906,9 @@ public final class CodingTerminalController implements AutoCloseable {
         interactionHydrationInFlight = request;
         submitControlEffect(
                 () -> {
-                    Optional<CodingApprovalPrompt> interaction =
-                            client.pendingInteraction(request.runId()).flatMap(client::prepareApproval);
+                    Optional<CodingApprovalPrompt> interaction = client.pendingInteraction(request.runId())
+                            .filter(pending -> pending.requestId().value().equals(request.requestId()))
+                            .flatMap(client::prepareApproval);
                     return () -> completeInteractionHydration(request, interaction);
                 },
                 code -> {
@@ -829,6 +1921,7 @@ public final class CodingTerminalController implements AutoCloseable {
             InteractionHydrationRequest request, Optional<CodingApprovalPrompt> interaction) {
         if (!request.equals(interactionHydrationInFlight)) return;
         interactionHydrationInFlight = null;
+        if (request.generation() != selection.current()) return;
         if (state.currentRunId().filter(request.runId()::equals).isEmpty() || !interactionStillPending(request)) return;
         interaction
                 .filter(value -> value.interaction().requestId().value().equals(request.requestId()))
@@ -865,6 +1958,9 @@ public final class CodingTerminalController implements AutoCloseable {
                 Runnable completion;
                 try {
                     completion = Objects.requireNonNull(work.get(), "effect completion must not be null");
+                } catch (CodingClientException exception) {
+                    String code = exception.outcomeUnknown() ? "REMOTE_OUTCOME_UNKNOWN" : exception.code();
+                    completion = () -> failure.accept(code);
                 } catch (ProjectProductException exception) {
                     completion = () -> failure.accept(exception.code());
                 } catch (IllegalArgumentException
@@ -923,6 +2019,9 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(routingText, "routingText must not be null");
         try {
             acceptGuarded(input, routingText);
+        } catch (CodingClientException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(
+                    exception.outcomeUnknown() ? "REMOTE_OUTCOME_UNKNOWN" : exception.code()));
         } catch (ProjectProductException exception) {
             if ((input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)
                     && !input.text().isBlank()) {
@@ -966,7 +2065,32 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    /**
+     * Keeps an unsent composer draft with the Session it was typed in and installs the target Session's draft.
+     *
+     * <p>Switching only changes what this TUI observes, so the text being typed belongs to the Session that was
+     * displayed when it was typed: it must not follow the editor into the next Session, and returning must find it
+     * again. Paste placeholders travel as their token text, which the same model keeps expandable. Drafts are local
+     * to this process; text that was never submitted is never sent to the Host.
+     */
+    private void swapComposerDraft(AgentSessionId target, TerminalSessionView previous) {
+        if (previous != null) {
+            sessionDrafts.put(
+                    previous.summary().sessionId(), new ComposerDraft(state.editorBuffer(), state.editorCursor()));
+            while (sessionDrafts.size() > MAX_CACHED_SESSION_DRAFTS) {
+                sessionDrafts.remove(sessionDrafts.keySet().iterator().next());
+            }
+        }
+        ComposerDraft restored = sessionDrafts.remove(target);
+        apply(new TerminalUiAction.EditorChanged(
+                restored == null ? "" : restored.buffer(), restored == null ? 0 : restored.cursor()));
+    }
+
+    /** One Session's unsent composer text and cursor. */
+    private record ComposerDraft(String buffer, int cursor) {}
+
     private void acceptGuarded(TerminalInput input, String routingText) {
+        if (productClient != null) drainProductObservation();
         if (clarificationDraft != null
                 && state.selector().isEmpty()
                 && (input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)) {
@@ -1165,7 +2289,8 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS
                 || input.kind() == TerminalInput.Kind.SELECT_NEXT
-                || input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
+                || input.kind() == TerminalInput.Kind.NAVIGATE_BACK
+                || input.kind() == TerminalInput.Kind.NAVIGATE_FORWARD) {
             return;
         }
         submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP, routingText);
@@ -1332,16 +2457,20 @@ public final class CodingTerminalController implements AutoCloseable {
                 state.session().map(value -> value.summary().sessionId());
         Optional<AgentRunId> activeRunId = state.currentRunId();
         Optional<String> initialModelId = Optional.empty();
+        long generation;
         if (awaitingNewSessionMessage || sessionId.isEmpty()) {
+            generation = selection.begin();
             awaitingNewSessionMessage = false;
             sessionId = Optional.empty();
             activeRunId = Optional.empty();
             initialModelId = Optional.ofNullable(pendingNewSessionModelId);
+        } else {
+            generation = selection.current();
         }
         if (clearEditor) {
             apply(new TerminalUiAction.EditorChanged("", 0));
         }
-        apply(new TerminalUiAction.UserMessageCommitted(key, text));
+        if (productClient == null) apply(new TerminalUiAction.UserMessageCommitted(key, text));
         apply(new TerminalUiAction.StatusChanged("Submitting"));
         return new PreparedMessageSubmission(
                 text,
@@ -1352,11 +2481,13 @@ public final class CodingTerminalController implements AutoCloseable {
                 initialModelId,
                 state.appliedCursor(),
                 outputRunId,
-                outputCursor);
+                outputCursor,
+                generation);
     }
 
     private void shell(String input) {
-        CodingSessionView current = requireCurrentSession();
+        TerminalSessionView current = requireCurrentSession();
+        SelectionToken token = currentSelection();
         boolean includeInContext = !input.startsWith("!!");
         int prefix = includeInContext ? 1 : 2;
         String command = input.substring(prefix).strip();
@@ -1364,10 +2495,45 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Checking shell command"));
         submitEffect(
                 () -> {
-                    CodingShellPlan plan = client.planShell(current.summary().sessionId(), command, includeInContext);
-                    return () -> completeShellPlan(plan);
+                    var session = current.summary().sessionId();
+                    CodingShellPlan plan = productClient == null
+                            ? client.planShell(session, command, includeInContext)
+                            : TerminalProductFacts.plan(executeTerminalProduct(
+                                            "shellPlan", session, null, null, command, null, false, includeInContext)
+                                    .shellPlan());
+                    return () -> {
+                        if (isCurrentSelection(token)) completeShellPlan(plan);
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private List<String> workspaceSummaryOptions() {
+        List<String> options = new ArrayList<>();
+        if (!state.footer().project().isBlank()) {
+            options.add("Directory: " + state.footer().project());
+        }
+        if (!state.footer().gitBranch().isBlank()) {
+            options.add("Git branch: " + state.footer().gitBranch());
+        }
+        if (!state.footer().worktree().isBlank()) {
+            options.add("Worktree: " + state.footer().worktree());
+            options.add("Worktree branch: "
+                    + (state.footer().worktreeBranch().isBlank()
+                            ? "unavailable"
+                            : state.footer().worktreeBranch()));
+        }
+        if (!executionDestination().isBlank()) options.add(executionDestination());
+        return List.copyOf(options);
+    }
+
+    private String executionDestination() {
+        return connectionOptions
+                .executionLocation()
+                .map(value -> "Host workspace: " + value)
+                .orElse("");
     }
 
     private void completeShellPlan(CodingShellPlan plan) {
@@ -1379,7 +2545,18 @@ public final class CodingTerminalController implements AutoCloseable {
             pendingShellPlan = plan;
             apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                     "shell-approval",
-                    "Run governed shell command?",
+                    connectionOptions
+                            .executionLocation()
+                            .map(location -> "Run command on Host: "
+                                    + location.codePoints()
+                                            .limit(96)
+                                            .collect(
+                                                    StringBuilder::new,
+                                                    StringBuilder::appendCodePoint,
+                                                    StringBuilder::append)
+                                            .toString()
+                                    + (location.codePointCount(0, location.length()) > 96 ? "…" : ""))
+                            .orElse("Run governed shell command?"),
                     List.of("Approve once: " + plan.safeCommand(), "Deny"),
                     1)));
             return;
@@ -1388,19 +2565,220 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void scheduleShellExecution(CodingShellPlan plan, boolean approved) {
+        SelectionToken token = currentSelection();
+        if (productClient != null || client.recoverableShell()) {
+            observeShell(plan.sessionId(), plan.token());
+            shellLabels.put(plan.token(), (plan.includeInContext() ? "!" : "!!") + plan.safeCommand());
+            if (shellLabels.size() > 128)
+                shellLabels.remove(shellLabels.keySet().iterator().next());
+            apply(new TerminalUiAction.StatusChanged("Starting Shell " + plan.token()
+                    + "; closing the TUI does not cancel it. /shell to recover; /shell cancel " + plan.token()
+                    + " to cancel"));
+            submitEffect(
+                    () -> {
+                        CodingShellExecution receipt = productClient == null
+                                ? client.startShell(plan.token(), approved)
+                                : TerminalProductFacts.shell(executeTerminalProduct(
+                                                "shellStart",
+                                                plan.sessionId(),
+                                                null,
+                                                null,
+                                                null,
+                                                plan.token(),
+                                                approved,
+                                                plan.includeInContext())
+                                        .shellExecution());
+                        return () -> {
+                            if (isCurrentSelection(token)) showShell(receipt);
+                        };
+                    },
+                    code -> {
+                        stopObservingShell(plan.sessionId(), plan.token());
+                        if (isCurrentSelection(token)) {
+                            if ("REMOTE_OUTCOME_UNKNOWN".equals(code)) {
+                                showShellUnknown(plan.token());
+                                apply(new TerminalUiAction.StatusChanged(
+                                        "Shell " + plan.token() + " may still be active on Host; /shell " + plan.token()
+                                                + " queries it without replay"));
+                            } else apply(new TerminalUiAction.RecoverableFailure(code));
+                        }
+                    });
+            return;
+        }
         apply(new TerminalUiAction.StatusChanged("Running shell command"));
         submitEffect(
                 () -> {
                     CodingShellResult result = client.executeShell(plan.token(), approved);
-                    return () -> completeShell(plan, result);
+                    return () -> {
+                        if (isCurrentSelection(token)) completeShell(plan, result);
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private void showShellUnknown(String id) {
+        apply(new TerminalUiAction.ShellCompleted(
+                shellLabels.getOrDefault(id, "Shell " + id),
+                "Shell " + id + " may still be active on the Host. /shell " + id
+                        + " queries its outcome without replay. Do not blindly resend it.",
+                "UNKNOWN",
+                executionDestination(),
+                id));
+    }
+
+    private void observeShell(AgentSessionId session, String id) {
+        observedShells
+                .computeIfAbsent(session, ignored -> new java.util.LinkedHashSet<>())
+                .add(id);
+    }
+
+    private void stopObservingShell(AgentSessionId session, String id) {
+        var ids = observedShells.get(session);
+        if (ids != null && ids.remove(id) && ids.isEmpty()) observedShells.remove(session);
+    }
+
+    private void refreshShell(long now) {
+        if (closed || shellPollInFlight || state.session().isEmpty()) return;
+        AgentSessionId session = state.session().orElseThrow().summary().sessionId();
+        var ids = observedShells.get(session);
+        if (ids == null || ids.isEmpty() || now - shellPolledAtMillis < 1000) return;
+        var requested = java.util.Set.copyOf(ids);
+        shellPolledAtMillis = now;
+        shellPollInFlight = true;
+        SelectionToken selection = currentSelection();
+        submitMaintenanceEffect(
+                () -> {
+                    var retained = readShellExecutions(session);
+                    List<CodingShellExecution> receipts = new ArrayList<>();
+                    for (var receipt : retained) {
+                        if (!requested.contains(receipt.executionId())) continue;
+                        receipts.add(
+                                receipt.state() == CodingShellExecution.State.RUNNING
+                                        ? receipt
+                                        : readShellExecution(session, receipt.executionId()));
+                    }
+                    return () -> {
+                        shellPollInFlight = false;
+                        if (!isCurrentSelection(selection)) return;
+                        for (String id : requested) {
+                            if (receipts.stream()
+                                    .noneMatch(receipt -> receipt.executionId().equals(id))) {
+                                stopObservingShell(session, id);
+                                apply(new TerminalUiAction.RecoverableFailure("SHELL_EXECUTION_UNAVAILABLE"));
+                            }
+                        }
+                        receipts.forEach(this::showShell);
+                    };
+                },
+                code -> {
+                    shellPollInFlight = false;
+                    requested.forEach(id -> stopObservingShell(session, id));
+                    if (isCurrentSelection(selection))
+                        apply(new TerminalUiAction.StatusChanged(
+                                "Shell commands may still be active; /shell to query retained receipts (" + code
+                                        + ")"));
+                });
+    }
+
+    private void showShell(CodingShellExecution receipt) {
+        if (receipt.state() == CodingShellExecution.State.RUNNING) {
+            observeShell(receipt.sessionId(), receipt.executionId());
+            apply(new TerminalUiAction.StatusChanged("Shell " + receipt.executionId()
+                    + (receipt.cancellationRequested() ? " cancelling on Host" : " running on Host")
+                    + "; /shell cancel " + receipt.executionId() + " to cancel"));
+        } else {
+            stopObservingShell(receipt.sessionId(), receipt.executionId());
+            String summary = receipt.result()
+                    .map(CodingShellResult::safeSummary)
+                    .orElse("Shell outcome unknown; do not replay the command. "
+                            + receipt.errorCode().orElse(""));
+            String process =
+                    receipt.result().map(CodingShellResult::processState).orElse("UNKNOWN");
+            apply(new TerminalUiAction.ShellCompleted(
+                    shellLabels.getOrDefault(receipt.executionId(), "Shell " + receipt.executionId()),
+                    summary,
+                    process,
+                    executionDestination(),
+                    receipt.executionId()));
+            apply(new TerminalUiAction.StatusChanged("Shell " + receipt.executionId() + ": " + process));
+        }
+    }
+
+    private void shellCommand(String argument) {
+        TerminalSessionView current = requireCurrentSession();
+        AgentSessionId session = current.summary().sessionId();
+        SelectionToken selection = currentSelection();
+        String[] parts = argument.strip().split("\\s+", 2);
+        boolean cancel = parts[0].equalsIgnoreCase("cancel");
+        String id = cancel && parts.length == 2 ? parts[1].strip() : argument.strip();
+        if (cancel && (parts.length != 2 || id.isEmpty())) {
+            apply(new TerminalUiAction.StatusChanged("Usage: /shell [execution-id] or /shell cancel execution-id"));
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged(cancel ? "Cancelling Shell " + id : "Checking Shell executions"));
+        Supplier<Runnable> work = () -> {
+            if (id.isEmpty()) {
+                var receipts = readShellExecutions(session);
+                String summary = receipts.isEmpty()
+                        ? "No retained Shell executions for this Session"
+                        : receipts.stream()
+                                        .map(r -> r.executionId() + " " + r.state()
+                                                + (r.cancellationRequested() ? " (cancellation requested)" : ""))
+                                        .collect(java.util.stream.Collectors.joining("\n"))
+                                + "\n/shell execution-id shows output; /shell cancel execution-id cancels";
+                return () -> {
+                    if (isCurrentSelection(selection))
+                        apply(new TerminalUiAction.ShellCompleted(
+                                "Shell executions", summary, "STATUS", executionDestination(), "receipt-list"));
+                };
+            }
+            CodingShellExecution receipt = cancel ? cancelShellExecution(session, id) : readShellExecution(session, id);
+            return () -> {
+                if (isCurrentSelection(selection)) showShell(receipt);
+            };
+        };
+        if (cancel)
+            submitControlEffect(work, code -> {
+                if (isCurrentSelection(selection)) apply(new TerminalUiAction.RecoverableFailure(code));
+            });
+        else
+            submitEffect(work, code -> {
+                if (isCurrentSelection(selection)) apply(new TerminalUiAction.RecoverableFailure(code));
+            });
+    }
+
+    private List<CodingShellExecution> readShellExecutions(AgentSessionId session) {
+        if (productClient == null) return client.shellExecutions(session);
+        return queryTerminalProduct("shellList", session, null, 100).shellExecutions().stream()
+                .map(TerminalProductFacts::shell)
+                .toList();
+    }
+
+    private CodingShellExecution readShellExecution(AgentSessionId session, String execution) {
+        if (productClient == null) return client.shellExecution(session, execution);
+        var request = new CodingProtocol.Query("shellGet", terminalProductTarget(session, null), null, 1, execution);
+        return TerminalProductFacts.shell(
+                productClient.query(request).shellExecutions().getFirst());
+    }
+
+    private CodingShellExecution cancelShellExecution(AgentSessionId session, String execution) {
+        if (productClient == null) return client.cancelShell(session, execution);
+        return TerminalProductFacts.shell(
+                executeTerminalProduct("shellCancel", session, null, null, null, execution, false, false)
+                        .shellExecution());
+    }
+
+    private void discardShell(CodingShellPlan plan) {
+        if (productClient == null) client.discardShell(plan.token());
+        else executeTerminalProduct("shellDiscard", plan.sessionId(), null, null, null, plan.token(), false, false);
     }
 
     private void completeShell(CodingShellPlan plan, CodingShellResult result) {
         String prefix = plan.includeInContext() ? "!" : "!!";
         apply(new TerminalUiAction.ShellCompleted(
-                prefix + plan.safeCommand(), result.safeSummary(), result.processState()));
+                prefix + plan.safeCommand(), result.safeSummary(), result.processState(), executionDestination()));
         apply(new TerminalUiAction.StatusChanged(
                 result.includedInContext()
                         ? "Shell result added to Session context"
@@ -1447,7 +2825,8 @@ public final class CodingTerminalController implements AutoCloseable {
             Optional<String> initialModelId,
             Optional<RunEventCursor> appliedCursor,
             AgentRunId outputRunId,
-            RunOutputCursor outputCursor) {
+            RunOutputCursor outputCursor,
+            long selectionGeneration) {
         public PreparedMessageSubmission {
             text = Objects.requireNonNull(text, "text must not be null");
             idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
@@ -1460,22 +2839,36 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public record MessageSubmissionResult(
-            PreparedMessageSubmission submission, Optional<LoadedSession> loadedSession, Optional<String> failureCode) {
+            PreparedMessageSubmission submission,
+            Optional<LoadedSession> loadedSession,
+            Optional<String> failureCode,
+            Optional<AgentSessionId> acceptedSessionWithoutView) {
         public MessageSubmissionResult {
             submission = Objects.requireNonNull(submission, "submission must not be null");
             loadedSession = Objects.requireNonNull(loadedSession, "loadedSession must not be null");
             failureCode = Objects.requireNonNull(failureCode, "failureCode must not be null");
-            if (loadedSession.isPresent() == failureCode.isPresent()) {
+            acceptedSessionWithoutView = Objects.requireNonNull(acceptedSessionWithoutView);
+            int outcomes = (loadedSession.isPresent() ? 1 : 0)
+                    + (failureCode.isPresent() ? 1 : 0)
+                    + (acceptedSessionWithoutView.isPresent() ? 1 : 0);
+            if (outcomes != 1) {
                 throw new IllegalArgumentException("submission result must contain exactly one outcome");
             }
         }
 
         static MessageSubmissionResult succeeded(PreparedMessageSubmission submission, LoadedSession loadedSession) {
-            return new MessageSubmissionResult(submission, Optional.of(loadedSession), Optional.empty());
+            return new MessageSubmissionResult(
+                    submission, Optional.of(loadedSession), Optional.empty(), Optional.empty());
+        }
+
+        static MessageSubmissionResult acceptedWithoutView(
+                PreparedMessageSubmission submission, AgentSessionId sessionId) {
+            return new MessageSubmissionResult(submission, Optional.empty(), Optional.empty(), Optional.of(sessionId));
         }
 
         static MessageSubmissionResult failed(PreparedMessageSubmission submission, String failureCode) {
-            return new MessageSubmissionResult(submission, Optional.empty(), Optional.of(failureCode));
+            return new MessageSubmissionResult(
+                    submission, Optional.empty(), Optional.of(failureCode), Optional.empty());
         }
     }
 
@@ -1491,15 +2884,8 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
-            case RESUME -> {
-                apply(new TerminalUiAction.StatusChanged("Searching sessions"));
-                submitEffect(
-                        () -> {
-                            List<CodingSessionSummary> found = client.search(projectId, argument, 50);
-                            return () -> showResumeOptions(found);
-                        },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
-            }
+            case HISTORY -> loadEarlierProductHistory();
+            case RESUME -> requestSessionSelector(argument);
             case RENAME -> {
                 if (state.session().isEmpty()) {
                     apply(new TerminalUiAction.StatusChanged("No active session to rename"));
@@ -1530,7 +2916,14 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.StatusChanged("Reloading resources"));
                 submitEffect(
                         () -> {
-                            List<String> resources = client.reloadResources();
+                            List<String> resources;
+                            if (productClient == null) {
+                                resources = client.reloadResources();
+                            } else {
+                                executeTerminalProduct("resourcesReload", null, null, null);
+                                resources = queryTerminalProduct("resources", null, 100)
+                                        .lines();
+                            }
                             return () -> {
                                 apply(new TerminalUiAction.ResourcesChanged(resources));
                                 apply(new TerminalUiAction.StatusChanged("Resources reloaded for future new Runs"));
@@ -1539,35 +2932,40 @@ public final class CodingTerminalController implements AutoCloseable {
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case COMPACT -> {
-                CodingSessionView current = requireCurrentSession();
+                TerminalSessionView current = requireCurrentSession();
+                SelectionToken token = currentSelection();
                 apply(new TerminalUiAction.StatusChanged("Compacting session context"));
                 submitEffect(
                         () -> {
-                            CodingSessionView reconciled =
-                                    client.reconcile(current.summary().sessionId());
-                            var result = client.compact(reconciled.summary().sessionId(), argument);
+                            String indicator = compactSession(current.summary().sessionId(), argument);
                             return () -> {
-                                apply(new TerminalUiAction.ContextChanged(result.safeIndicator()));
+                                if (!isCurrentSelection(token)) return;
+                                apply(new TerminalUiAction.ContextChanged(indicator));
                                 apply(new TerminalUiAction.StatusChanged("Session context compacted"));
                             };
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> {
+                            if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                        });
             }
+            case SHELL -> shellCommand(argument);
             case EXPORT -> {
-                CodingSessionView current = requireCurrentSession();
+                TerminalSessionView current = requireCurrentSession();
+                SelectionToken token = currentSelection();
                 apply(new TerminalUiAction.StatusChanged("Exporting session"));
                 submitEffect(
                         () -> {
-                            CodingSessionView reconciled =
-                                    client.reconcile(current.summary().sessionId());
-                            var exported = client.export(reconciled.summary().sessionId(), argument);
+                            var exported = exportSession(current.summary().sessionId(), argument);
                             return () -> {
+                                if (!isCurrentSelection(token)) return;
                                 apply(new TerminalUiAction.ExportCompleted(
-                                        exported.logicalPath(), exported.messageCount()));
+                                        exported.logicalPath(), exported.messageCount(), executionDestination()));
                                 apply(new TerminalUiAction.StatusChanged("Session exported"));
                             };
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> {
+                            if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                        });
             }
             case CONNECT -> openConnectionCenter(argument);
             case LOGIN_REMOVED -> apply(new TerminalUiAction.StatusChanged("The login command has moved to /connect"));
@@ -1586,14 +2984,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                     options.add("Session: " + value.summary().displayName());
                                     options.add(
                                             "ID: " + value.summary().sessionId().value());
-                                    if (!state.footer().project().isBlank()) {
-                                        options.add(
-                                                "Directory: " + state.footer().project());
-                                    }
-                                    if (!state.footer().gitBranch().isBlank()) {
-                                        options.add(
-                                                "Git branch: " + state.footer().gitBranch());
-                                    }
+                                    options.addAll(workspaceSummaryOptions());
                                     if (!state.footer().model().isBlank()) {
                                         options.add("Model: " + state.footer().model()
                                                 + (state.footer().provider().isBlank()
@@ -1605,10 +2996,27 @@ public final class CodingTerminalController implements AutoCloseable {
                                     }
                                     options.add("Profile: " + value.productProfileRef());
                                 },
-                                () -> options.add("No active session"));
+                                () -> {
+                                    options.add("No active session");
+                                    options.addAll(workspaceSummaryOptions());
+                                });
                 apply(new TerminalUiAction.SelectorOpened(
                         new TerminalSelector("session", "Session & Environment", options, 0)));
+                long generation = selection.current();
+                long request = ++configurationSummaryRequest;
+                submitEffect(
+                        () -> {
+                            List<String> summary = List.copyOf(
+                                    productClient == null
+                                            ? client.configurationSummary()
+                                            : queryTerminalProduct("configuration", null, 100)
+                                                    .lines());
+                            return () -> completeConfigurationSummary(generation, request, summary);
+                        },
+                        code -> completeConfigurationSummary(
+                                generation, request, List.of("Host configuration information unavailable")));
             }
+            case SESSIONS -> requestSessionSelector(null);
             case COMMANDS -> openCommandSelector();
             case THEME -> handleThemeCommand(argument);
             case MOUSE -> handleMouseCommand(argument);
@@ -1657,25 +3065,62 @@ public final class CodingTerminalController implements AutoCloseable {
                 enabled ? "Mouse reporting on · drag to select" : "native selection · PageUp/PageDown scroll"));
     }
 
+    private String compactSession(AgentSessionId session, String argument) {
+        if (productClient == null) {
+            client.reconcile(session);
+            return client.compact(session, argument).safeIndicator();
+        }
+        var result = executeTerminalProduct("compact", session, null, null, argument, null, false, false)
+                .compaction();
+        return new io.haifa.agent.application.project.product.coding.CodingCompactionResult(
+                        Optional.ofNullable(result.summaryReference()),
+                        result.summaryVersion(),
+                        Math.toIntExact(result.sourceMessageCount()),
+                        Math.toIntExact(result.estimatedTokens()),
+                        new io.haifa.agent.core.message.MessageCursor(result.throughSequence()))
+                .safeIndicator();
+    }
+
+    private io.haifa.agent.application.project.product.coding.CodingSessionExportResult exportSession(
+            AgentSessionId session, String argument) {
+        if (productClient == null) {
+            client.reconcile(session);
+            return client.export(session, argument);
+        }
+        var result = executeTerminalProduct("export", session, null, null, argument, null, false, false)
+                .export();
+        return new io.haifa.agent.application.project.product.coding.CodingSessionExportResult(
+                result.logicalPath(), Math.toIntExact(result.messageCount()), result.schemaVersion());
+    }
+
     private void executeRename(String newTitle) {
-        CodingSessionView current = requireCurrentSession();
+        TerminalSessionView current = requireCurrentSession();
+        SelectionToken token = currentSelection();
         apply(new TerminalUiAction.StatusChanged("Renaming session"));
         submitEffect(
                 () -> {
-                    CodingSessionView reconciled =
-                            client.reconcile(current.summary().sessionId());
-                    CodingSessionSummary renamed = client.rename(
-                            reconciled.summary().sessionId(),
-                            newTitle,
-                            reconciled.summary().revision());
-                    LoadedSession loaded = readSession(
-                            client.open(renamed.sessionId()), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                    var summary =
+                            reconcileTerminalView(current.summary().sessionId()).summary();
+                    if (productClient == null) client.rename(summary.sessionId(), newTitle, summary.revision());
+                    else
+                        executeTerminalProduct(
+                                "rename", summary.sessionId(), summary.revision(), null, newTitle, null, false, false);
+                    LoadedSession loaded = loadSession(
+                            summary.sessionId(),
+                            false,
+                            token.generation(),
+                            Optional.empty(),
+                            null,
+                            RunOutputCursor.BEFORE_FIRST);
                     return () -> {
+                        if (!isCurrentSelection(token)) return;
                         applyLoadedSession(loaded);
                         apply(new TerminalUiAction.StatusChanged("Session renamed"));
                     };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void executeNonDraftCommand(String text) {
@@ -1690,34 +3135,53 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private boolean hasActiveRun() {
+        if (productClient != null) return state.currentRunId().isPresent();
         return state.currentRunId().isPresent()
-                || state.session()
-                        .flatMap(io.haifa.agent.application.project.product.coding.CodingSessionView::activeRun)
-                        .isPresent();
+                || state.session().flatMap(TerminalSessionView::activeRun).isPresent();
     }
 
     private boolean cancelCurrentRunIfPresent() {
+        if (productClient != null) {
+            if (state.currentRunId().isEmpty() || state.session().isEmpty()) return false;
+            apply(new TerminalUiAction.StatusChanged("Cancelling"));
+            executeProductAction(
+                    "cancel",
+                    null,
+                    state.session().orElseThrow().summary().sessionId().value(),
+                    state.currentRunId().orElseThrow().value(),
+                    null,
+                    null,
+                    List.of());
+            return true;
+        }
         if (state.currentRunId().isEmpty()) {
             if (state.session().isEmpty()) return false;
             AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+            SelectionToken token = currentSelection();
             Optional<RunEventCursor> cursor = state.appliedCursor();
             AgentRunId previousOutputRunId = outputRunId;
             RunOutputCursor previousOutputCursor = outputCursor;
             apply(new TerminalUiAction.StatusChanged("Checking active run"));
             submitEffect(
                     () -> {
-                        LoadedSession loaded = readSession(
-                                client.reconcile(sessionId), cursor, previousOutputRunId, previousOutputCursor);
+                        LoadedSession loaded = loadSession(
+                                sessionId, true, token.generation(), cursor, previousOutputRunId, previousOutputCursor);
                         return () -> {
+                            if (!isCurrentSelection(token)) return;
                             applyLoadedSession(loaded);
                             if (state.currentRunId().isPresent()) {
-                                cancelCurrentRunIfPresent();
+                                // Refresh only: a cancel must target the Run the user actually saw, never a
+                                // successor discovered by this reconcile.
+                                apply(new TerminalUiAction.StatusChanged(
+                                        "Active run refreshed; press esc again to cancel it"));
                             } else {
                                 apply(new TerminalUiAction.StatusChanged("Idle"));
                             }
                         };
                     },
-                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                    code -> {
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                    });
             return true;
         }
         if (state.selector().isPresent()) {
@@ -1727,48 +3191,70 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         apply(new TerminalUiAction.StatusChanged("Cancelling"));
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        AgentRunId requestedRunId = state.currentRunId().orElseThrow();
+        SelectionToken token = currentSelection();
         String idempotencyKey = UUID.randomUUID().toString();
         submitControlEffect(
                 () -> {
-                    client.cancel(sessionId, idempotencyKey);
+                    client.cancel(sessionId, requestedRunId, idempotencyKey);
                     return () -> {};
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
         return true;
     }
 
     private Optional<AgentRunId> approvalRunId() {
         return state.currentRunId().or(() -> state.session()
-                .flatMap(CodingSessionView::pendingInteraction)
-                .map(InteractionView::runId));
+                .flatMap(TerminalSessionView::pendingInteraction)
+                .map(TerminalSessionView.Pending::runId));
     }
 
     private void resetSessionApproval(String argument) {
+        if (argument.equals("reset") && !connectionOptions.sessionConsentEnabled()) {
+            apply(new TerminalUiAction.StatusChanged(REMOTE_SESSION_CONSENT_GUIDANCE));
+            return;
+        }
         if (argument.isBlank() || argument.equals("reopen")) {
+            if (productClient != null) {
+                if (productPendingTarget == null) {
+                    apply(new TerminalUiAction.StatusChanged("No approval is pending"));
+                } else {
+                    apply(new TerminalUiAction.StatusChanged("Loading pending approval"));
+                    prepareProductInteraction(productPendingTarget);
+                }
+                return;
+            }
             Optional<AgentRunId> pendingRun = approvalRunId();
             if (pendingRun.isEmpty()) {
                 apply(new TerminalUiAction.StatusChanged("No approval is pending"));
                 return;
             }
             AgentRunId runId = pendingRun.orElseThrow();
+            SelectionToken token = currentSelection();
             apply(new TerminalUiAction.StatusChanged("Loading pending approval"));
             submitControlEffect(
                     () -> {
                         Optional<CodingApprovalPrompt> pending =
                                 client.pendingInteraction(runId).flatMap(client::prepareApproval);
                         return () -> {
+                            if (!isCurrentSelection(token)) return;
                             if (approvalRunId().filter(runId::equals).isEmpty()) return;
                             pending.filter(value -> value.interaction().state()
                                             == io.haifa.agent.runtime.api.InteractionState.PENDING)
                                     .filter(value -> interactionStillPending(new InteractionHydrationRequest(
                                             runId,
-                                            value.interaction().requestId().value())))
+                                            value.interaction().requestId().value(),
+                                            selection.current())))
                                     .ifPresentOrElse(
                                             this::openInteractionSelector,
                                             () -> apply(new TerminalUiAction.StatusChanged("No approval is pending")));
                         };
                     },
-                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                    code -> {
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                    });
             return;
         }
         if (!argument.equals("reset") || state.session().isEmpty()) {
@@ -1777,13 +3263,34 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        SelectionToken token = currentSelection();
         apply(new TerminalUiAction.StatusChanged("Resetting session approval"));
         submitControlEffect(
                 () -> {
-                    client.resetSessionApproval(sessionId);
-                    return () -> apply(new TerminalUiAction.StatusChanged("Session approval reset · ask each time"));
+                    if (productClient == null) {
+                        client.resetSessionApproval(sessionId);
+                    } else {
+                        executeTerminalProduct("resetConsent", sessionId, null, null);
+                    }
+                    return () -> {
+                        if (isCurrentSelection(token)) {
+                            apply(new TerminalUiAction.StatusChanged("Session approval reset · ask each time"));
+                        }
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private void completeConfigurationSummary(long generation, long request, List<String> summary) {
+        if (generation != selection.current() || request != configurationSummaryRequest) return;
+        state.selector().filter(selector -> selector.kind().equals("session")).ifPresent(selector -> {
+            List<String> options = new ArrayList<>(selector.options());
+            summary.stream().filter(value -> !options.contains(value)).forEach(options::add);
+            apply(new TerminalUiAction.SelectorOpened(
+                    new TerminalSelector("session", selector.title(), options, selector.selected())));
+        });
     }
 
     private void workspaceTrust(String argument) {
@@ -1791,7 +3298,7 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.StatusChanged("Loading workspace trust"));
             submitEffect(
                     () -> {
-                        List<String> options = client.workspaces().stream()
+                        List<String> options = readTerminalWorkspaces().stream()
                                 .map(CodingTerminalController::workspaceOption)
                                 .toList();
                         return () -> {
@@ -1818,10 +3325,141 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Revoking workspace access"));
         submitEffect(
                 () -> {
-                    client.revokeWorkspace(workspaceRef);
+                    if (productClient == null) {
+                        client.revokeWorkspace(workspaceRef);
+                    } else {
+                        executeTerminalProduct("workspaceRevoke", null, null, workspaceRef);
+                    }
                     return () -> apply(new TerminalUiAction.StatusChanged("Workspace access revoked"));
                 },
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private List<String> readTerminalPaths(String prefix) {
+        if (productClient == null) return client.logicalPaths();
+        if (prefix.codePointCount(0, prefix.length()) > 256) return List.of();
+        return queryTerminalProduct("logicalPaths", prefix, 100).lines();
+    }
+
+    private List<CodingModelOption> readTerminalModels() {
+        return productClient == null
+                ? client.models()
+                : queryTerminalProduct("models", null, 100).models().stream()
+                        .map(TerminalProductFacts::model)
+                        .toList();
+    }
+
+    private List<CodingWorkspaceView> readTerminalWorkspaces() {
+        if (productClient == null) return client.workspaces();
+        return queryTerminalProduct("workspaces", null, 100).workspaces().stream()
+                .map(value -> new CodingWorkspaceView(
+                        value.id(), value.safeDisplayName(), value.mode(), value.status(), value.revocable()))
+                .toList();
+    }
+
+    private List<CodingSessionSummary> readTerminalSessions(String search, int limit) {
+        if (productClient == null) {
+            return search == null ? client.list(projectId, limit) : client.search(projectId, search, limit);
+        }
+        return queryTerminalProduct("sessions", search, limit).sessions().stream()
+                .map(value -> {
+                    if (!projectId.value().equals(value.projectId())) {
+                        throw new CodingClientException("SESSION_SCOPE_MISMATCH", false);
+                    }
+                    return new CodingSessionSummary(
+                            new AgentSessionId(value.sessionId()),
+                            projectId,
+                            value.title(),
+                            io.haifa.agent.core.session.AgentSessionStatus.valueOf(value.status()),
+                            Optional.ofNullable(value.runId()).map(AgentRunId::new),
+                            Optional.ofNullable(value.runStatus()).map(io.haifa.agent.core.run.AgentRunStatus::valueOf),
+                            Math.toIntExact(value.queuedCount()),
+                            java.time.Instant.ofEpochMilli(value.lastActivityAtEpochMillis()),
+                            value.revision());
+                })
+                .toList();
+    }
+
+    private CodingProtocol.QueryResult queryTerminalProduct(String operation, String search, int limit) {
+        return queryTerminalProduct(operation, null, search, limit);
+    }
+
+    private CodingProtocol.QueryResult queryTerminalProduct(
+            String operation, AgentSessionId sessionId, String search, int limit) {
+        return productClient.query(
+                new CodingProtocol.Query(operation, terminalProductTarget(sessionId, null), search, limit, null));
+    }
+
+    private CodingProtocol.CommandTarget terminalProductTarget(AgentSessionId sessionId, Long revision) {
+        return new CodingProtocol.CommandTarget(
+                projectId.value(), sessionId == null ? null : sessionId.value(), null, null, revision);
+    }
+
+    private CodingProtocol.CommandResult executeTerminalProduct(
+            String operation, AgentSessionId sessionId, Long revision, String optionId) {
+        return executeTerminalProduct(operation, sessionId, revision, optionId, null, null, false, false);
+    }
+
+    private CodingProtocol.CommandResult executeTerminalProduct(
+            String operation,
+            AgentSessionId sessionId,
+            Long revision,
+            String optionId,
+            String text,
+            String executionId,
+            boolean approved,
+            boolean includeInContext) {
+        String requestId = UUID.randomUUID().toString();
+        var command = new CodingProtocol.Command(
+                "command",
+                operation,
+                requestId,
+                requestId,
+                terminalProductTarget(sessionId, revision),
+                text,
+                optionId,
+                executionId,
+                List.of());
+        return requireAcceptedProductResult(productClient.execute(new CodingProtocol.CommandRequest(
+                command, new CodingProtocol.CommandOptions(approved, includeInContext, List.of()))));
+    }
+
+    private static CodingProtocol.CommandResult requireAcceptedProductResult(CodingProtocol.CommandResult result) {
+        var receipt = result.receipt();
+        if (!"accepted".equals(receipt.disposition())) {
+            throw new CodingClientException(
+                    Objects.requireNonNullElse(receipt.reasonCode(), "PRODUCT_ACTION_REJECTED"),
+                    "unknown".equals(receipt.disposition()));
+        }
+        return result;
+    }
+
+    private List<CodingQueuedMessage> readTerminalQueue(AgentSessionId sessionId) {
+        if (productClient == null) return client.restorableMessages(sessionId, 100);
+        return queryTerminalProduct("queuedMessages", sessionId, null, 100).queuedMessages().stream()
+                .map(value -> {
+                    if (!sessionId.value().equals(value.sessionId())) {
+                        throw new CodingClientException("SESSION_SCOPE_MISMATCH", false);
+                    }
+                    return new CodingQueuedMessage(
+                            value.id(), sessionId, value.summary(), value.sequence(), value.revision());
+                })
+                .toList();
+    }
+
+    private String restoreTerminalMessage(CodingQueuedMessage queued) {
+        if (productClient == null) {
+            return client.restore(queued.sessionId(), queued.followUpId(), queued.revision())
+                    .message();
+        }
+        var restored = executeTerminalProduct("restore", queued.sessionId(), queued.revision(), queued.followUpId())
+                .restoredMessage();
+        if (restored == null
+                || !queued.sessionId().value().equals(restored.sessionId())
+                || !queued.followUpId().equals(restored.id())) {
+            throw new CodingClientException("PRODUCT_RECEIPT_SCOPE_MISSING", true);
+        }
+        return restored.text();
     }
 
     private static String workspaceOption(CodingWorkspaceView workspace) {
@@ -1834,23 +3472,80 @@ public final class CodingTerminalController implements AutoCloseable {
                 + (workspace.revocable() ? " · revocable" : "");
     }
 
+    private LoadedSession loadSession(
+            AgentSessionId id,
+            boolean reconcile,
+            long generation,
+            Optional<RunEventCursor> cursor,
+            AgentRunId previousOutputRunId,
+            RunOutputCursor previousOutputCursor) {
+        if (productClient != null) return readProductSession(id, generation);
+        return readSession(
+                reconcile ? client.reconcile(id) : client.open(id),
+                generation,
+                cursor,
+                previousOutputRunId,
+                previousOutputCursor);
+    }
+
+    private TerminalSessionView reconcileTerminalView(AgentSessionId id) {
+        return productClient == null
+                ? TerminalSessionView.fromLegacy(client.reconcile(id))
+                : TerminalProductFacts.session(productClient.terminalSession(id.value()));
+    }
+
+    private List<PendingMessage> readPendingQueue(AgentSessionId id) {
+        return readTerminalQueue(id).stream()
+                .map(value -> new PendingMessage(
+                        value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
+                .toList();
+    }
+
+    private LoadedSession readProductSession(AgentSessionId id, long generation) {
+        var view = TerminalProductFacts.session(productClient.terminalSession(id.value()));
+        if (!view.summary().sessionId().equals(id)
+                || !view.summary().projectId().equals(projectId)) {
+            throw new CodingClientException("SESSION_SCOPE_MISMATCH", false);
+        }
+        return new LoadedSession(
+                view,
+                generation,
+                queryTerminalProduct("resources", null, 100).lines(),
+                io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage.empty(id),
+                readProductHistory(id.value(), HISTORY_LIMIT, null),
+                readPendingQueue(id),
+                List.of(),
+                null,
+                null,
+                null,
+                RunOutputCursor.BEFORE_FIRST,
+                Optional.empty());
+    }
+
+    /**
+     * Reads the authoritative snapshot, history and durable event replay without installing a subscription.
+     *
+     * <p>The UI installs this snapshot first and only then subscribes from the returned cursor, so a synchronously
+     * replayed subscription event can never be reduced against the previous selection.
+     */
     private LoadedSession readSession(
             CodingSessionView view,
+            long generation,
             Optional<RunEventCursor> previousCursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
         List<String> resources = client.loadedResources();
         var history = client.history(view.summary().sessionId(), HISTORY_LIMIT);
-        List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
-                .map(value -> new PendingMessage(
-                        value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
-                .toList();
+        List<PendingMessage> pending = readPendingQueue(view.summary().sessionId());
         Optional<CodingApprovalPrompt> approval = view.pendingInteraction().flatMap(client::prepareApproval);
+        var projected = TerminalSessionView.fromLegacy(view);
         if (view.activeRun().isEmpty()) {
             return new LoadedSession(
-                    view,
+                    projected,
+                    generation,
                     resources,
                     history,
+                    null,
                     pending,
                     List.of(),
                     null,
@@ -1864,77 +3559,460 @@ public final class CodingTerminalController implements AutoCloseable {
                 .filter(value -> value.runId().equals(runId))
                 .orElseGet(() -> RunEventCursor.beforeFirst(runId));
         ArrayDeque<AgentRunEvent> events = new ArrayDeque<>(MAX_REPLAY_EVENTS);
-        boolean more;
-        do {
+        boolean more = true;
+        int pages = 0;
+        while (more) {
             var page = client.events(runId, cursor, PAGE_SIZE);
             for (AgentRunEvent event : page.items()) {
-                if (events.size() == MAX_REPLAY_EVENTS) events.removeFirst();
+                if (events.size() >= MAX_REPLAY_EVENTS) {
+                    more = false;
+                    break;
+                }
                 events.addLast(event);
             }
+            if (!more) break;
             cursor = page.nextCursor();
-            more = page.hasMore();
-        } while (more);
-        RunEventCursor subscribeAfter = cursor;
-        RunEventSubscription nextSubscription = client.subscribe(
-                runId, subscribeAfter, event -> pump.offer(new TerminalUiAction.RunEventReceived(event)));
+            more = page.hasMore() && ++pages < MAX_REPLAY_PAGES;
+        }
+        // Subscribe from the last event actually represented by this replay; any remainder is
+        // recovered gap-free by the subscription instead of being ACKed past.
+        RunEventCursor subscribeAfter =
+                events.isEmpty() ? cursor : events.getLast().cursor();
         RunOutputCursor nextOutputCursor =
                 runId.equals(previousOutputRunId) ? previousOutputCursor : RunOutputCursor.BEFORE_FIRST;
-        RunOutputSubscription nextOutputSubscription;
-        try {
-            nextOutputSubscription = client.subscribeOutput(
-                    runId, nextOutputCursor, event -> pump.offer(new TerminalUiAction.RunOutputReceived(event)));
-        } catch (RuntimeException exception) {
-            nextSubscription.close();
-            throw exception;
-        }
         return new LoadedSession(
-                view,
+                projected,
+                generation,
                 resources,
                 history,
+                null,
                 pending,
                 List.copyOf(events),
-                nextSubscription,
-                nextOutputSubscription,
+                runId,
+                subscribeAfter,
                 runId,
                 nextOutputCursor,
                 approval);
     }
 
     private void applyLoadedSession(LoadedSession loaded) {
+        long generation = loaded.generation();
+        if (!selection.acceptsLoad(generation)) {
+            // A stale load owns no UI subscription yet; it must not detach or cancel the displayed Run.
+            return;
+        }
+        boolean transition = selection.isPending(generation);
+        TerminalSessionView previousView = state.session().orElse(null);
+        AgentRunId previousRunId = state.currentRunId().orElse(null);
+        boolean sameSession = previousView != null
+                && previousView
+                        .summary()
+                        .sessionId()
+                        .equals(loaded.view().summary().sessionId());
+        if (!transition && sameSession && isStaleSameSelectionSnapshot(previousView, previousRunId, loaded.view())) {
+            requestStaleSnapshotRecovery();
+            return;
+        }
+        if (previousView != null && !sameSession) {
+            swapComposerDraft(loaded.view().summary().sessionId(), previousView);
+        }
+        long observation = ++nextObservationEpoch;
+        observationEpoch = observation;
         RunEventSubscription previousSubscription = subscription;
         RunOutputSubscription previousOutputSubscription = outputSubscription;
-        boolean sameSession = state.session()
-                .map(value -> value.summary()
-                        .sessionId()
-                        .equals(loaded.view().summary().sessionId()))
-                .orElse(false);
-        subscription = loaded.subscription();
-        outputSubscription = loaded.outputSubscription();
-        outputRunId = loaded.outputRunId();
-        outputCursor = loaded.outputCursor();
+        ObservationPermit previousPermit = subscriptionPermit;
+        subscription = null;
+        outputSubscription = null;
+        subscriptionPermit = null;
+        selection.install(generation);
+        if (transition) {
+            awaitingNewSessionMessage = false;
+            pendingAcknowledgement = null;
+            clearOperationsForPreviousSelection();
+            resetRunObservation(loaded);
+        } else {
+            advanceRunObservation(loaded);
+        }
+        staleSnapshotRecoveryRequested = false;
+        AgentRunId nextOutputRunId = loaded.outputRunId();
+        RunOutputCursor nextOutputCursor = loaded.outputCursor();
+        if (sameSession
+                && Objects.equals(outputRunId, nextOutputRunId)
+                && outputCursor.sequence() > nextOutputCursor.sequence()) {
+            nextOutputCursor = outputCursor;
+        }
+        outputRunId = nextOutputRunId;
+        outputCursor = nextOutputCursor;
         activeInteraction = null;
         interactionHydrationInFlight = null;
-        apply(new TerminalUiAction.SessionLoaded(loaded.view(), loaded.resources()));
-        if (!sameSession) apply(new TerminalUiAction.HistoryLoaded(loaded.history()));
+        apply(new TerminalUiAction.SessionLoaded(loaded.view(), loaded.resources(), productClient != null));
+        if (productClient != null) {
+            boolean newProductSession =
+                    !loaded.view().summary().sessionId().value().equals(productSession);
+            observeProductSession(loaded.view().summary().sessionId().value());
+            if (newProductSession) {
+                var page = loaded.productHistory();
+                productHistoryBefore = page.history().beforeSequence();
+                apply(new TerminalUiAction.ProductHistoryLoaded(page.entries(), productHistoryBefore != null));
+            }
+        } else if (!sameSession) {
+            apply(new TerminalUiAction.HistoryLoaded(loaded.history()));
+        }
         apply(new TerminalUiAction.PendingChanged(loaded.pending()));
         for (AgentRunEvent event : loaded.events()) {
             apply(new TerminalUiAction.RunEventReceived(event));
         }
-        loaded.approval().ifPresent(this::openInteractionSelector);
+        loaded.approval()
+                .filter(prompt -> transition || approvalStillTracked(prompt, generation))
+                .ifPresent(this::openInteractionSelector);
         replacePreviewSubscription(
-                loaded.view().activeRun().map(value -> value.runId()).orElse(null));
-        closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription);
+                loaded.view().activeRun().map(value -> value.runId()).orElse(null), generation);
+        if (productClient == null) establishSubscriptions(loaded, observation);
+        closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription, previousPermit);
     }
 
-    private void replacePreviewSubscription(AgentRunId runId) {
-        if (Objects.equals(previewRunId, runId) && previewSubscription != null) return;
-        if (previewSubscription != null) previewSubscription.close();
-        previewSubscription = null;
-        previewRunId = runId;
-        if (runId != null) {
-            previewSubscription = previewPublisher.subscribe(
-                    runId, preview -> pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview)));
+    private boolean isStaleSameSelectionSnapshot(
+            TerminalSessionView previousView, AgentRunId previousRunId, TerminalSessionView loadedView) {
+        if (loadedView.summary().revision() < previousView.summary().revision()) return true;
+        Optional<TerminalSessionView.Run> previousActive = previousView.activeRun();
+        Optional<TerminalSessionView.Run> loadedActive = loadedView.activeRun();
+        if (loadedActive.isPresent()
+                && observedRunId != null
+                && observedRunId.equals(loadedActive.orElseThrow().runId())) {
+            if (observedRunTerminal) return true;
+            if (loadedActive.orElseThrow().version() < observedRunVersion) return true;
         }
+        if (previousRunId != null && previousActive.isPresent() && loadedActive.isPresent()) {
+            TerminalSessionView.Run active = loadedActive.orElseThrow();
+            if (active.runId().equals(previousRunId)) {
+                long previousVersion = previousActive.orElseThrow().version();
+                if (observedRunId != null && observedRunId.equals(previousRunId)) {
+                    previousVersion = Math.max(previousVersion, observedRunVersion);
+                }
+                if (active.version() < previousVersion) return true;
+            }
+        }
+        return false;
+    }
+
+    private void resetRunObservation(LoadedSession loaded) {
+        Optional<TerminalSessionView.Run> active = loaded.view().activeRun();
+        observedRunId = active.map(value -> value.runId()).orElse(null);
+        observedRunVersion = active.map(value -> value.version()).orElse(-1L);
+        observedRunTerminal = active.map(value -> value.status().isTerminal()).orElse(false);
+        staleSnapshotRecoveryRequested = false;
+        handoffRecoveryForRun = null;
+    }
+
+    private void advanceRunObservation(LoadedSession loaded) {
+        loaded.view().activeRun().ifPresent(active -> {
+            if (!active.runId().equals(observedRunId) || active.version() >= observedRunVersion) {
+                observedRunId = active.runId();
+                observedRunVersion = active.version();
+                observedRunTerminal = active.status().isTerminal();
+            }
+        });
+    }
+
+    private void observeRunLifecycle(AgentRunEvent event) {
+        if (!(event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle)) return;
+        boolean sameRun = event.runId().equals(observedRunId);
+        if (sameRun && lifecycle.version() < observedRunVersion) return;
+        observedRunId = event.runId();
+        observedRunVersion = lifecycle.version();
+        observedRunTerminal = isTerminalStatus(lifecycle.status());
+        staleSnapshotRecoveryRequested = false;
+    }
+
+    private static boolean isTerminalStatus(String status) {
+        try {
+            return io.haifa.agent.core.run.AgentRunStatus.valueOf(status).isTerminal();
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private void requestStaleSnapshotRecovery() {
+        if (closed || staleSnapshotRecoveryRequested || state.currentRunId().isEmpty()) return;
+        staleSnapshotRecoveryRequested = true;
+        scheduleReconcile();
+    }
+
+    /**
+     * Requests exactly one bounded reconcile when the selected Run settles and the Host may already have advanced a
+     * queued follow-up into the next Run.
+     *
+     * <p>The Host keeps maintaining persisted follow-ups while no UI is attached, and the per-Run event stream of the
+     * settled Run can stay open, so nothing else would ever move the UI onto Run2. This is a once-per-settled-Run
+     * trigger, not a per-delta reload: ordinary deltas still flow through the existing subscription, and a successor
+     * that has not been materialized yet stays visible through its queued draft instead of an unbounded retry loop.
+     */
+    private void requestFollowUpHandoff(AgentRunId settledRunId) {
+        if (closed) return;
+        // Only a queued successor justifies the extra load: without one the settled Run is simply finished and the
+        // ordinary terminal lifecycle already owns what happens next.
+        if (state.pending().stream().noneMatch(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)) return;
+        if (settledRunId.equals(handoffRecoveryForRun)) return;
+        handoffRecoveryForRun = settledRunId;
+        scheduleReconcile();
+    }
+
+    private boolean approvalStillTracked(CodingApprovalPrompt prompt, long generation) {
+        InteractionView interaction = prompt.interaction();
+        boolean tracked = state.transcript().stream().anyMatch(item -> item.id()
+                .equals("interaction-" + interaction.requestId().value()));
+        if (!tracked) return true;
+        return interactionStillPending(new InteractionHydrationRequest(
+                interaction.runId(), interaction.requestId().value(), generation));
+    }
+
+    private void establishSubscriptions(LoadedSession loaded, long epoch) {
+        AgentRunId runId = loaded.subscribeRunId();
+        if (runId == null) return;
+        long generation = loaded.generation();
+        AgentSessionId sessionId = loaded.view().summary().sessionId();
+        RunEventCursor eventCursor = loaded.subscribeAfter();
+        RunOutputCursor outputAfter = loaded.outputCursor();
+        ObservationPermit permit = admitObservation();
+        if (permit == null) {
+            rejectObservationAdmission();
+            return;
+        }
+        Runnable work = () -> {
+            if (closed) {
+                releaseObservation(permit);
+                return;
+            }
+            RunEventSubscription nextEvent = null;
+            RunOutputSubscription nextOutput = null;
+            try {
+                nextEvent = client.subscribe(
+                        runId,
+                        eventCursor,
+                        event -> pump.offer(new TerminalUiAction.RunEventReceived(event, generation)));
+                if (productClient == null) {
+                    nextOutput = client.subscribeOutput(
+                            runId,
+                            outputAfter,
+                            event -> pump.offer(new TerminalUiAction.RunOutputReceived(event, generation)));
+                }
+            } catch (RuntimeException exception) {
+                closeSubscriptions(nextEvent, nextOutput);
+                releaseObservation(permit);
+                String code = safeFailureCode(exception);
+                if (!closed) {
+                    enqueueCompletion(
+                            effectCompletions,
+                            () -> completeObservationFailure(epoch, generation, sessionId, runId, code));
+                }
+                return;
+            }
+            RunEventSubscription createdEvent = nextEvent;
+            RunOutputSubscription createdOutput = nextOutput;
+            boolean owned;
+            synchronized (observationLock) {
+                owned = !closed;
+                if (owned) {
+                    ownedObservations.add(createdEvent);
+                    if (createdOutput != null) ownedObservations.add(createdOutput);
+                }
+            }
+            if (!owned) {
+                closeSubscriptions(createdEvent, createdOutput);
+                releaseObservation(permit);
+                return;
+            }
+            enqueueCompletion(
+                    effectCompletions,
+                    () -> completeSubscriptions(
+                            epoch, generation, sessionId, runId, createdEvent, createdOutput, permit));
+        };
+        try {
+            maintenanceEffects.execute(work);
+        } catch (RejectedExecutionException exception) {
+            releaseObservation(permit);
+            completeObservationFailure(epoch, generation, sessionId, runId, "TERMINAL_BACKGROUND_UNAVAILABLE");
+        }
+        drainEffectCompletions();
+    }
+
+    private void completeSubscriptions(
+            long epoch,
+            long generation,
+            AgentSessionId sessionId,
+            AgentRunId runId,
+            RunEventSubscription nextEvent,
+            RunOutputSubscription nextOutput,
+            ObservationPermit permit) {
+        boolean ownedEvent;
+        boolean ownedOutput;
+        synchronized (observationLock) {
+            ownedEvent = ownedObservations.remove(nextEvent);
+            ownedOutput = nextOutput != null && ownedObservations.remove(nextOutput);
+        }
+        if (!ownedEvent && !ownedOutput) {
+            // Teardown already closed this handoff and released its permit.
+            return;
+        }
+        if (epoch != observationEpoch || !isCurrentStreamScope(generation, sessionId, runId)) {
+            closeSubscriptionsInBackground(nextEvent, nextOutput, permit);
+            return;
+        }
+        RunEventSubscription previous = subscription;
+        RunOutputSubscription previousOutput = outputSubscription;
+        ObservationPermit previousPermit = subscriptionPermit;
+        subscription = nextEvent;
+        outputSubscription = nextOutput;
+        subscriptionPermit = permit;
+        closeSubscriptionsInBackground(previous, previousOutput, previousPermit);
+    }
+
+    private void completeObservationFailure(
+            long epoch, long generation, AgentSessionId sessionId, AgentRunId runId, String code) {
+        if (epoch != observationEpoch || !isCurrentStreamScope(generation, sessionId, runId)) return;
+        apply(new TerminalUiAction.RecoverableFailure(code));
+    }
+
+    private ToolOutputPreviewPublisher.ToolOutputPreviewSubscription subscribeProductPreview(
+            String session, AgentRunId run, long generation) {
+        var subscription = productClient.preview(session, run.value());
+        Thread reader = Thread.ofVirtual().name("terminal-product-preview").start(() -> {
+            try (subscription) {
+                while (!Thread.currentThread().isInterrupted() && !subscription.closed()) {
+                    var frame = subscription.poll(java.time.Duration.ofSeconds(1));
+                    if (frame == null) continue;
+                    if (!session.equals(frame.sessionId()) || !run.value().equals(frame.runId())) return;
+                    var preview = new io.haifa.agent.execution.api.ToolOutputPreview(
+                            run,
+                            new io.haifa.agent.core.tool.ToolCallId(frame.toolCallId()),
+                            io.haifa.agent.execution.api.ExecutionOutputChannel.valueOf(frame.channel()),
+                            frame.text(),
+                            frame.outputTruncated(),
+                            frame.previewDropped());
+                    pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview, generation));
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        return reader::interrupt;
+    }
+
+    private void replacePreviewSubscription(AgentRunId runId, long generation) {
+        boolean enabled = productClient == null
+                ? connectionOptions.toolOutputPreviewEnabled() && previewPublisher != ToolOutputPreviewPublisher.noop()
+                : productSession != null && productConnection.capabilities().contains("preview-v1");
+        String session = productSession;
+        if (enabled
+                && Objects.equals(previewRunId, runId)
+                && previewSubscription != null
+                && previewGeneration == generation) {
+            return;
+        }
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previous = previewSubscription;
+        ObservationPermit previousPermit = previewPermit;
+        previewSubscription = null;
+        previewPermit = null;
+        previewRunId = enabled ? runId : null;
+        previewGeneration = enabled ? generation : 0L;
+        long epoch = ++nextPreviewEpoch;
+        previewEpoch = epoch;
+        closePreviewInBackground(previous, previousPermit);
+        if (!enabled || runId == null) return;
+        ObservationPermit permit = admitObservation();
+        if (permit == null) {
+            previewRunId = null;
+            previewGeneration = 0L;
+            previewEpoch = 0L;
+            rejectObservationAdmission();
+            return;
+        }
+        Runnable work = () -> {
+            if (closed) {
+                releaseObservation(permit);
+                return;
+            }
+            ToolOutputPreviewPublisher.ToolOutputPreviewSubscription next;
+            try {
+                next = productClient == null
+                        ? previewPublisher.subscribe(
+                                runId,
+                                preview ->
+                                        pump.offer(new TerminalUiAction.ToolOutputPreviewReceived(preview, generation)))
+                        : subscribeProductPreview(session, runId, generation);
+            } catch (RuntimeException exception) {
+                releaseObservation(permit);
+                String code = safeFailureCode(exception);
+                if (!closed) {
+                    enqueueCompletion(effectCompletions, () -> completePreviewFailure(epoch, generation, runId, code));
+                }
+                return;
+            }
+            boolean owned;
+            synchronized (observationLock) {
+                owned = !closed;
+                if (owned) ownedObservations.add(next);
+            }
+            if (!owned) {
+                closePreviewInBackground(next, permit);
+                return;
+            }
+            enqueueCompletion(effectCompletions, () -> completePreview(epoch, next, permit));
+        };
+        try {
+            maintenanceEffects.execute(work);
+        } catch (RejectedExecutionException exception) {
+            releaseObservation(permit);
+            completePreviewFailure(epoch, generation, runId, "TERMINAL_BACKGROUND_UNAVAILABLE");
+        }
+        drainEffectCompletions();
+    }
+
+    private void completePreviewFailure(long epoch, long generation, AgentRunId runId, String code) {
+        if (closed || epoch != previewEpoch || !isCurrentPreviewStream(generation, runId)) return;
+        apply(new TerminalUiAction.RecoverableFailure(code));
+    }
+
+    private void completePreview(
+            long epoch, ToolOutputPreviewPublisher.ToolOutputPreviewSubscription next, ObservationPermit permit) {
+        boolean owned;
+        synchronized (observationLock) {
+            owned = ownedObservations.remove(next);
+        }
+        if (!owned) return;
+        if (closed || epoch != previewEpoch) {
+            closePreviewInBackground(next, permit);
+            return;
+        }
+        previewSubscription = next;
+        previewPermit = permit;
+    }
+
+    private void closePreviewSubscription() {
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription previous = previewSubscription;
+        ObservationPermit previousPermit = previewPermit;
+        previewSubscription = null;
+        previewPermit = null;
+        previewRunId = null;
+        previewGeneration = 0L;
+        previewEpoch = 0L;
+        closePreviewInBackground(previous, previousPermit);
+    }
+
+    private void closePreviewInBackground(
+            ToolOutputPreviewPublisher.ToolOutputPreviewSubscription subscription, ObservationPermit permit) {
+        if (subscription == null) {
+            releaseObservation(permit);
+            return;
+        }
+        Runnable cleanup = () -> {
+            try {
+                closeQuietly(subscription);
+            } finally {
+                releaseObservation(permit);
+            }
+        };
+        submitBackgroundCleanup(cleanup);
     }
 
     private void openRestoreSelector() {
@@ -1943,13 +4021,18 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        SelectionToken token = currentSelection();
         apply(new TerminalUiAction.StatusChanged("Loading queued messages"));
         submitEffect(
                 () -> {
-                    List<CodingQueuedMessage> found = client.restorableMessages(sessionId, 100);
-                    return () -> showRestoreOptions(found);
+                    List<CodingQueuedMessage> found = readTerminalQueue(sessionId);
+                    return () -> {
+                        if (isCurrentSelection(token)) showRestoreOptions(found);
+                    };
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void showRestoreOptions(List<CodingQueuedMessage> found) {
@@ -1969,6 +4052,22 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void openInteractionSelector(CodingApprovalPrompt prompt) {
         InteractionView interaction = prompt.interaction();
+        boolean sameSession = state.session()
+                .map(value -> value.summary().sessionId().equals(interaction.sessionId()))
+                .orElse(false);
+        boolean runVisible =
+                state.currentRunId().filter(interaction.runId()::equals).isPresent()
+                        || state.session()
+                                .flatMap(TerminalSessionView::activeRun)
+                                .map(value -> value.runId())
+                                .filter(interaction.runId()::equals)
+                                .isPresent()
+                        || state.session()
+                                .flatMap(TerminalSessionView::pendingInteraction)
+                                .map(TerminalSessionView.Pending::runId)
+                                .filter(interaction.runId()::equals)
+                                .isPresent();
+        if (closed || !sameSession || !runVisible) return;
         activeInteraction = interaction;
         apply(new TerminalUiAction.InteractionPresented(
                 interaction, prompt.allowForSession(), prompt.sessionApprovalUnavailableReason()));
@@ -1976,7 +4075,7 @@ public final class CodingTerminalController implements AutoCloseable {
         if (clarification.isPresent()) {
             if (clarificationDraft == null
                     || !clarificationDraft.interaction().requestId().equals(interaction.requestId())) {
-                clarificationDraft = new ClarificationDraft(interaction, clarification.orElseThrow());
+                clarificationDraft = new ClarificationDraft(interaction, null, clarification.orElseThrow());
                 apply(new TerminalUiAction.StatusChanged("Awaiting your clarification answer"));
             }
             if (state.selector().isPresent()
@@ -1993,7 +4092,9 @@ public final class CodingTerminalController implements AutoCloseable {
         List<String> options = new ArrayList<>(interaction.allowedActions().stream()
                 .map(action -> ApprovalDetails.actionLabel(action.value()))
                 .toList());
-        if (prompt.allowForSession()) options.add(ApprovalDetails.SESSION_APPROVAL_LABEL);
+        if (prompt.allowForSession() && connectionOptions.sessionConsentEnabled()) {
+            options.add(ApprovalDetails.SESSION_APPROVAL_LABEL);
+        }
         if (options.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("INTERACTION_ACTIONS_EMPTY"));
             return;
@@ -2009,6 +4110,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
 
         ClarificationDraft draft = clarificationDraft;
+        draft.closeReview();
         ClarificationDetails.Question question = draft.current();
         List<String> labels = new ArrayList<>();
         List<TerminalSelectorDetail> details = new ArrayList<>();
@@ -2022,14 +4124,14 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (question.multiple()) {
             boolean last = draft.last();
-            labels.add(last ? ClarificationDetails.SUBMIT_LABEL : ClarificationDetails.DONE_LABEL);
+            labels.add(last ? ClarificationDetails.REVIEW_LABEL : ClarificationDetails.DONE_LABEL);
             details.add(TerminalSelectorDetail.plain(
-                    last ? ClarificationDetails.SUBMIT_DESCRIPTION : ClarificationDetails.DONE_DESCRIPTION));
+                    last ? ClarificationDetails.REVIEW_DESCRIPTION : ClarificationDetails.DONE_DESCRIPTION));
         }
         labels.add(ClarificationDetails.CANCEL_LABEL);
         details.add(TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION));
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                "clarification:" + draft.interaction().requestId().value(),
+                "clarification:" + draft.requestId(),
                 draft.title(),
                 labels,
                 Math.min(Math.max(initialSelection, 0), labels.size() - 1),
@@ -2041,6 +4143,9 @@ public final class CodingTerminalController implements AutoCloseable {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) {
             apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
+            return;
+        }
+        if (draft.reviewing()) {
             return;
         }
         ClarificationDetails.Question question = draft.current();
@@ -2055,28 +4160,35 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    /** Enter confirms the current question; an unanswerable multi-choice entry keeps the selector open. */
+    /** Enter confirms the current question. The last confirmation opens the answer review instead of sending. */
     private void confirmClarificationOption(int selected) {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) {
             apply(new TerminalUiAction.RecoverableFailure("CLARIFICATION_NOT_PENDING"));
             return;
         }
+        if (draft.reviewing()) {
+            confirmClarificationReview(selected);
+            return;
+        }
         ClarificationDetails.Question question = draft.current();
         int options = question.options().size();
         if (selected < options) {
+            boolean finishing = draft.last();
             if (question.multiple()) {
                 if (!draft.currentAnswered()) {
                     apply(new TerminalUiAction.StatusChanged("Select at least one option with Space first"));
                     openClarificationSelector(selected);
                     return;
                 }
+                draft.rememberFocus(selected);
                 draft.confirm();
             } else {
+                draft.rememberFocus(selected);
                 draft.select(question.options().get(selected).optionId());
                 draft.advance();
             }
-            continueClarification(0);
+            continueClarification(0, finishing);
             return;
         }
         if (question.allowCustom() && selected == options) {
@@ -2084,37 +4196,133 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (question.multiple() && selected == options + (question.allowCustom() ? 1 : 0)) {
+            boolean finishing = draft.last();
+            draft.rememberFocus(selected);
             draft.confirm();
-            continueClarification();
+            continueClarification(0, finishing);
+            return;
+        }
+        dismissClarification();
+    }
+
+    /** Enter on a review row reopens that question; Enter on Send answer submits the draft. */
+    private void confirmClarificationReview(int selected) {
+        ClarificationDraft draft = clarificationDraft;
+        int questions = draft.questionCount();
+        if (selected < questions) {
+            draft.show(selected);
+            openClarificationSelector(draft.focus());
+            return;
+        }
+        if (selected == questions) {
+            if (!draft.canReview()) {
+                apply(new TerminalUiAction.StatusChanged("Answer every question before the review"));
+                return;
+            }
+            submitClarification();
             return;
         }
         dismissClarification();
     }
 
     private void beginClarificationText() {
+        if (clarificationDraft != null && clarificationSelectorOpen()) {
+            clarificationDraft.rememberFocus(state.selector().orElseThrow().selected());
+        }
         awaitingClarificationText = true;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Type your answer and press Enter"));
+        String existing = clarificationDraft != null ? clarificationDraft.currentCustom() : "";
+        apply(new TerminalUiAction.EditorChanged(existing, existing.length()));
     }
 
     private void answerClarificationWithText(String text) {
         awaitingClarificationText = false;
+        boolean finishing = clarificationDraft.last();
         clarificationDraft.answerWithText(text);
-        continueClarification();
+        continueClarification(0, finishing);
     }
 
-    private void continueClarification() {
-        continueClarification(0);
-    }
-
-    private void continueClarification(int nextSelection) {
+    /**
+     * Opens the next question, or the review when {@code reviewAttempt} finishes a fully answered draft.
+     */
+    private void continueClarification(int nextSelection, boolean reviewAttempt) {
         ClarificationDraft draft = clarificationDraft;
         if (draft == null) return;
-        if (draft.ready()) {
-            submitClarification();
+        if (reviewAttempt && draft.canReview()) {
+            openClarificationReview();
             return;
         }
+        if (reviewAttempt) {
+            apply(new TerminalUiAction.StatusChanged("Answer every question before the review"));
+        }
         openClarificationSelector(nextSelection);
+    }
+
+    /** Left and right move between questions; right on the last answered question opens the review. */
+    private void moveClarification(int direction) {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null || !clarificationSelectorOpen()) {
+            return;
+        }
+        if (draft.reviewing()) {
+            if (direction < 0) {
+                openClarificationSelector(draft.focus());
+            }
+            return;
+        }
+        draft.rememberFocus(state.selector().orElseThrow().selected());
+        if (direction < 0) {
+            if (draft.first()) {
+                return;
+            }
+            draft.retreat();
+            openClarificationSelector(draft.focus());
+            return;
+        }
+        if (!draft.last()) {
+            draft.advance();
+            openClarificationSelector(draft.focus());
+            return;
+        }
+        if (draft.canReview()) {
+            openClarificationReview();
+            return;
+        }
+        apply(new TerminalUiAction.StatusChanged("Answer every question before the review"));
+    }
+
+    private void openClarificationReview() {
+        ClarificationDraft draft = clarificationDraft;
+        if (draft == null) {
+            return;
+        }
+        if (!draft.reviewing()) {
+            state.selector()
+                    .filter(selector -> selector.kind().startsWith("clarification:"))
+                    .ifPresent(selector -> draft.rememberFocus(selector.selected()));
+        }
+        draft.openReview();
+        List<String> labels = new ArrayList<>();
+        List<TerminalSelectorDetail> details = new ArrayList<>();
+        for (int index = 0; index < draft.questionCount(); index++) {
+            ClarificationDetails.Question question = draft.questions().get(index);
+            labels.add(question.header() + ": " + draft.summary(index));
+            details.add(TerminalSelectorDetail.plain(question.prompt()));
+        }
+        labels.add(ClarificationDetails.SUBMIT_LABEL);
+        details.add(TerminalSelectorDetail.plain(ClarificationDetails.SUBMIT_DESCRIPTION));
+        labels.add(ClarificationDetails.CANCEL_LABEL);
+        details.add(TerminalSelectorDetail.plain(ClarificationDetails.CANCEL_DESCRIPTION));
+        apply(new TerminalUiAction.StatusChanged("Review your answers before sending"));
+        apply(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("clarification:" + draft.requestId(), draft.reviewTitle(), labels, 0, details)));
+    }
+
+    private boolean clarificationSelectorOpen() {
+        return state.selector()
+                .map(selector -> selector.kind().startsWith("clarification:"))
+                .orElse(false);
     }
 
     private void dismissClarification() {
@@ -2124,15 +4332,24 @@ public final class CodingTerminalController implements AutoCloseable {
         activeInteraction = null;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Dismissing questions"));
+        if (productClient != null) {
+            executeProductClarification(draft, "cancel", List.of());
+            return;
+        }
+        SelectionToken token = currentSelection();
         String idempotencyKey = UUID.randomUUID().toString();
         submitControlEffect(
                 () -> {
                     var receipt = client.respond(draft.interaction(), InteractionAction.CANCEL, idempotencyKey);
                     return () -> {
-                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        if (receipt != null && isCurrentSelection(token)) {
+                            apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        }
                     };
                 },
-                this::handleInteractionResponseFailure);
+                code -> {
+                    if (isCurrentSelection(token)) handleInteractionResponseFailure(code);
+                });
     }
 
     private void submitClarification() {
@@ -2142,31 +4359,66 @@ public final class CodingTerminalController implements AutoCloseable {
         activeInteraction = null;
         apply(new TerminalUiAction.SelectorClosed());
         apply(new TerminalUiAction.StatusChanged("Submitting answer"));
+        if (productClient != null) {
+            var answers = new ArrayList<CodingProtocol.QuestionAnswer>();
+            for (int index = 0; index < draft.questionCount(); index++) {
+                String custom = draft.customAnswers().get(index);
+                answers.add(new CodingProtocol.QuestionAnswer(
+                        draft.questions().get(index).header(),
+                        draft.selections().get(index),
+                        custom.isBlank() ? null : custom));
+            }
+            executeProductClarification(draft, "submit", List.copyOf(answers));
+            return;
+        }
         java.util.List<io.haifa.agent.core.content.ContentPart> parts =
                 ClarificationDetails.answerParts(draft.selections(), draft.customAnswers());
+        SelectionToken token = currentSelection();
         String idempotencyKey = UUID.randomUUID().toString();
         submitControlEffect(
                 () -> {
                     var receipt = client.respond(draft.interaction(), InteractionAction.SUBMIT, parts, idempotencyKey);
                     return () -> {
-                        if (receipt != null) apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        if (receipt != null && isCurrentSelection(token)) {
+                            apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                        }
                     };
                 },
-                this::handleInteractionResponseFailure);
+                code -> {
+                    if (isCurrentSelection(token)) handleInteractionResponseFailure(code);
+                });
+    }
+
+    private void executeProductClarification(
+            ClarificationDraft draft, String choice, List<CodingProtocol.QuestionAnswer> answers) {
+        var target = draft.productTarget();
+        executeProductAction(
+                "respond",
+                choice,
+                target.sessionId(),
+                target.runId(),
+                target.interactionId(),
+                target.targetRevision(),
+                answers);
     }
 
     /** The answer draft of one pending clarification; question order and the free-text lane stay separate. */
     private static final class ClarificationDraft {
         private final InteractionView interaction;
+        private final CodingProtocol.Target productTarget;
         private final ClarificationDetails details;
         private final List<List<String>> selected = new ArrayList<>();
         private final List<String> custom = new ArrayList<>();
+        private final int[] focus;
         private int index;
-        private boolean confirmed;
+        private boolean reviewing;
 
-        ClarificationDraft(InteractionView interaction, ClarificationDetails details) {
+        ClarificationDraft(
+                InteractionView interaction, CodingProtocol.Target productTarget, ClarificationDetails details) {
             this.interaction = interaction;
+            this.productTarget = productTarget;
             this.details = details;
+            this.focus = new int[details.questions().size()];
             for (int position = 0; position < details.questions().size(); position++) {
                 selected.add(new ArrayList<>());
                 custom.add("");
@@ -2175,6 +4427,14 @@ public final class CodingTerminalController implements AutoCloseable {
 
         InteractionView interaction() {
             return interaction;
+        }
+
+        CodingProtocol.Target productTarget() {
+            return productTarget;
+        }
+
+        String requestId() {
+            return productTarget == null ? interaction.requestId().value() : productTarget.interactionId();
         }
 
         List<List<String>> selections() {
@@ -2189,18 +4449,70 @@ public final class CodingTerminalController implements AutoCloseable {
             return details.questions().get(index);
         }
 
+        List<ClarificationDetails.Question> questions() {
+            return details.questions();
+        }
+
+        int questionCount() {
+            return details.questions().size();
+        }
+
         /** The modal title of the current question, including its step within the wizard. */
         String title() {
             return details.selectorTitle(index);
+        }
+
+        String reviewTitle() {
+            return details.reviewTitle();
+        }
+
+        String summary(int questionIndex) {
+            return details.answerSummary(questionIndex, selected.get(questionIndex), custom.get(questionIndex));
+        }
+
+        boolean first() {
+            return index == 0;
         }
 
         boolean last() {
             return index == details.questions().size() - 1;
         }
 
+        boolean reviewing() {
+            return reviewing;
+        }
+
+        void openReview() {
+            reviewing = true;
+        }
+
+        void closeReview() {
+            reviewing = false;
+        }
+
+        void show(int question) {
+            index = question;
+            reviewing = false;
+        }
+
+        void rememberFocus(int selectedRow) {
+            if (reviewing) {
+                return;
+            }
+            focus[index] = Math.max(0, selectedRow);
+        }
+
+        int focus() {
+            return focus[index];
+        }
+
         String marker(String optionId) {
             return ClarificationDetails.marker(
                     current().multiple(), selected.get(index).contains(optionId));
+        }
+
+        String currentCustom() {
+            return custom.get(index);
         }
 
         void toggle(String optionId) {
@@ -2210,6 +4522,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             if (!current().multiple()) {
                 current.clear();
+                custom.set(index, "");
             }
             current.add(optionId);
         }
@@ -2218,42 +4531,51 @@ public final class CodingTerminalController implements AutoCloseable {
             List<String> current = selected.get(index);
             current.clear();
             current.add(optionId);
+            custom.set(index, "");
         }
 
         void advance() {
             if (!last()) {
                 index++;
-                confirmed = false;
+            }
+        }
+
+        void retreat() {
+            if (index > 0) {
+                index--;
             }
         }
 
         void confirm() {
             if (!last()) {
                 advance();
-                return;
             }
-            confirmed = true;
-        }
-
-        boolean ready() {
-            return complete() && (confirmed || !current().multiple());
         }
 
         void answerWithText(String text) {
-            custom.set(index, text.trim());
+            String trimmed = text.trim();
+            custom.set(index, trimmed);
+            if (!current().multiple() && !trimmed.isEmpty()) {
+                selected.get(index).clear();
+            }
             advance();
         }
 
         boolean currentAnswered() {
-            return !selected.get(index).isEmpty() || !custom.get(index).isBlank();
+            return answered(index);
         }
 
-        boolean complete() {
-            if (!last()) return false;
+        boolean canReview() {
             for (int position = 0; position < selected.size(); position++) {
-                if (selected.get(position).isEmpty() && custom.get(position).isBlank()) return false;
+                if (!answered(position)) {
+                    return false;
+                }
             }
             return true;
+        }
+
+        private boolean answered(int position) {
+            return !selected.get(position).isEmpty() || !custom.get(position).isBlank();
         }
     }
 
@@ -2266,6 +4588,10 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void startCodexLogin() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            showRemoteCredentialGuidance();
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2287,6 +4613,10 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void startAntigravityLogin() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            showRemoteCredentialGuidance();
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2347,7 +4677,7 @@ public final class CodingTerminalController implements AutoCloseable {
         pump.offer(new TerminalUiAction.StatusChanged("Connected to " + providerName + "; loading models"));
         submitEffect(
                 () -> {
-                    List<CodingModelOption> loaded = client.models();
+                    List<CodingModelOption> loaded = readTerminalModels();
                     return () -> {
                         modelOptions = List.copyOf(loaded);
                         if (state.currentRunId().isPresent()) {
@@ -2381,17 +4711,30 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openModelSelector(String argument) {
-        Optional<CodingSessionView> current = awaitingNewSessionMessage ? Optional.empty() : state.session();
+        Optional<TerminalSessionView> current = awaitingNewSessionMessage ? Optional.empty() : state.session();
+        SelectionToken token = currentSelection();
         Optional<RunEventCursor> cursor = state.appliedCursor();
         AgentRunId previousOutputRunId = outputRunId;
         RunOutputCursor previousOutputCursor = outputCursor;
         apply(new TerminalUiAction.StatusChanged("Loading models"));
         submitEffect(
-                () -> loadModels(current, argument, cursor, previousOutputRunId, previousOutputCursor),
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                () -> {
+                    Runnable completion =
+                            loadModels(current, argument, token, cursor, previousOutputRunId, previousOutputCursor);
+                    return () -> {
+                        if (isCurrentSelection(token)) completion.run();
+                    };
+                },
+                code -> {
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void startCodexDeviceLogin() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            showRemoteCredentialGuidance();
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2410,6 +4753,28 @@ public final class CodingTerminalController implements AutoCloseable {
                     };
                 },
                 code -> completeAuthenticationFailure("ChatGPT", code));
+    }
+
+    private void startOpenCodeGoLogin() {
+        if (rejectConcurrentLogin()) {
+            return;
+        }
+        authenticationInProgress = true;
+        apply(new TerminalUiAction.StatusChanged("Requesting an OpenCode Go authorization code"));
+        submitEffect(
+                () -> {
+                    CodingAuthenticationView connected = authentication.loginDevice(
+                            "opencode-go",
+                            instruction -> rememberDevice(instruction),
+                            progress -> pump.offer(new TerminalUiAction.AuthenticationProgressed(progress.phase())));
+                    return () -> {
+                        completeAuthentication();
+                        pump.offer(new TerminalUiAction.AuthenticationCompleted(
+                                "OpenCode Go", connected.unofficialLocalCompatibility()));
+                        offerConnectionNextStep("opencode-go", "OpenCode Go");
+                    };
+                },
+                code -> completeAuthenticationFailure("OpenCode Go", code));
     }
 
     private void rememberAuthorization(String connectionName, CodingBrowserLoginView instructions) {
@@ -2498,13 +4863,20 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         lastAuthenticationCountdownSecond = seconds;
         String remaining = "%02d:%02d".formatted(seconds / 60, seconds % 60);
+        String waiting = pendingDeviceCode.get() == null
+                ? "Waiting for browser authorization"
+                : "Waiting for the authorization code";
         apply(new TerminalUiAction.StatusChanged(
                 seconds == 0
-                        ? "Waiting for browser authorization · expiring soon · Esc to cancel"
-                        : "Waiting for browser authorization · " + remaining + " remaining · Esc to cancel"));
+                        ? waiting + " · expiring soon · Esc to cancel"
+                        : waiting + " · " + remaining + " remaining · Esc to cancel"));
     }
 
     private void beginApiKeyInput(String input) {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            showRemoteCredentialGuidance();
+            return;
+        }
         if (rejectConcurrentLogin()) {
             return;
         }
@@ -2609,12 +4981,12 @@ public final class CodingTerminalController implements AutoCloseable {
     public String secureInputPrompt() {
         if ("aliyun-bailian".equalsIgnoreCase(pendingApiKeyProvider)) {
             return switch (bailianStep) {
-                case WORKSPACE_ID -> "Workspace ┃ ";
-                case REGION -> "Region ┃ ";
-                default -> secureInputIsUpdate() ? "New key ┃ " : "API Key ┃ ";
+                case WORKSPACE_ID -> "Workspace \u2503 ";
+                case REGION -> "Region \u2503 ";
+                default -> secureInputIsUpdate() ? "New key \u2503 " : "API Key \u2503 ";
             };
         }
-        return secureInputIsUpdate() ? "New key ┃ " : "API Key ┃ ";
+        return secureInputIsUpdate() ? "New key \u2503 " : "API Key \u2503 ";
     }
 
     public String secureInputPlaceholder() {
@@ -2668,6 +5040,11 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public void submitApiKey(char[] apiKey) {
         Objects.requireNonNull(apiKey, "apiKey must not be null");
+        if (!connectionOptions.credentialSetupEnabled()) {
+            java.util.Arrays.fill(apiKey, '\0');
+            showRemoteCredentialGuidance();
+            return;
+        }
         String providerId = pendingApiKeyProvider;
         if (providerId == null) {
             java.util.Arrays.fill(apiKey, '\0');
@@ -2786,6 +5163,13 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void saveBailianCredentials() {
+        if (!connectionOptions.credentialSetupEnabled()) {
+            resetBailianState();
+            pendingApiKeyProvider = null;
+            pendingApiKeyIsUpdate = false;
+            showRemoteCredentialGuidance();
+            return;
+        }
         String providerId = pendingApiKeyProvider;
         char[] key = pendingBailianApiKey != null
                 ? java.util.Arrays.copyOf(pendingBailianApiKey, pendingBailianApiKey.length)
@@ -2945,8 +5329,13 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public void openCommandSelector() {
         preserveDraft();
-        apply(new TerminalUiAction.SelectorOpened(
-                new TerminalSelector("command-palette", "Commands", TerminalCompletionProvider.COMMANDS, 0)));
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "command-palette",
+                "Commands",
+                TerminalCompletionProvider.COMMANDS.stream()
+                        .map(connectionOptions::commandLabel)
+                        .toList(),
+                0)));
     }
 
     private void openCompletionSelector(String buffer, int cursor) {
@@ -2968,7 +5357,7 @@ public final class CodingTerminalController implements AutoCloseable {
             activeCompletionRequestId = requestId;
             submitEffect(
                     () -> {
-                        List<String> options = completions.suggestions(word, client.logicalPaths());
+                        List<String> options = completions.suggestions(word, readTerminalPaths(word.substring(1)));
                         return () -> showCompletionOptions(requestId, requestedContext, word, options);
                     },
                     code -> {
@@ -2986,6 +5375,11 @@ public final class CodingTerminalController implements AutoCloseable {
         if (requestId != 0 && requestId != activeCompletionRequestId) return;
         if (!state.editorBuffer().equals(requestedContext.buffer())) return;
         if (options.isEmpty()) {
+            if ("/connect".startsWith(word) && word.startsWith("/")) {
+                connectionOptions
+                        .unavailableReason("/connect")
+                        .ifPresent(reason -> apply(new TerminalUiAction.StatusChanged(reason)));
+            }
             if (state.selector()
                     .filter(value -> "completion".equals(value.kind()))
                     .isPresent()) {
@@ -3016,7 +5410,17 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (input.kind() == TerminalInput.Kind.NAVIGATE_BACK) {
+            if (clarificationSelectorOpen()) {
+                moveClarification(-1);
+                return;
+            }
             navigateSelectorParent();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.NAVIGATE_FORWARD) {
+            if (clarificationSelectorOpen()) {
+                moveClarification(1);
+            }
             return;
         }
         if (input.kind() == TerminalInput.Kind.EOF) {
@@ -3040,7 +5444,7 @@ public final class CodingTerminalController implements AutoCloseable {
         int selected = selector.selected();
         switch (selector.kind()) {
             case "command-palette" -> {
-                String selectedCommand = selector.options().get(selected);
+                String selectedCommand = selector.options().get(selected).split(" · ", 2)[0];
                 apply(new TerminalUiAction.SelectorClosed());
                 restorePreservedDraft();
                 executeNonDraftCommand(selectedCommand);
@@ -3068,28 +5472,32 @@ public final class CodingTerminalController implements AutoCloseable {
                 AgentSessionId sessionId = resumeOptions.get(selected).sessionId();
                 apply(new TerminalUiAction.SelectorClosed());
                 apply(new TerminalUiAction.StatusChanged("Opening session"));
+                long generation = selection.begin();
                 submitEffect(
                         () -> {
-                            LoadedSession loaded = readSession(
-                                    client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                            LoadedSession loaded = loadSession(
+                                    sessionId, false, generation, Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
                             return () -> applyLoadedSession(loaded);
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> completeSelectionFailure(generation, code));
             }
             case "restore" -> {
                 CodingQueuedMessage queued = restoreOptions.get(selected);
+                SelectionToken token = currentSelection();
                 apply(new TerminalUiAction.SelectorClosed());
                 apply(new TerminalUiAction.StatusChanged("Restoring queued message"));
                 submitEffect(
                         () -> {
-                            var restored = client.restore(queued.sessionId(), queued.followUpId(), queued.revision());
+                            String restored = restoreTerminalMessage(queued);
                             return () -> {
-                                apply(new TerminalUiAction.EditorChanged(
-                                        restored.message(), restored.message().length()));
+                                if (!isCurrentSelection(token)) return;
+                                apply(new TerminalUiAction.EditorChanged(restored, restored.length()));
                                 scheduleReconcile();
                             };
                         },
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                        code -> {
+                            if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
+                        });
             }
             case "session", "workspace-trust" -> apply(new TerminalUiAction.SelectorClosed());
             case "model-readiness" -> {
@@ -3190,48 +5598,63 @@ public final class CodingTerminalController implements AutoCloseable {
             case "archive-session" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) {
-                    CodingSessionView current = requireCurrentSession();
+                    TerminalSessionView current = requireCurrentSession();
+                    SelectionToken token = currentSelection();
                     apply(new TerminalUiAction.StatusChanged("Archiving session"));
                     submitEffect(
                             () -> {
-                                CodingSessionView reconciled =
-                                        client.reconcile(current.summary().sessionId());
-                                client.archive(
-                                        reconciled.summary().sessionId(),
-                                        reconciled.summary().revision());
-                                LoadedSession loaded = readSession(
-                                        client.open(reconciled.summary().sessionId()),
+                                var summary = reconcileTerminalView(
+                                                current.summary().sessionId())
+                                        .summary();
+                                if (productClient == null) client.archive(summary.sessionId(), summary.revision());
+                                else executeTerminalProduct("archive", summary.sessionId(), summary.revision(), null);
+                                LoadedSession loaded = loadSession(
+                                        summary.sessionId(),
+                                        false,
+                                        token.generation(),
                                         Optional.empty(),
                                         null,
                                         RunOutputCursor.BEFORE_FIRST);
                                 return () -> {
+                                    if (!isCurrentSelection(token)) return;
                                     applyLoadedSession(loaded);
                                     apply(new TerminalUiAction.StatusChanged("Session archived"));
                                 };
                             },
-                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                            code -> {
+                                if (isCurrentSelection(token)) {
+                                    apply(new TerminalUiAction.RecoverableFailure(code));
+                                }
+                            });
                 }
             }
             case "delete-session" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) {
-                    CodingSessionView current = requireCurrentSession();
+                    TerminalSessionView current = requireCurrentSession();
+                    SelectionToken token = currentSelection();
                     apply(new TerminalUiAction.StatusChanged("Deleting session"));
                     submitEffect(
                             () -> {
-                                CodingSessionView reconciled =
-                                        client.reconcile(current.summary().sessionId());
-                                client.delete(
-                                        reconciled.summary().sessionId(),
-                                        reconciled.summary().revision());
+                                var summary = reconcileTerminalView(
+                                                current.summary().sessionId())
+                                        .summary();
+                                if (productClient == null) client.delete(summary.sessionId(), summary.revision());
+                                else executeTerminalProduct("delete", summary.sessionId(), summary.revision(), null);
                                 return () -> {
+                                    if (!isCurrentSelection(token)) return;
                                     detachSubscriptions();
                                     awaitingNewSessionMessage = true;
+                                    selection.clear();
                                     apply(new TerminalUiAction.SessionCleared(
                                             "Session deleted; enter the first message"));
                                 };
                             },
-                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                            code -> {
+                                if (isCurrentSelection(token)) {
+                                    apply(new TerminalUiAction.RecoverableFailure(code));
+                                }
+                            });
                 }
             }
             case "shell-approval" -> {
@@ -3244,12 +5667,13 @@ public final class CodingTerminalController implements AutoCloseable {
                     apply(new TerminalUiAction.StatusChanged("Shell command denied"));
                     submitEffect(
                             () -> {
-                                client.discardShell(plan.token());
+                                discardShell(plan);
                                 return () -> {};
                             },
                             code -> apply(new TerminalUiAction.RecoverableFailure(code)));
                 }
             }
+            case "remote-auth-guidance" -> apply(new TerminalUiAction.SelectorClosed());
             case "active-exit" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) apply(new TerminalUiAction.ExitRequested());
@@ -3263,11 +5687,32 @@ public final class CodingTerminalController implements AutoCloseable {
                     apply(new TerminalUiAction.RecoverableFailure("SELECTOR_KIND_UNSUPPORTED"));
                     return;
                 }
+                if (productClient != null) {
+                    var action = productInteractionOptions.get(selected);
+                    var target = action.target();
+                    apply(new TerminalUiAction.SelectorClosed());
+                    apply(new TerminalUiAction.StatusChanged(
+                            switch (action.choice()) {
+                                case "approve" -> "Approving";
+                                case "reject" -> "Rejecting";
+                                default -> "Submitting response";
+                            }));
+                    executeProductAction(
+                            action.kind(),
+                            action.choice(),
+                            target.sessionId(),
+                            target.runId(),
+                            target.interactionId(),
+                            target.targetRevision(),
+                            List.of());
+                    return;
+                }
                 InteractionView interaction = Optional.ofNullable(activeInteraction)
                         .filter(value -> selector.kind()
                                 .equals("interaction:" + value.requestId().value()))
                         .orElseThrow();
-                boolean forSession = selected == interaction.allowedActions().size();
+                boolean forSession = connectionOptions.sessionConsentEnabled()
+                        && selected == interaction.allowedActions().size();
                 InteractionAction action = forSession
                         ? InteractionAction.APPROVE
                         : interaction.allowedActions().get(selected);
@@ -3277,6 +5722,7 @@ public final class CodingTerminalController implements AutoCloseable {
                                 ? "Rejecting"
                                 : action.equals(InteractionAction.APPROVE) ? "Approving" : "Submitting response"));
                 activeInteraction = null;
+                SelectionToken token = currentSelection();
                 String idempotencyKey = UUID.randomUUID().toString();
                 submitControlEffect(
                         () -> {
@@ -3284,8 +5730,17 @@ public final class CodingTerminalController implements AutoCloseable {
                                     ? client.allowForSession(interaction, idempotencyKey)
                                     : client.respond(interaction, action, idempotencyKey);
                             return () -> {
-                                if (receipt != null) {
+                                if (receipt != null && isCurrentSelection(token)) {
                                     apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                                    if (forSession)
+                                        approvalStates.put(
+                                                interaction.sessionId(),
+                                                receipt.interactionState()
+                                                                == io.haifa.agent.runtime.api.InteractionState.APPLIED
+                                                        ? io.haifa.agent.application.project.product.coding.client
+                                                                .CodingSessionApprovalStatus.State.ACTIVE
+                                                        : io.haifa.agent.application.project.product.coding.client
+                                                                .CodingSessionApprovalStatus.State.PENDING);
                                     if (forSession)
                                         apply(new TerminalUiAction.StatusChanged(
                                                 receipt.interactionState()
@@ -3295,7 +5750,9 @@ public final class CodingTerminalController implements AutoCloseable {
                                 }
                             };
                         },
-                        code -> handleInteractionResponseFailure(code));
+                        code -> {
+                            if (isCurrentSelection(token)) handleInteractionResponseFailure(code);
+                        });
             }
         }
     }
@@ -3312,17 +5769,17 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void discardPendingShell() {
         if (pendingShellPlan == null) return;
-        String token = pendingShellPlan.token();
+        CodingShellPlan plan = pendingShellPlan;
         pendingShellPlan = null;
         submitEffect(
                 () -> {
-                    client.discardShell(token);
+                    discardShell(plan);
                     return () -> {};
                 },
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
-    private CodingSessionView requireCurrentSession() {
+    private TerminalSessionView requireCurrentSession() {
         return state.session()
                 .orElseThrow(() -> new ProjectProductException("SESSION_REQUIRED", "A Coding Session is required"));
     }
@@ -3331,6 +5788,28 @@ public final class CodingTerminalController implements AutoCloseable {
         String value = input.strip();
         int separator = value.indexOf(' ');
         return separator < 0 ? "" : value.substring(separator + 1).strip();
+    }
+
+    private void requestSessionSelector(String search) {
+        long generation = selection.current();
+        long request = ++sessionSelectorRequest;
+        apply(new TerminalUiAction.StatusChanged(search == null ? "Loading sessions" : "Searching sessions"));
+        submitEffect(
+                () -> {
+                    var sessions = readTerminalSessions(search, TerminalUiState.MAX_SESSION_ROWS);
+                    return () -> {
+                        if (request != sessionSelectorRequest
+                                || generation != selection.current()
+                                || state.selector().isPresent()) return;
+                        if (!sessions.isEmpty()) preserveDraft();
+                        showResumeOptions(sessions);
+                    };
+                },
+                code -> {
+                    if (request == sessionSelectorRequest && generation == selection.current()) {
+                        apply(new TerminalUiAction.RecoverableFailure(code));
+                    }
+                });
     }
 
     private void showResumeOptions(List<CodingSessionSummary> found) {
@@ -3609,10 +6088,35 @@ public final class CodingTerminalController implements AutoCloseable {
         var candidates = state.transcript().stream()
                 .filter(item -> technical ? item.toolDetails().isPresent() : item.toggleable())
                 .toList();
-        return candidates.stream()
+        if (!technical) {
+            var clarificationItemId = clarificationSelectorItemId();
+            if (clarificationItemId.isPresent()) {
+                var clarification = candidates.stream()
+                        .filter(item -> item.id().equals(clarificationItemId.orElseThrow()))
+                        .findFirst();
+                if (clarification.isPresent()) return clarification;
+            }
+        }
+        var selected = candidates.stream()
                 .filter(item -> item.id().equals(activeTranscriptItemId))
-                .findFirst()
-                .or(() -> candidates.stream().reduce((first, second) -> second));
+                .findFirst();
+        if (selected.isPresent()) return selected;
+        if (productClient != null && !technical && state.currentRunId().isPresent()) {
+            String runId = state.currentRunId().orElseThrow().value();
+            var activeTool = candidates.stream()
+                    .filter(item ->
+                            item.kind() == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.TOOL
+                                    && item.sourceRunId().filter(runId::equals).isPresent())
+                    .reduce((first, second) -> second);
+            if (activeTool.isPresent()) return activeTool;
+        }
+        return candidates.stream().reduce((first, second) -> second);
+    }
+
+    private Optional<String> clarificationSelectorItemId() {
+        return state.selector()
+                .filter(selector -> selector.kind().startsWith("clarification:"))
+                .map(selector -> "interaction-" + selector.kind().substring("clarification:".length()));
     }
 
     public void cycleModel(int delta) {
@@ -3623,35 +6127,33 @@ public final class CodingTerminalController implements AutoCloseable {
         if (state.selector().isPresent() || renamingSession) {
             return;
         }
-        if (modelSwitchInProgress) {
+        SelectionToken token = currentSelection();
+        if (isOperationInFlight(modelSwitchesInFlight, token)) {
             return;
         }
         if (modelOptions.isEmpty()) {
-            modelSwitchInProgress = true;
+            long operation = beginOperation(modelSwitchesInFlight, token);
             apply(new TerminalUiAction.StatusChanged("Loading models"));
-            Optional<AgentSessionId> requestSessionId =
-                    state.session().map(s -> s.summary().sessionId());
             boolean requestAwaitingNew = awaitingNewSessionMessage;
             submitEffect(
                     () -> {
-                        List<CodingModelOption> loaded = client.models();
+                        List<CodingModelOption> loaded = readTerminalModels();
                         return () -> {
-                            modelOptions = List.copyOf(loaded);
-                            modelSwitchInProgress = false;
-                            if (state.selector().isPresent()
+                            completeOperation(modelSwitchesInFlight, token, operation);
+                            if (!isCurrentSelection(token)
+                                    || state.selector().isPresent()
                                     || state.currentRunId().isPresent()
                                     || renamingSession
-                                    || !Objects.equals(
-                                            state.session().map(s -> s.summary().sessionId()), requestSessionId)
                                     || awaitingNewSessionMessage != requestAwaitingNew) {
                                 return;
                             }
+                            modelOptions = List.copyOf(loaded);
                             performModelCycle(delta);
                         };
                     },
                     code -> {
-                        modelSwitchInProgress = false;
-                        apply(new TerminalUiAction.RecoverableFailure(code));
+                        completeOperation(modelSwitchesInFlight, token, operation);
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
                     });
             return;
         }
@@ -3704,24 +6206,30 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (awaitingNewSessionMessage || state.session().isEmpty()) {
             pendingNewSessionModelId = option.id();
-            modelSwitchInProgress = false;
             apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
         } else {
-            CodingSessionView current = state.session().orElseThrow();
-            modelSwitchInProgress = true;
+            TerminalSessionView current = state.session().orElseThrow();
+            SelectionToken token = currentSelection();
+            if (isOperationInFlight(modelSwitchesInFlight, token)) return;
+            long operation = beginOperation(modelSwitchesInFlight, token);
             apply(new TerminalUiAction.StatusChanged("Changing model"));
             submitEffect(
                     () -> {
-                        Runnable select =
-                                selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor);
+                        Runnable select = selectModel(
+                                current,
+                                option.id(),
+                                token.generation(),
+                                cursor,
+                                previousOutputRunId,
+                                previousOutputCursor);
                         return () -> {
-                            modelSwitchInProgress = false;
-                            select.run();
+                            completeOperation(modelSwitchesInFlight, token, operation);
+                            if (isCurrentSelection(token)) select.run();
                         };
                     },
                     code -> {
-                        modelSwitchInProgress = false;
-                        apply(new TerminalUiAction.RecoverableFailure(code));
+                        completeOperation(modelSwitchesInFlight, token, operation);
+                        if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
                     });
         }
     }
@@ -3743,18 +6251,24 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private Runnable loadModels(
-            Optional<CodingSessionView> current,
+            Optional<TerminalSessionView> current,
             String argument,
+            SelectionToken token,
             Optional<RunEventCursor> cursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
-        Optional<CodingSessionView> reconciled =
-                current.map(value -> client.reconcile(value.summary().sessionId()));
-        List<CodingModelOption> options = client.models();
+        Optional<TerminalSessionView> reconciled =
+                current.map(value -> reconcileTerminalView(value.summary().sessionId()));
+        List<CodingModelOption> options = readTerminalModels();
         if (!argument.isBlank()) {
             if (reconciled.isPresent()) {
                 return selectModel(
-                        reconciled.orElseThrow(), argument, cursor, previousOutputRunId, previousOutputCursor);
+                        reconciled.orElseThrow(),
+                        argument,
+                        token.generation(),
+                        cursor,
+                        previousOutputRunId,
+                        previousOutputCursor);
             }
             CodingModelOption selected = options.stream()
                     .filter(option -> option.id().equals(argument))
@@ -3785,18 +6299,27 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private Runnable selectModel(
-            CodingSessionView current,
+            TerminalSessionView current,
             String modelId,
+            long generation,
             Optional<RunEventCursor> cursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
-        client.selectModel(
-                current.summary().sessionId(),
-                modelId,
-                current.model().revision(),
-                UUID.randomUUID().toString());
-        LoadedSession loaded = readSession(
-                client.open(current.summary().sessionId()), cursor, previousOutputRunId, previousOutputCursor);
+        if (productClient == null) {
+            client.selectModel(
+                    current.summary().sessionId(),
+                    modelId,
+                    current.model().revision(),
+                    UUID.randomUUID().toString());
+        } else {
+            executeTerminalProduct(
+                    "selectModel",
+                    current.summary().sessionId(),
+                    current.model().revision(),
+                    modelId);
+        }
+        LoadedSession loaded = loadSession(
+                current.summary().sessionId(), false, generation, cursor, previousOutputRunId, previousOutputCursor);
         return () -> {
             applyLoadedSession(loaded);
             apply(new TerminalUiAction.StatusChanged("Model changed for future new Runs"));
@@ -3804,34 +6327,65 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void scheduleReconcile() {
-        if (reconcileInFlight || state.session().isEmpty()) return;
-        reconcileInFlight = true;
+        scheduleReconcile(false);
+    }
+
+    private void scheduleReconcile(boolean retainUnknownOutcome) {
+        if (state.session().isEmpty()) return;
+        SelectionToken token = currentSelection();
+        if (isOperationInFlight(reconcilesInFlight, token)) return;
+        long operation = beginOperation(reconcilesInFlight, token);
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
         Optional<RunEventCursor> cursor = state.appliedCursor();
         AgentRunId previousOutputRunId = outputRunId;
         RunOutputCursor previousOutputCursor = outputCursor;
         submitMaintenanceEffect(
                 () -> {
-                    LoadedSession loaded =
-                            readSession(client.reconcile(sessionId), cursor, previousOutputRunId, previousOutputCursor);
+                    LoadedSession loaded = loadSession(
+                            sessionId, true, token.generation(), cursor, previousOutputRunId, previousOutputCursor);
                     return () -> {
-                        reconcileInFlight = false;
+                        completeOperation(reconcilesInFlight, token, operation);
+                        if (!isCurrentSelection(token)) return;
+                        Optional<String> unknown = state.recoverableError()
+                                .filter(code -> retainUnknownOutcome && "REMOTE_OUTCOME_UNKNOWN".equals(code));
                         applyLoadedSession(loaded);
+                        unknown.ifPresent(code -> apply(new TerminalUiAction.RecoverableFailure(code)));
                     };
                 },
                 code -> {
-                    reconcileInFlight = false;
-                    apply(new TerminalUiAction.RecoverableFailure(code));
+                    completeOperation(reconcilesInFlight, token, operation);
+                    if (isCurrentSelection(token)) apply(new TerminalUiAction.RecoverableFailure(code));
                 });
     }
 
     private void apply(TerminalUiAction action) {
+        if (closed) return;
+        if (action instanceof TerminalUiAction.RunEventReceived received) {
+            if (productClient != null) return;
+            if (!isCurrentStream(
+                    received.selectionGeneration(),
+                    received.event().runId(),
+                    received.event().sessionId())) {
+                return;
+            }
+            observeRunLifecycle(received.event());
+        }
         if (action instanceof TerminalUiAction.RunOutputReceived received) {
+            if (productClient != null) return;
+            if (!isCurrentOutputStream(
+                    received.selectionGeneration(), received.event().runId())) {
+                return;
+            }
             if (!received.event().runId().equals(outputRunId)
                     || received.event().sequence() <= outputCursor.sequence()) {
                 return;
             }
             outputCursor = new RunOutputCursor(received.event().sequence());
+        }
+        if (action instanceof TerminalUiAction.ToolOutputPreviewReceived received
+                && !isCurrentPreviewStream(
+                        received.selectionGeneration(), received.preview().runId())) {
+            return;
         }
         boolean hadActiveRun = state.currentRunId().isPresent();
         boolean hadSelector = state.selector().isPresent();
@@ -3858,6 +6412,9 @@ public final class CodingTerminalController implements AutoCloseable {
         boolean selectorClosedWhileIdle = hadSelector
                 && state.selector().isEmpty()
                 && state.currentRunId().isEmpty();
+        if (action instanceof TerminalUiAction.RunEventReceived received && runBecameIdle) {
+            requestFollowUpHandoff(received.event().runId());
+        }
         if (runBecameIdle || selectorClosedWhileIdle) {
             trySubmitWaitingWhenIdle();
         }
@@ -3894,22 +6451,26 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void schedulePendingCursorAcknowledgement() {
-        if (acknowledgementInFlight
+        SelectionToken token = currentSelection();
+        if (productClient != null
                 || pendingAcknowledgement == null
-                || state.session().isEmpty()) return;
+                || state.session().isEmpty()
+                || isOperationInFlight(acknowledgementsInFlight, token)) return;
         RunEventCursor requested = pendingAcknowledgement;
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
-        acknowledgementInFlight = true;
+        long operation = beginOperation(acknowledgementsInFlight, token);
         submitMaintenanceEffect(
                 () -> {
                     RunEventCursor acknowledged = client.acknowledgeCursor(sessionId, requested);
-                    return () -> completeCursorAcknowledgement(requested, acknowledged);
+                    return () -> completeCursorAcknowledgement(token, operation, requested, acknowledged);
                 },
-                ignored -> acknowledgementInFlight = false);
+                ignored -> completeOperation(acknowledgementsInFlight, token, operation));
     }
 
-    private void completeCursorAcknowledgement(RunEventCursor requested, RunEventCursor acknowledged) {
-        acknowledgementInFlight = false;
+    private void completeCursorAcknowledgement(
+            SelectionToken token, long operation, RunEventCursor requested, RunEventCursor acknowledged) {
+        completeOperation(acknowledgementsInFlight, token, operation);
+        if (!isCurrentSelection(token)) return;
         if (acknowledged.runId().equals(requested.runId())
                 && acknowledged.exclusiveSequence().orElse(0L)
                         >= requested.exclusiveSequence().orElse(0L)
@@ -3922,22 +6483,64 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void detachSubscriptions() {
+        closeProductObservation();
         RunEventSubscription previous = subscription;
         RunOutputSubscription previousOutput = outputSubscription;
+        ObservationPermit previousPermit = subscriptionPermit;
         subscription = null;
         outputSubscription = null;
+        subscriptionPermit = null;
         outputRunId = null;
         outputCursor = RunOutputCursor.BEFORE_FIRST;
-        closeSubscriptionsInBackground(previous, previousOutput);
+        pendingAcknowledgement = null;
+        observationEpoch = ++nextObservationEpoch;
+        closePreviewSubscription();
+        closeSubscriptionsInBackground(previous, previousOutput, previousPermit);
     }
 
-    private void closeSubscriptionsInBackground(RunEventSubscription previous, RunOutputSubscription previousOutput) {
-        if (previous == null && previousOutput == null) return;
+    private void closeSubscriptionsInBackground(
+            RunEventSubscription previous, RunOutputSubscription previousOutput, ObservationPermit permit) {
+        if (previous == null && previousOutput == null) {
+            releaseObservation(permit);
+            return;
+        }
+        Runnable cleanup = () -> {
+            try {
+                closeSubscriptions(previous, previousOutput);
+            } finally {
+                releaseObservation(permit);
+            }
+        };
+        submitBackgroundCleanup(cleanup);
+    }
+
+    /**
+     * Queues an external handle close on the owned bounded cleanup lane.
+     *
+     * <p>Every subscription and preview close goes here directly rather than through the maintenance
+     * lane: maintenance work may be discarded by {@code shutdownNow} at controller exit, while this
+     * executor's graceful shutdown drains what is already queued.
+     */
+    private void submitBackgroundCleanup(Runnable cleanup) {
         try {
-            maintenanceEffects.execute(() -> closeSubscriptions(previous, previousOutput));
-        } catch (RejectedExecutionException ignored) {
-            if (previous != null) deferredSubscriptionCloses.add(previous);
-            if (previousOutput != null) deferredSubscriptionCloses.add(previousOutput);
+            cleanupEffects.execute(cleanup);
+        } catch (RejectedExecutionException exception) {
+            // Admission caps live observations at observationCapacity, so the deferred registry is
+            // dimensioned above the maximum possible close tasks and must accept this entry. Never
+            // spawn an unbounded fallback thread or close a blocking handle on the update thread.
+            deferredCleanup.offer(cleanup);
+        }
+    }
+
+    private void drainDeferredCleanup() {
+        Runnable cleanup;
+        while ((cleanup = deferredCleanup.peek()) != null) {
+            try {
+                cleanupEffects.execute(cleanup);
+                deferredCleanup.poll();
+            } catch (RejectedExecutionException exception) {
+                return;
+            }
         }
     }
 
@@ -3948,19 +6551,53 @@ public final class CodingTerminalController implements AutoCloseable {
 
     @Override
     public void close() {
-        closeSubscriptions(subscription, outputSubscription);
+        java.util.List<AutoCloseable> owned;
+        synchronized (observationLock) {
+            closed = true;
+            owned = new java.util.ArrayList<>(ownedObservations);
+            ownedObservations.clear();
+        }
+        closeProductObservation();
+        selection.clear();
+        observationEpoch = 0L;
+        previewEpoch = 0L;
+        RunEventSubscription installed = subscription;
+        RunOutputSubscription installedOutput = outputSubscription;
+        ObservationPermit installedPermit = subscriptionPermit;
         subscription = null;
         outputSubscription = null;
-        if (previewSubscription != null) previewSubscription.close();
+        subscriptionPermit = null;
+        ToolOutputPreviewPublisher.ToolOutputPreviewSubscription preview = previewSubscription;
+        ObservationPermit installedPreviewPermit = previewPermit;
         previewSubscription = null;
+        previewPermit = null;
         previewRunId = null;
+        previewGeneration = 0L;
+        closeSubscriptions(installed, installedOutput);
+        releaseObservation(installedPermit);
+        closeQuietly(preview);
+        releaseObservation(installedPreviewPermit);
+        for (AutoCloseable observation : owned) {
+            closeQuietly(observation);
+        }
+        synchronized (observationLock) {
+            liveObservations.clear();
+        }
+        // Move any overflow back onto the cleanup lane so graceful shutdown drains it on the
+        // cleanup worker. Only the bounded remainder that no longer fits the lane runs inline.
+        drainDeferredCleanup();
+        cleanupEffects.shutdown();
+        Runnable pendingCleanup;
+        while ((pendingCleanup = deferredCleanup.poll()) != null) {
+            try {
+                pendingCleanup.run();
+            } catch (RuntimeException ignored) {
+                // Best-effort teardown after the UI loop.
+            }
+        }
         if (ownedControlEffects != null) ownedControlEffects.shutdownNow();
         if (ownedEffects != null) ownedEffects.shutdownNow();
         if (ownedMaintenanceEffects != null) ownedMaintenanceEffects.shutdownNow();
-        AutoCloseable deferred;
-        while ((deferred = deferredSubscriptionCloses.poll()) != null) {
-            closeQuietly(deferred);
-        }
     }
 
     private static void closeQuietly(AutoCloseable closeable) {
@@ -3972,13 +6609,15 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public record LoadedSession(
-            CodingSessionView view,
+            TerminalSessionView view,
+            long generation,
             List<String> resources,
             io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage history,
+            CodingProtocol.HistoryPage productHistory,
             List<PendingMessage> pending,
             List<AgentRunEvent> events,
-            RunEventSubscription subscription,
-            RunOutputSubscription outputSubscription,
+            AgentRunId subscribeRunId,
+            RunEventCursor subscribeAfter,
             AgentRunId outputRunId,
             RunOutputCursor outputCursor,
             Optional<CodingApprovalPrompt> approval) {
@@ -3993,6 +6632,12 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    /** Immutable selection identity captured before any asynchronous work starts. */
+    private record SelectionToken(long generation, AgentSessionId sessionId) {}
+
+    /** Identity of one admitted observable stream; held until its handles are actually closed. */
+    private static final class ObservationPermit {}
+
     private record CompletionContext(String buffer, int start, int end) {
         private CompletionContext {
             Objects.requireNonNull(buffer, "buffer must not be null");
@@ -4002,7 +6647,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    private record InteractionHydrationRequest(AgentRunId runId, String requestId) {
+    private record InteractionHydrationRequest(AgentRunId runId, String requestId, long generation) {
         private InteractionHydrationRequest {
             Objects.requireNonNull(runId, "runId must not be null");
             requestId = Objects.requireNonNull(requestId, "requestId must not be null")

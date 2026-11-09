@@ -17,6 +17,13 @@ public interface SessionMessageRepository {
 
     RecentMessageWindow recentMessages(AgentSessionId sessionId, MessageCursor atOrBefore, int limit);
 
+    /** Indexed, bounded source facts: explicit project constraints and sources without a historical reader.
+     * Custom adapters must implement this before enabling Run working sets; there is no full-history fallback.
+     */
+    default List<AgentMessage> requiredHistory(AgentSessionId sessionId, long after, long before, int limit) {
+        throw new UnsupportedOperationException("working-set retention query is not supported");
+    }
+
     Optional<MessageCursor> latestMessageCursor(AgentSessionId sessionId);
 
     Optional<AgentMessage> message(AgentMessageId id);

@@ -105,6 +105,7 @@ public class ChildAgentDelegationTest {
                         "",
                         Map.of());
             }
+            assertThat(request.tools()).noneMatch(tool -> tool.name().startsWith("history_"));
             String objective = request.messages().stream()
                     .filter(m -> m.role() == ModelMessageRole.USER)
                     .findFirst()
@@ -130,6 +131,7 @@ public class ChildAgentDelegationTest {
                         Map.of(
                                 PARENT_MODEL.modelId().value(), PARENT_MODEL,
                                 childModel.modelId().value(), childModel)))
+                .enableRunWorkingSet(4096)
                 .persistence(SdkContributions.inMemoryPersistence())
                 .conversation(new InMemoryConversationContribution())
                 .childRunCapacity(new ChildRunCapacity(1))

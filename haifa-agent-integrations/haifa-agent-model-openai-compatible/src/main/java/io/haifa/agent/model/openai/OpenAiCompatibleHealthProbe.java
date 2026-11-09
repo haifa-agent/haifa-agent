@@ -7,7 +7,6 @@ import io.haifa.agent.model.api.ProviderHealthProbe;
 import io.haifa.agent.model.api.ProviderHealthStatus;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -72,7 +71,8 @@ public final class OpenAiCompatibleHealthProbe implements ProviderHealthProbe {
                         observedAt);
             }
             String secret = rawSecret.trim();
-            HttpRequest request = HttpRequest.newBuilder(modelsUri())
+            HttpRequest request = HttpRequest.newBuilder(
+                            OpenAiCompatibleDialects.resolve(provider).modelsUri(provider.endpoint()))
                     .timeout(timeout)
                     .header("Accept", "application/json")
                     .header("Authorization", "Bearer " + secret)
@@ -102,11 +102,5 @@ public final class OpenAiCompatibleHealthProbe implements ProviderHealthProbe {
             return new ProviderHealth(
                     provider.id(), ProviderHealthStatus.UNAVAILABLE, "provider probe failed", observedAt);
         }
-    }
-
-    private URI modelsUri() {
-        String base = provider.endpoint().toString();
-        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        return URI.create(base + "/models");
     }
 }

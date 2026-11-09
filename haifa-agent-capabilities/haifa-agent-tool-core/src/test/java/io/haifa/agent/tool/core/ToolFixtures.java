@@ -42,8 +42,12 @@ final class ToolFixtures {
     }
 
     static ToolDefinition definition(ToolRisk risk, ToolSchema inputSchema) {
+        return definition("file_read", risk, inputSchema);
+    }
+
+    static ToolDefinition definition(String name, ToolRisk risk, ToolSchema inputSchema) {
         return new ToolDefinition(
-                new ToolName("file_read"),
+                new ToolName(name),
                 new SemanticVersion("1.0.0"),
                 PROVIDER_ID,
                 "Read file",

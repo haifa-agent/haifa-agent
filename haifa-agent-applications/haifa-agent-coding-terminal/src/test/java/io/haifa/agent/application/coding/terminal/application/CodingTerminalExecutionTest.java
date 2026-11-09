@@ -127,7 +127,7 @@ class CodingTerminalExecutionTest {
     }
 
     @Test
-    void escapeReconcilesAStaleIdleViewBeforeCancellingTheActiveRun() {
+    void escapeRefreshesAStaleIdleViewWithoutInferringACancelTarget() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         client.reconciledView = activeView();
         var controller = controller(client);
@@ -135,7 +135,15 @@ class CodingTerminalExecutionTest {
 
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
 
-        assertThat(client.cancelledSessions).containsExactly(SESSION_ID);
+        assertThat(client.cancelledSessions).isEmpty();
+        assertThat(client.cancelledRuns).isEmpty();
+        assertThat(controller.state().currentRunId()).contains(new io.haifa.agent.core.run.AgentRunId("run-1"));
+        assertThat(controller.state().status()).contains("press esc again to cancel");
+
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        assertThat(client.cancelledRuns).containsExactly(new io.haifa.agent.core.run.AgentRunId("run-1"));
+        assertThat(client.sessionLevelCancelCalls).isZero();
         assertThat(controller.state().status()).isEqualTo("Cancelling");
     }
 

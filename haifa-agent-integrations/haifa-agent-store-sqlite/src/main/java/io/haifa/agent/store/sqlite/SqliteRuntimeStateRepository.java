@@ -121,6 +121,22 @@ public final class SqliteRuntimeStateRepository implements RuntimeStateRepositor
     }
 
     @Override
+    public Optional<AgentMessage> initiatingUserMessage(AgentRunId runId) {
+        return messages.initiatingUserMessage(runId);
+    }
+
+    @Override
+    public List<AgentMessage> requiredHistory(
+            io.haifa.agent.core.session.AgentSessionId sessionId, long after, long before, int limit) {
+        return messages.requiredHistory(sessionId, after, before, limit);
+    }
+
+    @Override
+    public Optional<AgentMessage> latestUserMessage(AgentRunId runId) {
+        return messages.latestUserMessage(runId);
+    }
+
+    @Override
     public List<AgentStep> steps(AgentRunId runId) {
         return loop.steps(runId);
     }

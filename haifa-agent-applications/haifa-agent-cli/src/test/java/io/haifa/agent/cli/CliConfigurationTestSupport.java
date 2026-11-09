@@ -1,5 +1,7 @@
 package io.haifa.agent.cli;
 
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliConfigurationLoader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

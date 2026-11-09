@@ -10,7 +10,7 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 <version>${revision}</version>
 ...
 <properties>
-    <revision>0.1.4</revision>
+    <revision>0.1.5</revision>
 </properties>
 ```
 
@@ -19,16 +19,25 @@ Reactor 版本由根 `pom.xml` 的 `revision` 属性单点定义，全部模块 
 模块目录下被 Git 忽略的 `.flattened-pom.xml`，再以该文件安装或部署，消费者不会读到 `${revision}`
 字面量。
 
+## Python 入口解析
+
+`build-support/`、`dist-support/`、`scripts/` 与自动交付工具下的全部 `.ps1` / `.sh` 入口只做一件事：
+把参数原样转交 `build-support/scripts/invoke-python.ps1` 或 `build-support/scripts/invoke-python.sh`。
+解释器解析顺序固定为 `HAIFA_PYTHON_EXECUTABLE`、`python.exe`/`python3`、`py -3`（POSIX 为
+`HAIFA_PYTHON_EXECUTABLE`、`python3`、`python`），参数不做改写，子进程退出码原样返回。
+
+新增入口不得再复制这段查找逻辑；公共业务逻辑仍然只放在对应的 `.py` 中。
+
 ## 本地 SDK 版本化发布
 
 向本地 Maven 仓库发布 SDK 统一使用 `scripts/publish-local-sdk.ps1`，禁止直接执行 `mvn install`：
-- 主检出在 `dev` 分支上发布基线 `0.1.4-SNAPSHOT`；
-- 各 `feat-*` worktree 自动发布到 `0.1.4-<worktree 目录名>-SNAPSHOT`；
+- 主检出在 `dev` 分支上发布基线 `0.1.5-SNAPSHOT`；
+- 各 `feat-*` worktree 自动发布到 `0.1.5-<worktree 目录名>-SNAPSHOT`；
 - 发布过程核对所有公开 JAR/POM 的 SHA-256 和版本展开，并在 `io/haifa/haifa-agent-bom/<version>/haifa-sdk-publish-manifest.json` 写出发布清单。
 
 ## 分层 Maven 入口
 
-本地开发使用 `scripts/invoke-haifa-maven.ps1` 或 `scripts/invoke-haifa-maven.sh`。入口不会改变 Maven
+本地开发使用 `build-support/scripts/invoke-haifa-maven.ps1` 或 `invoke-haifa-maven.sh`。入口不会改变 Maven
 生命周期或吞掉退出码，只补充资源感知的默认线程数和一份脱敏 JSON 指标：
 
 从运行中的 Coding Agent 终端启动构建时，入口会在 Maven 子进程中丢弃该产品导出的运行时变量
@@ -112,6 +121,29 @@ python ./build-support/scripts/check_commit_authors.py --range origin/dev..HEAD
 要让它真正阻断合并，需在 `dev`/`main` 的 ruleset 中把该 job 名加入 `required_status_checks`；job 改名会让
 规则失配并长期阻塞合并。Git 的作者与提交者字段由客户端自填、可在推送前改写，所以该门禁只做归属卫生，
 不构成安全边界。
+
+## Spotless 与包装脚本调用方式
+
+新写或大改文件后，先在本模块执行 `spotless:apply`，再用入口执行 `spotless:check`。`spotless:check` 只在格式
+已干净时返回 0；直接对它排障会把"格式未整理"误读成"构建配置错误"。
+
+```powershell
+# 1) 先整理受影响模块的格式
+.\mvnw.cmd -o -q -pl :haifa-agent-cli,:haifa-agent-coding-terminal spotless:apply
+
+# 2) 再用入口校验（作为原生 PowerShell 调用，不要套外层 cmd /c）
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L1 -- `
+  -pl :haifa-agent-cli -pl :haifa-agent-coding-terminal spotless:check
+```
+
+两个已知坑：
+
+- **不要在 `cmd /c` 里套 `invoke-haifa-maven.ps1` 并重定向输出。** 该入口本身由 PowerShell 脚本转调 Python；
+  再嵌一层 `cmd /c ".\build-support\scripts\invoke-haifa-maven.ps1 ... > log 2>&1"` 会挂起直到外层超时，看起来
+  像 Spotless 超时，实际与 Spotless 无关。直接调用 `mvnw.cmd`，或按上面的原生 PowerShell 写法执行。
+- **格式违规是独立分类。** 入口把 Maven 结果写入 `HAIFA_MAVEN_RESULT`，Spotless 违规现在输出
+  `FORMAT_FAILURE`，不再落到容易误解的 `BUILD_CONFIGURATION_FAILURE`。看到该分类就执行 `spotless:apply`，
+  不要按配置问题排查。
 
 ## 只读影响范围建议
 

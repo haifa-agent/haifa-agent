@@ -30,6 +30,9 @@ request options into the ordinary Runtime configuration snapshot. `AgentRuns.sta
 single Runtime start path; a profile is selection data, not a second executor or product-specific Run state machine.
 Profiles may also freeze an optional Tool allowlist. An absent allowlist inherits the Agent definition, an explicit
 empty allowlist freezes no Tools, and a non-empty allowlist must be a subset of the Agent definition.
+For a read-only question, select an explicit read-only profile on start/submit rather than inheriting a broad
+Agent Tool set. A next step quoted in a document or historical handoff does not authorize a write;
+a continuation that needs writes must select the trusted profile that permits them.
 
 面向上层 Agent 产品的纯 Java 高层装配与应用边界。`HaifaAgent` 表示装配完成、可被宿主长期持有
 并负责资源生命周期的产品 Runtime 实例；它不是 Agent Definition，也不是某一次 Run。SDK 通过可信
@@ -387,3 +390,55 @@ Its maximum takes precedence over `maxConcurrentChildRuns`; no shared capacity i
 A Child keeps its slot while waiting for approval and until its terminal Run and actual execution tasks
 have settled. Releasing a slot wakes waiting parents across all participating Agents. Cancelling a
 parent waiting for admission creates no Child. Closing one Agent does not close the shared capacity.
+
+## Optional Run working sets
+
+`HaifaAgentBuilder.enableRunWorkingSet()` (or `enableRunWorkingSet(2048)`) enables bounded selection
+and its required built-in history readers. It defaults off; explicit frozen Profile values take precedence,
+and Tool allowlists remain authoritative. Current original USER input, latest Steer, required sources and
+current execution links are retained. Prior sparse history is quoted data with source/version references.
+A lightweight handoff uses existing facts and never adds a per-Run summary call or Store.
+In-use read results survive later Tool calls until summary commit or safe reselection. The working-set
+target is a soft objective; required evidence and bounded cache deferral may exceed it while hard budgets
+still apply. Enabling it also selects `unified-context-v1`: actual model-bound budgeting, readable saved-result
+previews before the first oversized result, and compaction after optional content yields. Explicit frozen
+`haifa.runtime.context_budget_policy=legacy` keeps the previous budgeting/projection path. Existing stored
+snapshots without the version retain their original behavior. See the Runtime Core README for frozen controls,
+retention, cache predictions and adapter limits.
+
+## Optional historical retrieval
+
+`HaifaAgentBuilder.enableHistoryRetrieval()` contributes `history_search` and `history_read` through the existing
+Tool registrations and frozen Run configuration. It is off by default. Combine it with Java Tools or
+`toolRegistrations(...)`; the existing mutually exclusive prebuilt `toolPlatform(...)` rule still applies.
+The added schemas and returned excerpts enter normal input accounting and hard budgets, and change the visible
+fixed-prefix identity. Enabling this does not enable a new history-selection or compaction policy.
+
+Search is restricted to the current Session, Project and owner. Exact filters are `runId`, `messageId`,
+`toolCallId`, `toolName` and `path`; `keyword` is a literal, case-insensitive match. Defaults are 10 hits and
+128 scanned message rows; maxima are 20 and 128. A response-size bound can shorten the hit page. Follow
+`nextCursor` until `searchComplete=true`, including empty pages and large-source suffixes. A cursor freezes
+the observed head and query; it never grants authorization. Paths come from persisted Tool arguments or
+artifact IDs/titles, rather than filesystem discovery.
+
+Read requires the returned `runId`, `messageId` and `version`, with optional `toolCallId`. `offset`/`length`
+address UTF-16 character positions in the stable, redacted `history-text-v1` data representation; length defaults
+to 4096 and is at most 8192. Optional `fromLine` starts at a one-based line, with offset relative to that start;
+keep it unchanged when following `nextOffset`. An exhausted range is empty. `truncated` describes unread
+characters; `sourceTruncated` separately reports truncation already present in the persisted original result.
+The representation contains visible message text or stored Tool summary/data, not original file bytes.
+
+Results are untrusted Tool data, with source identity and version. They never replay assistant protocol or
+protected continuation. Missing, stale, denied or redacted reads return `UNAVAILABLE`; no current file is read
+and no original Tool is dispatched. Existing externalized Tool-result assets are read by their immutable
+occurrence identity. Arbitrary asset URLs and independently managed artifact bodies are not historical snapshots;
+those sources must remain retained until a versioned reader exists. Authorization is checked again before
+retrieval results enter model/summary requests or public Tool views. Existing message redaction also invalidates
+dependent persisted retrieval messages and Session summaries, including after reopening a Runtime.
+Scope-level revocation is also checked before ordinary and summary model requests, even after retrieval evidence
+has been summarized. Source-specific withdrawal uses the existing message-redaction API.
+
+Working-set opt-in also applies to named child profiles while preserving each child's Tool allowlist and
+model binding. Parent retrieval permissions do not implicitly grant the child historical readers.
+Coding's standalone assembly exposes the same Runtime strategy through its explicit context configuration;
+it remains disabled by default. Consumer integration coverage is distinct from pending real-model evaluation.

@@ -1,5 +1,7 @@
 package io.haifa.agent.runtime.core.model;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_METADATA_KEY;
+
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.AgentContext;
@@ -36,6 +38,13 @@ import java.util.Objects;
 
 /** Invokes Model API from the exact immutable adapter/provider/model snapshot frozen for a run. */
 public final class FrozenModelInvoker {
+    private io.haifa.agent.runtime.core.loop.RunWorkingSetSource workingSets;
+
+    public FrozenModelInvoker workingSets(io.haifa.agent.runtime.core.loop.RunWorkingSetSource value) {
+        workingSets = value;
+        return this;
+    }
+
     private final RuntimeStateRepository state;
     private final Map<ModelAdapterKey, AgentChatModel> adapters;
     private final IdentifierGenerator ids;
@@ -46,6 +55,7 @@ public final class FrozenModelInvoker {
     private final RuntimeEventAppender events;
     private final TimeProvider time;
     private final DefinitionResolver childDefinitions;
+    private final io.haifa.agent.runtime.core.history.HistoryToolProvider history;
 
     public FrozenModelInvoker(
             RuntimeStateRepository state,
@@ -118,21 +128,61 @@ public final class FrozenModelInvoker {
             ActiveContextSnapshots activeContexts,
             DefinitionResolver childDefinitions,
             ModelMessageProjectionPlanner projectionPlanner) {
+        this(
+                state,
+                adapters,
+                ids,
+                output,
+                controls,
+                events,
+                time,
+                imageResolver,
+                audioResolver,
+                activeContexts,
+                childDefinitions,
+                projectionPlanner,
+                null);
+    }
+
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time,
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver,
+            ActiveContextSnapshots activeContexts,
+            DefinitionResolver childDefinitions,
+            ModelMessageProjectionPlanner projectionPlanner,
+            io.haifa.agent.runtime.core.history.HistoryToolProvider history) {
         this.childDefinitions = childDefinitions;
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
+        this.history = history;
         this.messages = new ModelMessageAssembler(
-                state,
-                imageResolver,
-                audioResolver,
-                Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null"),
-                activeContexts);
+                        state,
+                        imageResolver,
+                        audioResolver,
+                        Objects.requireNonNull(projectionPlanner, "projectionPlanner must not be null"),
+                        activeContexts,
+                        history == null ? (run, call) -> call : history::sanitize)
+                .historicalData(history);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");
         this.events = Objects.requireNonNull(events, "events must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
+    }
+
+    private Map<String, Object> accountingSelection(AgentRun run, Map<String, Object> existing) {
+        if (workingSets == null || !workingSets.enabled(run)) return existing;
+        var values = new java.util.LinkedHashMap<>(existing);
+        values.putAll(workingSets.evidence(run.id()));
+        return Map.copyOf(values);
     }
 
     public FrozenModelBinding bind(AgentRun run) {
@@ -204,6 +254,58 @@ public final class FrozenModelInvoker {
                 .toList();
     }
 
+    public PreparedModelInput prepare(FrozenModelBinding binding, AgentRun run, AgentContext context) {
+        if (history != null) history.requireCurrentScope(run);
+        var assembled = messages.assembleWithMetrics(
+                run, context, binding.configuration().model());
+        var schema = binding.configuration()
+                .structuredOutput()
+                .map(value -> value.jsonSchema())
+                .orElse(Map.of());
+        var estimate = ModelInputAccounting.admissionEstimate(
+                binding.configuration().model(), assembled.messages(), context.tools(), schema);
+        long fixed = assembled.messages().stream()
+                        .limit(context.prompts().size())
+                        .mapToLong(message -> ModelInputAccounting.visibleTokens(message) + 6L)
+                        .sum()
+                + context.tools().stream()
+                        .mapToLong(new io.haifa.agent.context.budget.HeuristicTokenEstimator()::estimate)
+                        .sum()
+                + (schema.isEmpty() ? 0L : io.haifa.agent.context.budget.HeuristicTokenEstimator.tokens(schema));
+        long other = assembled.sources().getOrDefault("memory", 0L)
+                + assembled.sources().getOrDefault("runtimeState", 0L)
+                + context.items().stream()
+                                .filter(item -> item.content()
+                                                instanceof io.haifa.agent.context.item.MemoryReferenceContent
+                                        || item.content() instanceof io.haifa.agent.context.item.TextContextContent)
+                                .count()
+                        * 6L;
+        return new PreparedModelInput(
+                context,
+                assembled,
+                estimate.totalTokens(),
+                fixed,
+                Math.min(other, Math.max(0L, estimate.totalTokens() - fixed)));
+    }
+
+    public ModelInvocationResult invoke(
+            FrozenModelBinding binding,
+            AgentRun run,
+            int iteration,
+            io.haifa.agent.runtime.core.loop.RuntimeContextBuildResult built,
+            ModelRequestId requestId,
+            int physicalAttempt) {
+        return invoke(
+                binding,
+                run,
+                iteration,
+                built.context().context(),
+                requestId,
+                physicalAttempt,
+                built.context().context().tools(),
+                built.preparedInput());
+    }
+
     public ModelInvocationResult invoke(FrozenModelBinding binding, AgentRun run, int iteration, AgentContext context) {
         return invoke(binding, run, iteration, context, new ModelRequestId(ids.nextValue()), 1);
     }
@@ -226,6 +328,24 @@ public final class FrozenModelInvoker {
             FrozenModelBinding binding,
             AgentRun run,
             int iteration,
+            io.haifa.agent.runtime.core.loop.RuntimeContextBuildResult built,
+            ModelRequestId requestId,
+            int physicalAttempt) {
+        return invoke(
+                binding,
+                run,
+                iteration,
+                built.context().context(),
+                requestId,
+                physicalAttempt,
+                List.of(),
+                built.preparedInput());
+    }
+
+    public ModelInvocationResult invokeWithoutTools(
+            FrozenModelBinding binding,
+            AgentRun run,
+            int iteration,
             AgentContext context,
             ModelRequestId requestId,
             int physicalAttempt) {
@@ -240,6 +360,26 @@ public final class FrozenModelInvoker {
             ModelRequestId requestId,
             int physicalAttempt,
             List<ModelToolSpecification> disclosedTools) {
+        return invoke(
+                binding,
+                run,
+                iteration,
+                context,
+                requestId,
+                physicalAttempt,
+                disclosedTools,
+                java.util.Optional.empty());
+    }
+
+    private ModelInvocationResult invoke(
+            FrozenModelBinding binding,
+            AgentRun run,
+            int iteration,
+            AgentContext context,
+            ModelRequestId requestId,
+            int physicalAttempt,
+            List<ModelToolSpecification> disclosedTools,
+            java.util.Optional<PreparedModelInput> prepared) {
         if (!binding.configuration().reference().equals(run.configurationSnapshot())) {
             throw new IllegalArgumentException("model binding belongs to another configuration snapshot");
         }
@@ -257,12 +397,43 @@ public final class FrozenModelInvoker {
                     "selected model does not support structured output",
                     null);
         }
-        ModelMessageAssembler.AssemblyResult messageAssembly = messages.assembleWithMetrics(
-                run, context, binding.configuration().model());
+        if (history != null) history.requireCurrentScope(run);
+        ModelMessageAssembler.AssemblyResult messageAssembly;
+        if (prepared.isPresent()) {
+            var value = prepared.orElseThrow();
+            if (!value.matches(context)) throw new IllegalArgumentException("prepared context changed");
+            messages.validateSources(run, context);
+            messageAssembly = value.assembly();
+        } else {
+            messageAssembly = messages.assembleWithMetrics(
+                    run, context, binding.configuration().model());
+        }
+        if (prepared.isPresent() || (workingSets != null && workingSets.unified(run))) {
+            var estimate = ModelInputAccounting.admissionEstimate(
+                    binding.configuration().model(),
+                    messageAssembly.messages(),
+                    disclosedTools,
+                    binding.configuration()
+                            .structuredOutput()
+                            .map(schema -> schema.jsonSchema())
+                            .orElse(Map.of()));
+            long hard = Math.min(
+                    context.budget().availableInputTokens(),
+                    io.haifa.agent.context.budget.ContextWindowBudget.capacity(
+                                    binding.configuration().model().contextWindow(),
+                                    context.budget().outputReserve(),
+                                    context.budget().safetyMargin())
+                            .availableInputTokens());
+            if (estimate.totalTokens() > hard)
+                throw new io.haifa.agent.context.api.ContextBuildException(
+                        io.haifa.agent.context.api.ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
+                        "prepared model input exceeds its hard budget");
+        }
         AgentChatRequest request = new AgentChatRequest(
                 callId,
                 requestId,
                 run.id(),
+                run.rootRunId().value(),
                 iteration,
                 physicalAttempt,
                 binding.configuration().model(),
@@ -274,6 +445,44 @@ public final class FrozenModelInvoker {
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
                 RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()),
                 binding.configuration().structuredOutput());
+        ModelInputAccounting.record(
+                events,
+                time,
+                binding,
+                request,
+                "ORDINARY",
+                messageAssembly.sources(),
+                accountingSelection(
+                        run,
+                        Map.of(
+                                "hardInputLimitTokens", context.budget().availableInputTokens(),
+                                "admissionPolicy",
+                                        prepared.isPresent() ? RuntimeControlOptions.UNIFIED_CONTEXT_V1 : "legacy",
+                                "rawActiveHistoryEstimatedTokens",
+                                        messageAssembly.projection().rawActiveTokens(),
+                                "projectedActiveHistoryEstimatedTokens",
+                                        messageAssembly.projection().projectedActiveTokens(),
+                                "savedResultViewCount",
+                                        messageAssembly
+                                                .projection()
+                                                .resultViews()
+                                                .size(),
+                                "resultRepresentationReason",
+                                        messageAssembly
+                                                        .projection()
+                                                        .resultViews()
+                                                        .isEmpty()
+                                                ? "UNCHANGED"
+                                                : context.estimatedInputTokens()
+                                                                        + messageAssembly
+                                                                                .projection()
+                                                                                .tokensSavedByPruning()
+                                                                > context.budget()
+                                                                        .availableInputTokens()
+                                                        ? "HARD_CAPACITY"
+                                                        : "TARGET_PRESSURE",
+                                "sourceOccurrences", messageAssembly.sourceOccurrences(),
+                                "repeatedSourceOccurrences", messageAssembly.repeatedSourceOccurrences())));
         Instant startedAt = time.now();
         appendLifecycle(
                 binding,
@@ -331,6 +540,8 @@ public final class FrozenModelInvoker {
                 }
                 return ModelStreamControl.CONTINUE;
             });
+            ModelInputAccounting.recordUsage(events, time, binding, request, "ORDINARY", response.usage());
+            if (workingSets != null) workingSets.recordRequest(run, request, startedAt.toEpochMilli(), context);
             RunControlSignal completedSignal = controls.signal(run.id());
             if (completedSignal.stopsExecution()) {
                 if (completedSignal == RunControlSignal.CANCEL || completedSignal == RunControlSignal.TIMEOUT) {
@@ -373,7 +584,8 @@ public final class FrozenModelInvoker {
                             Map.entry("finishReason", response.finishReason().name()),
                             Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
                             Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
-                            Map.entry("reasoningTokens", response.usage().reasoningTokens())),
+                            Map.entry("reasoningTokens", response.usage().reasoningTokens()),
+                            Map.entry(PHASE_METADATA_KEY, ModelMessageAssembler.contextPhase(run, context))),
                     callId.value(),
                     physicalAttempt,
                     binding.configuration().model(),

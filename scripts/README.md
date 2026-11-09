@@ -3,6 +3,11 @@
 本目录保存面向 Haifa Agent 产品运维、本地打包和运行时可靠性分析的公共脚本入口。所有入口遵循
 “Python 公共实现 + PowerShell/Shell 薄入口” 规范。
 
+所有 `.ps1` / `.sh` 入口共用 `build-support/scripts/invoke-python.ps1` / `invoke-python.sh` 解析
+Python 3 并原样转交参数与退出码；Coding Agent 的发行打包、本地打包与本地更新还共用
+`dist-support/scripts/distribution_contracts.py` 中的 POM 版本、模型配置、shaded JAR 与 Maven 构建
+入口契约，三者不得各自复制这些规则。
+
 测试驱动、Terminal 验收与平台冒烟脚本属于测试基础设施，统一维护于
 [`haifa-agent-testing/scripts/`](../haifa-agent-testing/scripts/README.md)。
 
@@ -38,7 +43,8 @@ Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点�
 
 `package-local-coding-agent.sh`（macOS/Linux）和 `package-local-coding-agent.ps1`（Windows）构建
 `haifa-agent-cli` shaded JAR，并生成包含启动脚本、JAR、无密钥默认配置、`data/transcripts` 与 `logs`
-目录的可搬运目录。公共逻辑位于 `package-local-coding-agent.py`。
+目录的可搬运目录。公共逻辑位于 `package-local-coding-agent.py`；它只保留平铺目录装配，JAR 构建与
+JAR/配置校验复用共享契约。
 
 ```bash
 ./scripts/package-local-coding-agent.sh
@@ -81,7 +87,7 @@ Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点�
 
 `refresh-ca/update-coding-agent.ps1` 构建选定分支或 worktree 的 `haifa-agent-cli`，打包带 JRE 的 CA ZIP，
 用隔离数据目录 smoke 通过后替换本机安装的 JAR 并更新用户 PATH。公共逻辑位于
-`refresh-ca/update_coding_agent.py`，`.ps1` 只原样转发参数。
+`refresh-ca/update_coding_agent.py`，`.ps1` 只原样转发参数；POM 版本解析与构建入口同样来自共享契约。
 
 ```powershell
 .\scripts\refresh-ca\update-coding-agent.ps1 update --branch feat-terminal-markdown-rendering

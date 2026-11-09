@@ -37,15 +37,60 @@ class ClarificationDetailsTest {
 
         assertThat(details.selectorTitle(0)).isEqualTo("Clarification · Step 1 of 2 · Storage");
         assertThat(details.selectorTitle(1)).isEqualTo("Clarification · Step 2 of 2 · Location");
+        assertThat(details.reviewTitle()).isEqualTo("Clarification · Review · 2 questions");
         assertThatThrownBy(() -> details.selectorTitle(2)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void keepsTheTranscriptCardToOneLinePerQuestionWithoutRepeatingItsOptions() {
+    void summarizesMarkedOptionsAndTypedTextForTheReview() {
+        ClarificationDetails details = twoQuestions();
+
+        assertThat(details.answerSummary(0, List.of("missing", "opt-0-1", "opt-0-0"), ""))
+                .isEqualTo("SQLite, Postgres");
+        assertThat(details.answerSummary(0, List.of(), "  line\nbreak ")).isEqualTo("line break");
+        assertThat(details.answerSummary(0, List.of("opt-0-0"), "mine")).isEqualTo("Postgres · mine");
+        assertThat(details.answerSummary(0, List.of(), "  ")).isEqualTo(ClarificationDetails.UNANSWERED_SUMMARY);
+
+        String summary = details.answerSummary(1, List.of(), "a".repeat(180));
+        assertThat(summary).endsWith("…");
+        assertThat(summary).doesNotContain("a".repeat(180));
+        assertThat(summary.codePointCount(0, summary.length())).isEqualTo(160);
+    }
+
+    @Test
+    void exposesCompleteQuestionOptionAndRationaleDetailForCtrlOExpansion() {
         ApprovalDetails card = twoQuestions().toApprovalDetails();
 
-        assertThat(card.content()).isEqualTo("Storage: Which storage?\nLocation: Where should it live?");
-        assertThat(card.content()).doesNotContain("Postgres", "In the repository");
+        assertThat(card.content())
+                .contains(
+                        "Q1 · Storage",
+                        "Which storage?",
+                        "Postgres — Runs as a server",
+                        "SQLite",
+                        ClarificationDetails.CUSTOM_ENTRY_LABEL,
+                        ClarificationDetails.CANCEL_DESCRIPTION,
+                        "Q2 · Location",
+                        "Where should it live?");
+        assertThat(card.environment())
+                .extracting(ApprovalDetails.Fact::label)
+                .containsExactly("Q1 Storage", "Q2 Location");
+    }
+
+    @Test
+    void boundedSummaryDoesNotSplitASurrogatePair() {
+        String prompt = "a".repeat(70) + "\uD83D\uDE00" + "tail";
+        ClarificationDetails details = new ClarificationDetails(
+                "Title",
+                List.of(new ClarificationDetails.Question(
+                        "Header",
+                        prompt,
+                        false,
+                        false,
+                        List.of(new ClarificationDetails.Option("opt-0-0", "Option", Optional.empty())))));
+
+        ApprovalDetails card = details.toApprovalDetails();
+
+        assertThat(card.environment().getFirst().value()).isEqualTo("a".repeat(70) + "…");
     }
 
     private static ClarificationDetails twoQuestions() {

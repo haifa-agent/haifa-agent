@@ -10,6 +10,11 @@ import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.coding.host.internal.ApprovalMode;
+import io.haifa.coding.host.internal.CliCodingModelCatalog;
+import io.haifa.coding.host.internal.CliConfiguration;
+import io.haifa.coding.host.internal.CliConfigurationLoader;
+import io.haifa.coding.host.internal.LocalCodingAgent;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +23,47 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CliModelConfigurationTest {
+    @Test
+    void distributionTemplateExposesTheOpenCodeGoSubscriptionModels(@TempDir Path tempDirectory) throws Exception {
+        Path template = Path.of("distribution", "haifa-coding.yaml").toAbsolutePath();
+        Path configuration = tempDirectory.resolve("haifa-coding.yaml");
+        Files.writeString(
+                configuration,
+                Files.readString(template)
+                        .replace(
+                                "__HAIFA_SQLITE_DATABASE_PATH__",
+                                "'"
+                                        + tempDirectory
+                                                .resolve("data/runtime.db")
+                                                .toString()
+                                                .replace('\\', '/') + "'")
+                        .replace(
+                                "__HAIFA_TRANSCRIPT_ROOT__",
+                                "'"
+                                        + tempDirectory
+                                                .resolve("data/transcripts")
+                                                .toString()
+                                                .replace('\\', '/') + "'"));
+
+        CliConfiguration loaded = new CliConfigurationLoader(name -> null)
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+
+        assertThat(loaded.availableModels())
+                .filteredOn(model -> model.providerId().equals("opencode-go"))
+                .extracting(CliConfiguration.Model::id)
+                .containsExactlyInAnyOrder(
+                        "opencode-go-deepseek-v4-pro", "opencode-go-deepseek-flash", "opencode-go-kimi-k3");
+        assertThat(loaded.availableModels())
+                .filteredOn(model -> model.id().equals("opencode-go-deepseek-flash"))
+                .singleElement()
+                .satisfies(model -> {
+                    assertThat(model.modelId()).isEqualTo("deepseek-v4.1-flash");
+                    assertThat(model.endpoint()).hasToString("https://opencode.ai/inference/go/openai/v1");
+                    assertThat(model.credentialRef()).isEqualTo("model-auth://opencode-go/default");
+                    assertThat(model.dialect()).isEqualTo("opencode-go-openai-chat");
+                });
+    }
+
     @Test
     void loadsTheDedicatedCodexResponsesBindingWithoutEmbeddingAClientId() throws Exception {
         Path configuration = Files.createTempFile("haifa-cli-codex", ".yaml");
@@ -242,7 +288,10 @@ class CliModelConfigurationTest {
                         "tokenrhythm-glm-5-3-flash",
                         "tokenrhythm-qwen3-8-flash",
                         "tokenrhythm-deepseek-flash",
-                        "tokenrhythm-glm-5-3-flashx");
+                        "tokenrhythm-glm-5-3-flashx",
+                        "opencode-go-deepseek-v4-pro",
+                        "opencode-go-deepseek-flash",
+                        "opencode-go-kimi-k3");
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("gpt-5.6-sol"))
                 .singleElement()

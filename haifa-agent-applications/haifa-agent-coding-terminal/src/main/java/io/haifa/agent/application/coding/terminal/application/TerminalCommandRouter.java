@@ -18,12 +18,14 @@ public final class TerminalCommandRouter {
         return switch (command) {
             case "/new" -> TerminalCommand.NEW;
             case "/resume" -> TerminalCommand.RESUME;
+            case "/history" -> TerminalCommand.HISTORY;
             case "/name", "/rename" -> TerminalCommand.RENAME;
             case "/archive" -> TerminalCommand.ARCHIVE;
             case "/delete" -> TerminalCommand.DELETE;
             case "/reload" -> TerminalCommand.RELOAD;
             case "/compact" -> TerminalCommand.COMPACT;
             case "/export" -> TerminalCommand.EXPORT;
+            case "/shell" -> TerminalCommand.SHELL;
             case "/connect" -> TerminalCommand.CONNECT;
             case "/login" -> TerminalCommand.LOGIN_REMOVED;
             case "/logout" -> TerminalCommand.LOGOUT;
@@ -33,6 +35,8 @@ public final class TerminalCommandRouter {
             case "/trust" -> TerminalCommand.TRUST;
             case "/approval" -> TerminalCommand.APPROVAL;
             case "/session" -> TerminalCommand.SESSION;
+            // Keyboard-reachable Session switching for a collapsed sidebar or a terminal without a mouse.
+            case "/sessions" -> TerminalCommand.SESSIONS;
             case "/command", "/commands", "/help" -> TerminalCommand.COMMANDS;
             case "/theme" -> TerminalCommand.THEME;
             case "/mouse" -> TerminalCommand.MOUSE;

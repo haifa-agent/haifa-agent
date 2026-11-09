@@ -10,6 +10,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportResu
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellExecution;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
@@ -51,6 +52,11 @@ public interface CodingSessionClient {
 
     CodingSessionView open(AgentSessionId sessionId);
 
+    /** Optional in-process source read; unlike legacy open/reconcile it cannot dispatch a successor. */
+    default CodingSessionView presentationSnapshot(AgentSessionId sessionId) {
+        throw new UnsupportedOperationException("Read-only presentation source is unavailable");
+    }
+
     CodingSessionView reconcile(AgentSessionId sessionId);
 
     /** Finds an authoritative Run snapshot, including terminal Runs, within this product client's project scope. */
@@ -63,6 +69,11 @@ public interface CodingSessionClient {
 
     default CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
         return CodingSessionHistoryPage.empty(sessionId);
+    }
+
+    /** Retrieves an older page strictly before a previously returned history continuation sequence. */
+    default CodingSessionHistoryPage history(AgentSessionId sessionId, int limit, long beforeSequence) {
+        throw new UnsupportedOperationException("Older history paging is unavailable");
     }
 
     default List<CodingModelOption> models() {
@@ -116,7 +127,20 @@ public interface CodingSessionClient {
         throw new UnsupportedOperationException("Session approval is unavailable");
     }
 
+    /** Optional, bounded status read; callers run it off the UI thread like other product queries. */
+    default Optional<CodingSessionApprovalStatus> sessionApprovalStatus(AgentSessionId sessionId) {
+        return Optional.empty();
+    }
+
     void cancel(AgentSessionId sessionId, String idempotencyKey);
+
+    /**
+     * Cancels only the requested active Run. Implementations that cannot prove the target identity must keep this
+     * default and fail explicitly instead of delegating to the Session-level cancellation above.
+     */
+    default void cancel(AgentSessionId sessionId, AgentRunId requestedRunId, String idempotencyKey) {
+        throw new UnsupportedOperationException("Exact-target Run cancellation is unavailable");
+    }
 
     default CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
         throw new UnsupportedOperationException("Session rename is unavailable");
@@ -143,6 +167,26 @@ public interface CodingSessionClient {
     }
 
     default void discardShell(String token) {}
+
+    default boolean recoverableShell() {
+        return false;
+    }
+
+    default CodingShellExecution startShell(String token, boolean approved) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default CodingShellExecution shellExecution(AgentSessionId sessionId, String executionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default List<CodingShellExecution> shellExecutions(AgentSessionId sessionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
+
+    default CodingShellExecution cancelShell(AgentSessionId sessionId, String executionId) {
+        throw new UnsupportedOperationException("Recoverable shell execution is unavailable");
+    }
 
     default CodingSessionExportResult export(AgentSessionId sessionId, String logicalDestination) {
         throw new UnsupportedOperationException("Session export is unavailable");
@@ -179,6 +223,20 @@ public interface CodingSessionClient {
     /** Revokes access to one non-initial durable workspace. */
     default void revokeWorkspace(String workspaceRef) {
         throw new UnsupportedOperationException("Workspace revocation is unavailable");
+    }
+
+    /** Safe composition-owned configuration facts for an environment summary, without credentials or raw config. */
+    default List<String> configurationSummary() {
+        return List.of();
+    }
+
+    /**
+     * Renews the composition's connection on a background worker. Returns true when transport observations
+     * must be reloaded after reinitialization. This never resubmits a product command or changes Run ownership.
+     * Embedded clients have no transport context to renew.
+     */
+    default boolean renewConnection() {
+        return false;
     }
 
     default List<String> loadedResources() {

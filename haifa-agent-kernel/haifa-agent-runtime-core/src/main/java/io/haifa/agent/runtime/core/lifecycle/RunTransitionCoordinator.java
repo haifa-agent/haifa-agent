@@ -33,6 +33,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 /** Serializes orchestration while delegating all lifecycle legality to the Core aggregate. */
@@ -46,7 +47,7 @@ public final class RunTransitionCoordinator {
     private final RunAwaiter awaiter;
     private final RuntimeUnitOfWork unitOfWork;
     private final RunInputPort runInputs;
-    private final Map<AgentRunId, Object> locks = new ConcurrentHashMap<>();
+    private final Map<AgentRunId, ReentrantLock> locks = new ConcurrentHashMap<>();
     private final List<AgentRunListener> listeners = new CopyOnWriteArrayList<>();
     private volatile Consumer<AgentRun> terminalProjection = run -> {};
 
@@ -170,7 +171,9 @@ public final class RunTransitionCoordinator {
             SessionMessageDraft finalMessage,
             Optional<ModelContinuationDraft> continuation,
             boolean deferForPendingInput) {
-        synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
+        ReentrantLock lock = locks.computeIfAbsent(run.id(), ignored -> new ReentrantLock());
+        lock.lock();
+        try {
             return unitOfWork.execute(() -> {
                 if (deferForPendingInput && !runInputs.pending(run.id(), 1).isEmpty()) {
                     return Optional.<AgentRunSnapshot>empty();
@@ -212,6 +215,8 @@ public final class RunTransitionCoordinator {
                 unitOfWork.afterCommit(() -> notifyCommitted(committed));
                 return Optional.of(committed);
             });
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -225,7 +230,9 @@ public final class RunTransitionCoordinator {
     /** Commits a partial assistant summary, public output and failed Run state in one Unit of Work. */
     public AgentRunSnapshot failedWithOutput(
             AgentRun run, AgentError error, String output, SessionMessageDraft finalMessage) {
-        synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
+        ReentrantLock lock = locks.computeIfAbsent(run.id(), ignored -> new ReentrantLock());
+        lock.lock();
+        try {
             AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
                 long expectedVersion = run.version();
                 AgentRunStatus previous = run.status();
@@ -250,6 +257,8 @@ public final class RunTransitionCoordinator {
                 return committed;
             });
             return snapshot;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -303,7 +312,9 @@ public final class RunTransitionCoordinator {
     }
 
     private AgentRunSnapshot mutate(AgentRun run, String eventType, Consumer<AgentRun> mutation) {
-        synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
+        ReentrantLock lock = locks.computeIfAbsent(run.id(), ignored -> new ReentrantLock());
+        lock.lock();
+        try {
             AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
                 long expectedVersion = run.version();
                 AgentRunStatus previous = run.status();
@@ -326,6 +337,8 @@ public final class RunTransitionCoordinator {
                 return committed;
             });
             return snapshot;
+        } finally {
+            lock.unlock();
         }
     }
 

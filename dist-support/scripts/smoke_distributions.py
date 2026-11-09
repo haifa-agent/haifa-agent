@@ -18,15 +18,21 @@ import urllib.request
 import zipfile
 
 
+def checksummed_archive(output: Path, checksums: dict[str, str], pattern: str) -> Path:
+    """Return the single release archive of this shape, ignoring stale packages on disk."""
+    matching = [output / name for name in sorted(checksums) if Path(name).match(pattern)]
+    if len(matching) != 1:
+        raise RuntimeError(f"Expected exactly one checksummed archive matching {pattern}")
+    return matching[0]
+
+
 def verify_ca_linux(output: Path, checksums: dict[str, str]) -> None:
-    archives = list(output.glob("haifa-coding-agent-linux-x64-*.tar.gz"))
-    if len(archives) != 1 or archives[0].name not in checksums:
-        raise RuntimeError("Expected exactly one checksummed Linux Coding Agent package")
+    archive = checksummed_archive(output, checksums, "haifa-coding-agent-linux-x64-*.tar.gz")
     with tempfile.TemporaryDirectory(prefix="haifa-ca-linux-smoke-") as temporary:
         directory = Path(temporary)
-        with tarfile.open(archives[0], "r:gz") as archive:
-            archive.extractall(directory, filter="data")
-        package = directory / archives[0].name.removesuffix(".tar.gz").replace("-linux-x64", "")
+        with tarfile.open(archive, "r:gz") as bundle:
+            bundle.extractall(directory, filter="data")
+        package = directory / archive.name.removesuffix(".tar.gz").replace("-linux-x64", "")
         environment = os.environ.copy()
         for key in ("HAIFA_CONFIG", "HAIFA_SQLITE_DATABASE_PATH", "HAIFA_TRANSCRIPT_ROOT", "HAIFA_LOG_DIR"):
             environment.pop(key, None)
@@ -65,12 +71,10 @@ def main() -> None:
         directory = Path(temporary)
         packages = {}
         for product in ("coding-agent", "personal-assistant"):
-            archives = list(output.glob(f"haifa-{product}-windows-x64-*.zip"))
-            if len(archives) != 1 or archives[0].name not in checksums:
-                raise RuntimeError(f"Expected exactly one checksummed {product} package")
-            with zipfile.ZipFile(archives[0]) as archive:
-                archive.extractall(directory)
-            packages[product] = directory / archives[0].stem.replace("-windows-x64", "")
+            archive = checksummed_archive(output, checksums, f"haifa-{product}-windows-x64-*.zip")
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(directory)
+            packages[product] = directory / archive.stem.replace("-windows-x64", "")
         environment = os.environ.copy()
         environment.update({
             "HAIFA_DATA_ROOT": str(directory / "coding-data"),

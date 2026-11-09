@@ -655,12 +655,33 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private ModelUsage usage(AgentChatRequest request, JsonNode usage) {
-        if (!usage.isObject()) return ModelUsage.unpriced(0, 0);
-        long input = nonNegativeLong(request, usage, "input_tokens");
-        long output = nonNegativeLong(request, usage, "output_tokens");
-        long cached = nonNegativeLong(request, usage.path("input_tokens_details"), "cached_tokens");
-        long reasoning = nonNegativeLong(request, usage.path("output_tokens_details"), "reasoning_tokens");
-        return new ModelUsage(input, output, cached, Math.max(0, input - cached), reasoning, false, 0);
+        try {
+            if (!usage.isObject()) return ModelUsage.unknown();
+            long input = nonNegativeLong(request, usage, "input_tokens");
+            long output = nonNegativeLong(request, usage, "output_tokens");
+            long cached = nonNegativeLong(request, usage.path("input_tokens_details"), "cached_tokens");
+            long reasoning = nonNegativeLong(request, usage.path("output_tokens_details"), "reasoning_tokens");
+            var details = usage.path("input_tokens_details");
+            var writes = details.hasNonNull("cache_write_tokens")
+                    ? java.util.OptionalLong.of(nonNegativeLong(request, details, "cache_write_tokens"))
+                    : java.util.OptionalLong.empty();
+            return ModelUsage.inclusiveInput(
+                    usage.hasNonNull("input_tokens")
+                            ? java.util.OptionalLong.of(input)
+                            : java.util.OptionalLong.empty(),
+                    output,
+                    details.hasNonNull("cached_tokens")
+                            ? java.util.OptionalLong.of(cached)
+                            : java.util.OptionalLong.empty(),
+                    writes,
+                    java.util.OptionalLong.empty(),
+                    reasoning,
+                    false,
+                    0);
+
+        } catch (IllegalArgumentException | ArithmeticException invalidUsage) {
+            throw malformed(request, "invalid input usage");
+        }
     }
 
     private AgentChatResponse parseStream(

@@ -517,19 +517,28 @@ public final class RuntimeCoreBuilder {
         // each planning operation, so concurrent Runs never mutate shared planning state.
         ModelMessageProjectionPlanner projectionPlanner =
                 new ModelMessageProjectionPlanner(runs, state, new FrozenBindingToolResultQualifier());
+        var history = new io.haifa.agent.runtime.core.history.HistoryToolProvider(persistence, access);
+        history.watchRedactions();
+        var sessionMessageSource = new SessionMessageSource(
+                state, summaries, compressor, effectiveCompressionPolicy, ids, time, activeContexts);
+        var workingSets = new io.haifa.agent.runtime.core.loop.RunWorkingSetSource(
+                persistence, history, sessionMessageSource, time);
+        sessionMessageSource.workingSets(workingSets);
         FrozenModelInvoker models = new FrozenModelInvoker(
-                state,
-                chatModels,
-                ids,
-                modelOutput,
-                controls,
-                events,
-                time,
-                modelImageResolver,
-                modelAudioResolver,
-                activeContexts,
-                definitionResolver,
-                projectionPlanner);
+                        state,
+                        chatModels,
+                        ids,
+                        modelOutput,
+                        controls,
+                        events,
+                        time,
+                        modelImageResolver,
+                        modelAudioResolver,
+                        activeContexts,
+                        definitionResolver,
+                        projectionPlanner,
+                        history)
+                .workingSets(workingSets);
         RunAwaiter awaiter = new RunAwaiter();
         RunTransitionCoordinator transitions = new RunTransitionCoordinator(
                 runs, state, events, outbox, ids, time, awaiter, unitOfWork, configuredRunInputs);
@@ -657,30 +666,32 @@ public final class RuntimeCoreBuilder {
                 outbox);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
                 interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
-        var sessionMessageSource = new SessionMessageSource(
-                state, summaries, compressor, effectiveCompressionPolicy, ids, time, activeContexts);
+
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state);
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
         var compactionTriggerEvaluator = new CompactionTriggerEvaluator(effectiveCompressionPolicy);
-        var summaryModelInvoker = new SummaryModelInvoker(transitions, controls, ids, time, effectiveCompressionPolicy);
+        var summaryModelInvoker =
+                new SummaryModelInvoker(transitions, controls, ids, time, effectiveCompressionPolicy, events);
         var compactionCoordinator = new SemanticCompactionCoordinator(
-                state,
-                summaries,
-                summaryModelInvoker,
-                compactionTriggerEvaluator,
-                effectiveCompressionPolicy,
-                compressor,
-                ids,
-                time,
-                events,
-                projectionPlanner,
-                activeContexts);
+                        state,
+                        summaries,
+                        summaryModelInvoker,
+                        compactionTriggerEvaluator,
+                        effectiveCompressionPolicy,
+                        compressor,
+                        ids,
+                        time,
+                        events,
+                        projectionPlanner,
+                        activeContexts,
+                        history)
+                .workingSets(workingSets);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard()),
                 new DefaultRuntimeContextBuilder(
-                        state, middleware, sessionMessageSource, memoryContextSource, skillContentLoader),
+                        state, middleware, sessionMessageSource, memoryContextSource, skillContentLoader, models),
                 models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(), new ChildRunGuard()),
                 decisionExecutor,
@@ -712,33 +723,34 @@ public final class RuntimeCoreBuilder {
                 failureDiagnostics);
         if (childRuns != null) childRuns.bind(attemptExecutor);
         return new DefaultAgentRuntime(
-                callers,
-                bootstrapper,
-                runs,
-                attempts,
-                state,
-                events,
-                outbox,
-                idempotency,
-                unitOfWork,
-                transitions,
-                controlService,
-                interactions,
-                configuredDelegations,
-                attemptExecutor,
-                toolRecovery,
-                runtimeScheduler,
-                ids,
-                time,
-                awaiter,
-                resumeCoordinator,
-                modelOutput,
-                configuredOwnership,
-                approvalVerification,
-                configuredRunInputs,
-                eventFeed,
-                eventSubscriptions,
-                settler);
+                        callers,
+                        bootstrapper,
+                        runs,
+                        attempts,
+                        state,
+                        events,
+                        outbox,
+                        idempotency,
+                        unitOfWork,
+                        transitions,
+                        controlService,
+                        interactions,
+                        configuredDelegations,
+                        attemptExecutor,
+                        toolRecovery,
+                        runtimeScheduler,
+                        ids,
+                        time,
+                        awaiter,
+                        resumeCoordinator,
+                        modelOutput,
+                        configuredOwnership,
+                        approvalVerification,
+                        configuredRunInputs,
+                        eventFeed,
+                        eventSubscriptions,
+                        settler)
+                .historyResults(history::sanitize);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {

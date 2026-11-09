@@ -1,5 +1,8 @@
 package io.haifa.agent.runtime.core.model;
 
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_LABEL_PREFIX;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.PHASE_METADATA_KEY;
+import static io.haifa.agent.runtime.core.context.ContextProjectionMetadata.UNIFIED;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -15,6 +18,7 @@ import io.haifa.agent.context.item.ContextProvenance;
 import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ContextSecurity;
+import io.haifa.agent.context.item.HistoricalExcerptContent;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
@@ -76,6 +80,23 @@ import org.junit.jupiter.api.Test;
 
 class ModelMessageAssemblerTest {
     private static final AgentRunId RUN_ID = new AgentRunId("run-1");
+
+    @Test
+    void savedToolEvidenceDistinguishesCompleteSourcesFromPartialWindows() {
+        var run = new AgentRunId("saved-run");
+        var message = new AgentMessageId("saved-message");
+        var call = Optional.of(new ToolCallId("saved-call"));
+        var complete = new HistoricalExcerptContent(run, message, "v1", call, 0, 8, "evidence", false, false);
+        assertThat(ModelMessageAssembler.renderSavedToolEvidence(complete))
+                .isEqualTo("message=saved-message; version=v1; offset=0; window=8; full]\nevidence");
+
+        for (var partial : List.of(
+                new HistoricalExcerptContent(run, message, "v1", call, 0, 8, "evidence", true, false),
+                new HistoricalExcerptContent(run, message, "v1", call, 0, 8, "evidence", false, true),
+                new HistoricalExcerptContent(run, message, "v1", call, 1, 8, "evidence", false, false))) {
+            assertThat(ModelMessageAssembler.renderSavedToolEvidence(partial)).endsWith("; partial]\nevidence");
+        }
+    }
 
     @Test
     void preservesPromptAndContextOrder() {
@@ -555,6 +576,19 @@ class ModelMessageAssemblerTest {
         assertThat(prefetchedResolutions).hasValue(1);
         assertThat(sameModelAssembly.metrics().continuationBatchCount()).isEqualTo(1);
         assertThat(sameModelAssembly.metrics().continuationRecordCount()).isEqualTo(1);
+
+        var rewritten = new ModelMessageAssembler(countingStore)
+                .assemble(RUN_ID, withPhase(context, "rewritten"), previousModel);
+        assertThat(rewritten).allSatisfy(message -> {
+            assertThat(message.reasoning()).isEmpty();
+            assertThat(message.toolCalls()).isEmpty();
+            assertThat(message.role()).isNotEqualTo(ModelMessageRole.TOOL);
+        });
+        assertThat(rewritten).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+            assertThat(message.content()).contains("haifa", "rejected by the operator");
+        });
+        assertThat(prefetchedResolutions).hasValue(1);
 
         var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, anthropicModel);
 
@@ -1061,11 +1095,11 @@ class ModelMessageAssemblerTest {
 
         assertThat(toolMessages.get(0).toolResultData()).isEmpty();
         assertThat(toolMessages.get(0).content()).contains("Summary for turn 1");
-        assertThat(toolMessages.get(0).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+        assertThat(toolMessages.get(0).content()).contains(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
 
         assertThat(toolMessages.get(1).toolResultData()).isEmpty();
         assertThat(toolMessages.get(1).content()).contains("Summary for turn 2");
-        assertThat(toolMessages.get(1).content()).endsWith(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
+        assertThat(toolMessages.get(1).content()).contains(ModelMessageProjectionPlanner.PRUNED_PAYLOAD_NOTICE);
 
         assertThat(toolMessages.get(2).toolResultData()).containsEntry("rawPayload", "large payload content 3");
         assertThat(toolMessages.get(2).content()).isEqualTo("Summary for turn 3");
@@ -1163,7 +1197,7 @@ class ModelMessageAssemblerTest {
                         MessageStatus.COMPLETED,
                         MessageVisibility.USER_VISIBLE,
                         List.of(new TextPart("answer", "plain")),
-                        Map.of("modelContinuationId", "ordinary-continuation"),
+                        Map.of("modelContinuationId", "ordinary-continuation", PHASE_METADATA_KEY, "stable"),
                         Instant.EPOCH),
                 new ModelContinuationDraft(
                         new ModelContinuationRef(
@@ -1187,6 +1221,18 @@ class ModelMessageAssemblerTest {
                 .assemble(RUN_ID, context, model)
                 .getLast();
         assertThat(assembled.reasoning().orElseThrow().digest()).isEqualTo(reasoning.digest());
+        assertThat(new ModelMessageAssembler(store)
+                        .assemble(RUN_ID, withPhase(context, "stable"), model)
+                        .getLast()
+                        .reasoning())
+                .contains(reasoning);
+        var rewritten = new ModelMessageAssembler(store)
+                .assemble(RUN_ID, withPhase(context, "rewritten"), model)
+                .getLast();
+        assertThat(rewritten.role()).isEqualTo(ModelMessageRole.USER);
+        assertThat(rewritten.content()).contains("answer");
+        assertThat(rewritten.reasoning()).isEmpty();
+        assertThat(store.message(assistant.id())).contains(assistant);
         var other = ResolvedModelSnapshot.create(
                 model.providerId(),
                 model.providerVersion(),
@@ -1216,6 +1262,39 @@ class ModelMessageAssemblerTest {
                                 ((io.haifa.agent.runtime.core.model.continuation.ModelContinuationException) error)
                                         .failure())
                         .isEqualTo(io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.MISSING));
+    }
+
+    @Test
+    void accountingKeepsCurrentAndPriorSourcesAndCountsRepeatedOccurrences() {
+        var session = new AgentSessionId("accounting-session");
+        AgentMessage old = message(
+                "old",
+                session,
+                new AgentRunId("prior"),
+                MessageRole.USER,
+                1,
+                List.of(new TextPart("old evidence", "plain")));
+        AgentMessage current = message(
+                "current", session, RUN_ID, MessageRole.USER, 2, List.of(new TextPart("current request", "plain")));
+        var context = new AgentContext(
+                List.of(prompt()),
+                List.of(item(
+                        "history",
+                        ContextItemType.MESSAGE,
+                        new MessageGroupContextContent(List.of(old, current, current)))),
+                List.of(),
+                budget(),
+                20);
+        var assembly = new ModelMessageAssembler(new InMemoryRuntimeStore()).assembleWithMetrics(RUN_ID, context, null);
+        assertThat(assembly.sources()).containsEntry("priorRunMessages", 4L).containsEntry("currentRunUser", 10L);
+        assertThat(assembly.sourceOccurrences()).isEqualTo(3);
+        assertThat(assembly.repeatedSourceOccurrences()).isEqualTo(1);
+        assertThat(assembly.sources().values().stream()
+                        .mapToLong(Long::longValue)
+                        .sum())
+                .isEqualTo(assembly.messages().stream()
+                        .mapToLong(ModelInputAccounting::visibleTokens)
+                        .sum());
     }
 
     private static AgentMessage message(
@@ -1261,6 +1340,25 @@ class ModelMessageAssemblerTest {
                 ContextRetention.KEEP_IF_RELEVANT,
                 ContextSecurity.INTERNAL,
                 new ContextProvenance("test", id, "1", "hash-" + id));
+    }
+
+    private static AgentContext withPhase(AgentContext context, String phase) {
+        return new AgentContext(
+                context.prompts(),
+                context.items().stream()
+                        .map(item -> new ContextItem(
+                                item.id(),
+                                item.type(),
+                                item.content(),
+                                item.estimatedTokens(),
+                                item.priority(),
+                                item.retention(),
+                                new ContextSecurity(Set.of(UNIFIED, PHASE_LABEL_PREFIX + phase)),
+                                item.provenance()))
+                        .toList(),
+                context.tools(),
+                context.budget(),
+                context.estimatedInputTokens());
     }
 
     private static ContextWindowBudget budget() {

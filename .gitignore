@@ -20,3 +20,10 @@ coding-terminal-tui4j-demo/
 /haifa-agent-applications/haifa-agent-cli/distribution/
 /haifa-agent-design/
 local-tmp
+examples/apps/debate/
+data/
+.env
+.env.local
+*.env
+!.env.example
+haifa-agent-applications/haifa-agent-web-ca/

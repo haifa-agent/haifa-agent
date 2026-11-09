@@ -35,7 +35,10 @@ public final class MemoryContextSource {
     public List<ContextItem> select(AgentRun run, FrozenModelBinding model, AgentLoopContext loopContext) {
         // First-version child runs neither recall nor write long-term Memory; conclusions return to the parent.
         if (run.parentRunId().isPresent()) return List.of();
-        UserTurn turn = latestUserTurn(run);
+        UserTurn turn = latestUserTurn(
+                run,
+                io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.workingSetEnabled(
+                        model.configuration().modelRequestOptions()));
         return loopContext
                 .memorySelectionFor(turn.messageId())
                 .orElseGet(() -> retrieveAndCache(run, model, loopContext, turn));
@@ -82,8 +85,11 @@ public final class MemoryContextSource {
         return items;
     }
 
-    private UserTurn latestUserTurn(AgentRun run) {
-        return state.messagesAfter(run.sessionId(), MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
+    private UserTurn latestUserTurn(AgentRun run, boolean workingSet) {
+        var candidates = workingSet
+                ? state.latestUserMessage(run.id()).stream()
+                : state.messagesAfter(run.sessionId(), MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream();
+        return candidates
                 .filter(message -> message.role() == MessageRole.USER
                         && message.status() == MessageStatus.COMPLETED
                         && message.visibility() != MessageVisibility.HIDDEN

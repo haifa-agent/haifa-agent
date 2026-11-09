@@ -23,6 +23,7 @@ import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalTestSupport;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
@@ -462,6 +463,61 @@ class Tui4jCodingTerminalModelTest {
         seedSelectableTranscript(fixture);
 
         assertThat(fixture.model.filterMessage(key(KeyType.keyETX))).isNull();
+    }
+
+    @Test
+    void remoteThinClientKeepsCtrlCOnTheKeyInterruptPath() {
+        // The remote client's INT-only bridge does not replace raw Ctrl+C keys. The key must still reach
+        // the ordinary interrupt path independently of console signal delivery.
+        var thinClient = fixtureWithoutSignalOwnership();
+        var embedded = fixture();
+        var press = key(KeyType.keyETX);
+
+        assertThat(embedded.model.filterMessage(press)).isNull();
+
+        Message forwarded = thinClient.model.filterMessage(press);
+        assertThat(forwarded).isSameAs(press);
+        thinClient.model.update(forwarded);
+
+        assertThat(thinClient.controller.state().exitRequested()).isTrue();
+        assertThat(embedded.controller.state().exitRequested()).isFalse();
+    }
+
+    @Test
+    void remoteCtrlCCopiesSelectionFromEitherAKeyOrConsoleSignalWithoutClearingTheDraft() {
+        for (Message interrupt : List.of(key(KeyType.keyETX), new TerminalInterruptSignal.Interrupted())) {
+            var clipboard = new RecordingClipboard(true);
+            var fixture = fixtureWithClipboard(clipboard, false);
+            seedSelectableTranscript(fixture);
+            fixture.model.update(new PasteMessage("keep this draft"));
+            fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+            fixture.model.update(mouse(1, 20, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+            fixture.model.update(mouse(1, 20, MouseAction.MouseActionRelease, MouseButton.MouseButtonLeft));
+
+            Message filtered = fixture.model.filterMessage(interrupt);
+            assertThat(filtered).isNotNull().isNotInstanceOf(QuitMessage.class);
+            fixture.model.update(filtered).command().execute();
+
+            assertThat(clipboard.text).isNotNull().isNotBlank();
+            assertThat(fixture.controller.state().editorBuffer()).isEqualTo("keep this draft");
+            assertThat(fixture.controller.state().exitRequested()).isFalse();
+        }
+    }
+
+    @Test
+    void remoteProcessInterruptWithoutSelectionExitsTheClientWithoutInterruptingTheHostRun() {
+        var fixture = fixtureWithoutSignalOwnership();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.model.update(new Tui4jCodingTerminalModel.PollMessage());
+        var activeRun = fixture.controller.state().currentRunId();
+        assertThat(activeRun).isPresent();
+
+        Message filtered = fixture.model.filterMessage(new TerminalInterruptSignal.Interrupted());
+
+        assertThat(filtered).isInstanceOf(QuitMessage.class);
+        assertThat(fixture.controller.state().currentRunId()).isEqualTo(activeRun);
+        assertThat(fixture.controller.state().exitRequested()).isFalse();
     }
 
     @Test
@@ -1468,6 +1524,64 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void modelResizeReflowsALongTranscriptTailInsteadOfReusingTheOldWidth() {
+        var fixture = fixture();
+        fixture.model.init();
+        fixture.pump.offer(new TerminalUiAction.UserMessageCommitted(
+                "resize-message", "HEAD " + "很长的用户消息内容".repeat(12) + " RESIZE-TAIL"));
+        fixture.update(new WindowSizeMessage(120, 30));
+        String wide = TerminalScreenCells.plainText(fixture.model.view());
+
+        fixture.update(new WindowSizeMessage(60, 24));
+        String narrow = TerminalScreenCells.plainText(fixture.model.view());
+
+        assertThat(wide).isNotEqualTo(narrow).contains("RESIZE-", "TAIL");
+        assertThat(narrow.replaceAll("[\\s│]+", "")).contains("RESIZE-TAIL");
+        assertThat(fixture.controller.state().columns()).isEqualTo(60);
+        assertThat(fixture.controller.state().rows()).isEqualTo(24);
+    }
+
+    @Test
+    void pageKeysScrollThePinnedClarificationWithoutChangingSelectionOrSubmitting() {
+        var fixture = fixture();
+        fixture.model.init();
+        for (int index = 1; index <= 40; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted(
+                    "message-" + index, "history-" + index + " with enough text to fill the transcript"));
+        }
+        fixture.pump.offer(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "clarification:test", "Clarification · Step 1 of 1 · Test", List.of("One", "Two", "Cancel"), 1)));
+        fixture.update(new WindowSizeMessage(80, 24));
+        String bottom = TerminalScreenCells.plainText(fixture.model.view());
+        assertThat(bottom).contains("history-40", "Clarification · Step 1 of 1 · Test");
+
+        fixture.update(key(KeyType.KeyPgUp));
+        String scrolled = TerminalScreenCells.plainText(fixture.model.view());
+
+        assertThat(scrolled).isNotEqualTo(bottom).doesNotContain("history-40");
+        assertThat(scrolled).contains("Clarification · Step 1 of 1 · Test");
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+
+        fixture.update(runes('x'));
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+
+        fixture.update(key(KeyType.KeyPgDown));
+        String bottomAgain = TerminalScreenCells.plainText(fixture.model.view());
+        fixture.update(wheel(MouseButton.MouseButtonWheelUp));
+        String wheeled = TerminalScreenCells.plainText(fixture.model.view());
+
+        assertThat(wheeled).isNotEqualTo(bottomAgain);
+        assertThat(fixture.controller.state().selector()).isPresent();
+        assertThat(fixture.controller.state().selector().orElseThrow().selected())
+                .isEqualTo(1);
+    }
+
+    @Test
     void pagesThroughTranscriptAndResumesFollowingAtTheBottom() {
         var fixture = fixture();
         fixture.model.init();
@@ -1544,7 +1658,7 @@ class Tui4jCodingTerminalModelTest {
         var fixture = fixture();
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(
                 event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
-        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new WindowSizeMessage(140, 40));
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 2,
@@ -1558,7 +1672,7 @@ class Tui4jCodingTerminalModelTest {
                         Optional.empty(),
                         "",
                         "file_patch"))));
-        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new WindowSizeMessage(140, 40));
         String failed = fixture.model.view();
         assertThat(failed).contains("apply patch", "Not completed: Multiple matches");
         assertThat(failed).doesNotContain("Reason: PATCH_AMBIGUOUS_MATCH");
@@ -1575,7 +1689,7 @@ class Tui4jCodingTerminalModelTest {
                         Optional.empty(),
                         "",
                         "execution_run"))));
-        fixture.model.update(new WindowSizeMessage(120, 40));
+        fixture.model.update(new WindowSizeMessage(140, 40));
         assertThat(fixture.model.view()).contains("Outcome: UNKNOWN", "Target: rm -rf");
     }
 
@@ -2051,6 +2165,30 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void routesClarificationArrowsBetweenQuestions() {
+        var client = new CodingTerminalTestSupport.FakeClient(
+                view(Optional.of(CodingTerminalTestSupport.multiQuestionClarification())));
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                CodingTerminalTestSupport.PROJECT_ID,
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        controller.open(CodingTerminalTestSupport.SESSION_ID);
+        var model = new Tui4jCodingTerminalModel(controller, pump, System::nanoTime);
+
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 1 of 2");
+
+        model.update(key(KeyType.KeyRight));
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 2 of 2");
+
+        model.update(key(KeyType.KeyLeft));
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Step 1 of 2");
+    }
+
+    @Test
     void opensCommandPaletteWhenTriggeredByShortcut() {
         var fixture = fixture();
 
@@ -2304,6 +2442,21 @@ class Tui4jCodingTerminalModelTest {
 
     private Fixture fixture() {
         return fixture(System::nanoTime);
+    }
+
+    /** A remote thin client keeps raw Ctrl+C keys on the ordinary interrupt path. */
+    private Fixture fixtureWithoutSignalOwnership() {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        var model = new Tui4jCodingTerminalModel(
+                controller, pump, System::nanoTime, null, true, TerminalClipboard.system(), false);
+        return new Fixture(controller, pump, model);
     }
 
     private Fixture activeFixture(UnusedClient client) {
@@ -2578,6 +2731,10 @@ class Tui4jCodingTerminalModelTest {
     }
 
     private Fixture fixtureWithClipboard(TerminalClipboard clipboard) {
+        return fixtureWithClipboard(clipboard, true);
+    }
+
+    private Fixture fixtureWithClipboard(TerminalClipboard clipboard, boolean signalHandlerOwnsInterrupt) {
         var pump = new TerminalEventPump(64);
         var controller = new CodingTerminalController(
                 new ProjectId("project-1"),
@@ -2589,7 +2746,8 @@ class Tui4jCodingTerminalModelTest {
         return new Fixture(
                 controller,
                 pump,
-                new Tui4jCodingTerminalModel(controller, pump, System::nanoTime, null, true, clipboard));
+                new Tui4jCodingTerminalModel(
+                        controller, pump, System::nanoTime, null, true, clipboard, signalHandlerOwnsInterrupt));
     }
 
     private static final class RecordingClipboard implements TerminalClipboard {

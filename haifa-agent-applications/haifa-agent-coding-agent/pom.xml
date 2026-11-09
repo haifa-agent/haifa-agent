@@ -12,6 +12,7 @@
     <artifactId>haifa-agent-coding-agent</artifactId>
     <name>Haifa Coding Agent</name>
     <dependencies>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-common</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-api</artifactId></dependency>

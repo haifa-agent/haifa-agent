@@ -70,6 +70,7 @@ class SemanticSummaryValidatorTest {
 
         assertThatThrownBy(() -> SemanticSummaryValidator.validate(summary, projectedSource, List.of()))
                 .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasFieldOrPropertyWithValue("code", SemanticSummaryValidationException.Code.SOURCE_REFERENCE)
                 .hasMessageContaining("unknown sourceRef 'm999'");
     }
 
@@ -135,6 +136,7 @@ class SemanticSummaryValidatorTest {
 
         assertThatThrownBy(() -> SemanticSummaryValidator.validate(summary, projectedSource, List.of(carryItem)))
                 .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasFieldOrPropertyWithValue("code", SemanticSummaryValidationException.Code.CARRY_FORWARD)
                 .hasMessageContaining("mandatory carry-forward item 'b01' was dropped");
     }
 
@@ -157,6 +159,7 @@ class SemanticSummaryValidatorTest {
 
         assertThatThrownBy(() -> SemanticSummaryValidator.validate(summary, projectedSource, List.of()))
                 .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasFieldOrPropertyWithValue("code", SemanticSummaryValidationException.Code.SAFETY)
                 .hasMessageContaining("forbidden or sensitive pattern detected");
     }
 
@@ -313,6 +316,7 @@ class SemanticSummaryValidatorTest {
 
         assertThatThrownBy(() -> SemanticSummaryValidator.validate(duplicate, projectedSource, List.of()))
                 .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasFieldOrPropertyWithValue("code", SemanticSummaryValidationException.Code.STABLE_ID)
                 .hasMessageContaining("duplicate stableItemId 'G-1'");
     }
 

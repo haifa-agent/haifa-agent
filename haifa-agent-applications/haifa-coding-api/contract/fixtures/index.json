@@ -1,0 +1,50 @@
+[
+  {
+    "file": "snapshot.json",
+    "valid": true
+  },
+  {
+    "file": "update.json",
+    "valid": true
+  },
+  {
+    "file": "resync.json",
+    "valid": true
+  },
+  {
+    "file": "unknown-critical-entry.json",
+    "valid": false
+  },
+  {
+    "file": "unknown-schema.json",
+    "valid": false
+  },
+  {
+    "file": "empty-scope.json",
+    "valid": false
+  },
+  {
+    "file": "unknown-field.json",
+    "valid": false
+  },
+  {
+    "file": "entry-limit.json",
+    "valid": false
+  },
+  {
+    "file": "revision-mismatch.json",
+    "valid": false
+  },
+  {
+    "file": "missing-critical-interaction.json",
+    "valid": false
+  },
+  {
+    "file": "cross-session-snapshot.json",
+    "valid": false
+  },
+  {
+    "file": "duplicate-entry.json",
+    "valid": false
+  }
+]

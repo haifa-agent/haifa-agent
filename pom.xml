@@ -28,7 +28,7 @@
 
     <properties>
         <!-- Single source of truth for the Reactor version; every module POM references ${revision}. -->
-        <revision>0.1.4</revision>
+        <revision>0.1.5</revision>
 
         <java.version>21</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
@@ -165,6 +165,9 @@
                 <artifactId>haifa-agent-web</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-api</artifactId><version>${project.version}</version></dependency>
+            <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-host</artifactId><version>${revision}</version></dependency>
+            <dependency><groupId>io.haifa</groupId><artifactId>haifa-coding-client</artifactId><version>${revision}</version></dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-coding-agent</artifactId>
@@ -313,6 +316,11 @@
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-local-model-auth-antigravity-local-compat</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-local-model-auth-opencode</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

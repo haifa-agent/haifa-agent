@@ -1,5 +1,177 @@
 # Changelog
 
+## 0.1.5
+
+- Allow the local Coding updater's latest channel to replace installations across Maven versions.
+
+- Add an opt-in Coding Web HTTPS ingress profile for same-origin Nginx, with a trusted proxy
+  boundary and optional gateway session checks for browser RPC and SSE.
+
+- Add preview Coding product contracts, a lightweight Java Client and Host, a packed browser SDK,
+  and same-origin Web. Add isolated preview publishing and independent Maven and npm consumer examples.
+- Route the opt-in Terminal through product observation, history, and exact commands while retaining
+  trusted local sign-in and legacy native rollback. Keep browser grants separate from local credentials.
+
+- Keep complete saved results readable when refreshing bounded history previews, and account for documented
+  OpenCode Go DeepSeek Flash input/cache lanes without counting cache tokens twice.
+
+- Enable unified context selection by default in Coding, with authorized history readers and policy frozen per
+  Run across pause/resume and SQLite reopen. Set `context.policy: legacy` and `context.historyRetrieval: true`
+  to roll back selection for new Runs while retaining saved-version readback. See the [0.1.4 upgrade and rollback guide](docs/reference/upgrading.md#014-升级到-015).
+- Resume paused Coding Runs across the addition of history readers when the original frozen tool
+  catalog still matches.
+
+- Use reversible coordinates in unified saved evidence and reuse complete reads for files confirmed unchanged.
+
+- Wait for more removable history before starting a small optional unified checkpoint or retrying a
+  non-reducing summary. Hard capacity recovery remains available.
+
+- Preserve full current-Run summaries when rebuilding unified working sets, including small soft targets and
+  new-task objectives. Record unreadable compaction sources as typed refusals without advancing coverage.
+
+- Add an experimental, opt-in Coding Session presentation contract with shared Java/TypeScript fixtures,
+  bounded snapshot/update observation and exact message-to-Run association. Native Host enables it only
+  with `host --presentation` and explicit capability negotiation; browser access remains disabled.
+
+- Keep Coding Terminal tool-row geometry stable when a call settles, including its metadata column and following rows.
+- Restore Ctrl+C selection copying when a remote terminal delivers a console interrupt, while preserving Host-owned Runs on client termination.
+- Unify working-set admission and compaction around the prepared model input. Add readable saved-result
+  previews, preserve evidence without age-based omission, and avoid replaying protected continuation after prefix
+  rewrites; frozen legacy policy remains available and terminal summary maintenance remains deferred.
+
+- Return invalid pending Tool requests to the model after approval instead of failing the Coding Agent Run.
+  Completed commands are preserved without replay, and later calls keep their own validation and approval checks.
+
+- A trusted-local auth command repairs model credentials while Coding Host keeps its Runtime/SQLite ownership.
+  Remote connection guidance shows the Host/account command and /account refreshes the repaired connection.
+
+- Add opt-in SDK Run working sets with bounded history selection, lightweight handoff, protected in-use evidence
+  and conservative cache deferral. Keep required sources, Run hard limits and existing summary coverage rules;
+  SQLite V16 backfills an index over existing source records without adding another history body store.
+
+- Remote Coding Terminal supports explicitly negotiated Session consent with a client-bound lease.
+  Lost renewal, reset, cancellation, reconnect and Host restart cannot silently preserve or transfer consent.
+
+- Add opt-in SDK history search/read tools with bounded pagination, immutable historical-result reads,
+  current-scope authorization and redaction-aware revalidation; history selection remains unchanged.
+
+- Align semantic-summary schema and instructions with the accepted v1 version.
+
+- Freeze source/representation boundaries and add a repeatable context-history scale baseline,
+  including the existing pre-call failure at the active snapshot bound.
+
+- Normalize Provider input and cache write usage with explicit unknown fields, per-call usage diagnostics,
+  optional exact-model price evidence, and a correctly named previous-summary input share.
+
+- Model requests now expose optional aggregate input composition for ordinary, summary and regeneration calls,
+  separating visible estimates from unknown Provider overhead without recording request bodies.
+
+- Remote Coding Terminal streams bounded tool stdout/stderr previews before completion when both peers
+  negotiate preview support. Slow/disconnected preview observers do not stop or replay the Run.
+
+- Remote Coding peers can negotiate optional v1 extensions while preserving old-client capability behavior;
+  completion and command help distinguish unavailable credential setup from supported Host operations.
+
+- Run transitions and Host sandbox executions no longer pin Java 21 virtual-thread carriers while waiting
+  for the SQLite writer or a process, allowing concurrent Sessions and precise cancellation to progress
+  on low-core Coding Hosts.
+
+- Conversation compaction now reports correlated semantic and recovery outcomes, preserves Run hard-limit
+  and cancellation signals, and caps summary-call timeouts by remaining active Run time. Deterministic
+  commits, concurrent winners and storage failures are reported distinctly without exposing response text.
+
+- Conversation compaction now rejects impossible batch plans before dispatch, checks every summary input
+  against the frozen model budget, and permits one safe regeneration without consuming later batches' calls.
+
+- Manual Shell commands now expose bounded Host admission, retained outcomes and explicit `/shell` recovery/cancellation.
+
+- Configured active-history compaction now bounds failure continuation and briefly backs off unchanged
+  failed prefixes across Runs. Context assembly preserves the initiating user input after summarization.
+
+- Remote Coding Terminal now renews its Host context independently of the sidebar and reattaches after
+  expiry/restart without replaying commands or cancelling Runs.
+
+- Remote SSE reads no longer pin Java 21 virtual-thread carriers, allowing approvals and other RPCs to
+  progress alongside idle event/output streams on low-core hosts.
+
+- Remote Coding Terminal errors now explain Session/revision conflicts, Host capacity, payload limits and
+  expired connections using safe client-owned guidance. Unknown outcomes explicitly warn against blind resends.
+
+- Coding Host Session state reads now defer history; separate history pages have a serialized byte budget and
+  an exclusive continuation for older messages. Oversized responses preserve the JSON-RPC request ID.
+
+- Remote Coding Terminal now shows Host workspace/Git context and identifies Host-side Shell/export destinations,
+  with explicit non-Git and older-Host fallbacks and no client-side filesystem discovery.
+
+- Coding Host startup and the remote `/session` panel now show configuration provenance, workspace-overlay
+  policy and safe effective-setting summaries, with an explicit trusted `--config` workflow.
+
+- The Coding Agent can now run its Terminal as a thin client of one CA Host: `haifa-coding tui --connect
+  http://127.0.0.1:<port> [--session <id> | --new]` resumes that Host's last Session by default and is dispatched
+  before the process opens local logs, configuration, credentials, Runtime or SQLite. Tool-output preview, session
+  consent and credential setup stay on the Host and are refused up front; ordinary per-approval approve/reject and
+  logout remain. An unavailable or incompatible Host fails fast with a stable `REMOTE_*` code instead of falling back
+  to an embedded Run, and when a settled Run has already advanced to a queued follow-up the terminal performs one
+  bounded reconcile per settled Run to move onto the successor. The packaged `haifa.bat` / `haifa` launchers pass the
+  `tui` vector through untouched, keep the `host` subcommand ahead of the bundled `--config`, and no longer create the
+  per-user data directories for the remote mode.
+
+- The Coding Agent sidebar became a Session task list: rows are Sessions with their authoritative active-Run
+  or Session status plus the queue count, ordered by last activity. The panel renders a five-row window that
+  scrolls on its own (the wheel over the list moves only that list) and reports `… N more · scroll` for the
+  rest. Switching never cancels the Run being left, a click now activates the pressed row on release even when
+  the terminal reports no button, and a composer draft stays with the Session it was typed in.
+
+- Coding Terminal clarification questions move backward and forward with ← and →, and the marked
+  options or typed text are listed in a review step before `Send answer` submits them.
+
+- Coding Agent file mutations (`file_create`, `file_write`, `file_patch`, `file_delete`, `file_move`)
+  now show structured approvals with the intended operation, exact target, and a bounded/redacted preview
+  of the requested content or patch instead of the generic tool coordinate fallback. Patch approval
+  reports the truthful declared-target total while previewing only a bounded head, and reauthentication
+  keeps its distinct title/purpose. Approval and clarification selectors size themselves from real frame
+  rows, so compact windows keep the selected action plus navigation help and normally show both
+  `Allow once` and `Reject`; long CJK labels and rationales wrap within the terminal cell width and
+  overflow is stated explicitly. Clarification cards keep a short collapsed summary while `ctrl+o`
+  exposes the complete bounded question/option/rationale detail, and `PageUp`/`PageDown` scroll the
+  pinned transcript without changing the selector selection or submitting the interaction.
+
+- OpenCode Go now behaves like the channel documents: model requests carry the frozen root-Run
+  affinity as `x-opencode-session` so delegated children share routing and prompt cache, the three
+  bindings declare the reasoning profiles the channel serves (`reasoningMode: ENABLED` maps the
+  DeepSeek thinking contract and keeps tool-turn continuation), the Console usage extension
+  (`usage.cost`, `usage.opencode.tokens.*`) feeds `ModelUsage` instead of being dropped, and the
+  health probe reads the dialect's model-list URI (`/inference/go/v1/models`) instead of appending
+  `/models` to the Chat Completions base.
+
+- The Coding Agent footer version now comes from `META-INF/haifa/coding-agent-version.properties`
+  instead of a hard-coded string, and `scripts/refresh-ca` gained a `latest` channel that publishes
+  `<install-root>\haifa-coding-agent-latest`. That package differs from the versioned one only in
+  `bin\haifa-latest.bat` and the CLI JAR's rewritten version key
+  (`<worktree>-<first six commit characters>`), appends its `bin` to the User PATH so `haifa-latest`
+  runs next to `haifa`, and leaves the versioned installation untouched.
+
+- OpenCode Go is available as a normal subscription connection: the connection center lists it for
+  every user and signs in with the console authorization code (RFC 8628 device grant), so headless
+  Linux hosts need no browser or loopback callback. The packaged catalog adds the reviewed
+  `opencode-go-deepseek-v4-pro`, `opencode-go-deepseek-flash` and `opencode-go-kimi-k3` bindings on the new
+  `opencode-go-openai-chat` dialect, and the device-code failures (`AUTH_DEVICE_CODE_UNAVAILABLE`,
+  `AUTH_DEVICE_CODE_REQUEST_FAILED`, `AUTH_DEVICE_CODE_RESPONSE_INVALID`,
+  `AUTH_DEVICE_CODE_POLL_FAILED`, `AUTH_DEVICE_RESPONSE_TOO_LARGE`) now carry recovery guidance. The
+  OpenCode Go dialect also sends the channel's two documented transport headers, `x-opencode-session`
+  (the run id) and a product `User-Agent`; without the session header the gateway answers HTTP 400
+  `missingsessionid`, which Runtime reported as `MODEL_REQUEST_INVALID`.
+
+- Release packaging is addressed per product and platform (`ca`, `pa`, `sdk` with an optional
+  `:windows-x64` / `:linux-x64` suffix); the packager reuses one trimmed JRE per platform (module-set
+  aware) and one Web SPA build per delivery mode instead of rebuilding them, and `sha256sums.txt` lists
+  only the packaged version's artifacts. macOS release packages remain out of scope because a bundled JRE
+  would need signing and notarization; macOS development hosts keep using the local portable packaging.
+
+- All shell entry points now share one Python bootstrap, and the Coding Agent release packager, local
+  packager and updater share one contract module for the POM version, model configuration, shaded CLI JAR,
+  SHA-256 and the Maven build entry.
+
 ## 0.1.4 - 2026-10-30
 
 - Release distributions include Windows x64 Coding Agent and Personal Assistant packages, a Linux x64

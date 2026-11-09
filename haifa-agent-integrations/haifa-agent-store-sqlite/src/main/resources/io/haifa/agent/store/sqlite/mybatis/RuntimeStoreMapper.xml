@@ -353,12 +353,12 @@
     </select>
 
     <insert id="insertMessage">
-        INSERT INTO session_message (<include refid="messageColumns"/>)
+        INSERT INTO session_message (<include refid="messageColumns"/>, history_requires_retention)
         VALUES (
             #{row.messageId}, #{row.sessionId}, #{row.runId}, #{row.parentMessageId}, #{row.sequence},
             #{row.role}, #{row.status}, #{row.visibility}, #{row.contentSchemaVersion},
             #{row.contentPayload}, #{row.contentHash}, #{row.metadataSchemaVersion},
-            #{row.metadataPayload}, #{row.metadataHash}, #{row.createdAt}
+            #{row.metadataPayload}, #{row.metadataHash}, #{row.createdAt}, #{retain}
         )
     </insert>
 
@@ -380,6 +380,14 @@
         ) ORDER BY sequence ASC
     </select>
 
+    <select id="requiredHistory" resultMap="sessionMessageRow">
+        SELECT <include refid="messageColumns"/> FROM session_message
+        WHERE session_id = #{sessionId} AND sequence &gt; #{after} AND sequence &lt; #{before}
+          AND history_requires_retention = 1 AND status = 'COMPLETED'
+          AND visibility IN ('USER_VISIBLE', 'AGENT_VISIBLE')
+        ORDER BY sequence ASC LIMIT #{limit}
+    </select>
+
     <select id="latestMessageSequence" resultType="java.lang.Long">
         SELECT MAX(sequence) FROM session_message WHERE session_id = #{sessionId}
     </select>
@@ -387,6 +395,16 @@
     <select id="messagesForRun" resultMap="sessionMessageRow">
         SELECT <include refid="messageColumns"/> FROM session_message
         WHERE run_id = #{runId} ORDER BY sequence ASC
+    </select>
+
+    <select id="initiatingUserMessage" resultMap="sessionMessageRow">
+        SELECT <include refid="messageColumns"/> FROM session_message
+        WHERE run_id = #{runId} AND role = 'USER' ORDER BY sequence ASC LIMIT 1
+    </select>
+
+    <select id="latestUserMessage" resultMap="sessionMessageRow">
+        SELECT <include refid="messageColumns"/> FROM session_message
+        WHERE run_id = #{runId} AND role = 'USER' AND visibility != 'INTERNAL' ORDER BY sequence DESC LIMIT 1
     </select>
 
     <!-- Same predicate for bounded pages, head and rank; filtering happens before LIMIT. -->

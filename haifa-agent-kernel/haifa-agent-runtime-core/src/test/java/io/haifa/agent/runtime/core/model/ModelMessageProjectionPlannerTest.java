@@ -205,6 +205,46 @@ class ModelMessageProjectionPlannerTest {
                 .containsEntry("codeContent", hugeCode);
     }
 
+    @Test
+    void selectedViewsKeepAllAgesVersionsAndAuthoritativeWriteArguments() {
+        List<AgentMessage> messages = new ArrayList<>();
+        Map<ToolCallId, ToolCall> calls = new HashMap<>();
+        String arguments = "original write body ".repeat(500);
+        for (int version = 1; version <= 5; version++) {
+            addCompletedToolTurn(
+                    messages,
+                    calls,
+                    "version-" + version,
+                    "file_read",
+                    Map.of("path", "same.txt", "content", arguments),
+                    Map.of("content", "version=" + version + "\n" + "evidence\n".repeat(1000)));
+        }
+        var planner = new ModelMessageProjectionPlanner(nameIs("file_read"));
+        var full = planner.planSelected(messages, calls::get, Map.of());
+        assertThat(full.prunedToolResults()).isEmpty();
+        assertThat(full.projectedActiveTokens()).isEqualTo(full.rawActiveTokens());
+        var id = new ToolCallId("version-1");
+        var view = new io.haifa.agent.context.item.HistoricalExcerptContent(
+                RUN_ID,
+                new AgentMessageId("tool-version-1"),
+                "saved-version-1",
+                Optional.of(id),
+                0,
+                128,
+                "version=1",
+                false,
+                true);
+        var selected = planner.planSelected(messages, calls::get, Map.of(id, view));
+        assertThat(selected.prunedToolResults()).isEmpty();
+        assertThat(selected.resultViews()).containsOnlyKeys(id);
+        assertThat(selected.tokensSavedByPruning()).isPositive();
+        assertThat(calls).hasSize(5);
+        assertThat(calls.values())
+                .allSatisfy(call -> assertThat(call.arguments().values()).containsEntry("content", arguments));
+        assertThat(calls.get(new ToolCallId("version-2")).result().orElseThrow().structuredData())
+                .containsEntry("content", "version=2\n" + "evidence\n".repeat(1000));
+    }
+
     private static ToolResultPruningQualifier nameIs(String... names) {
         Set<String> selected = Set.of(names);
         return (call, binding) -> selected.contains(call.toolName())

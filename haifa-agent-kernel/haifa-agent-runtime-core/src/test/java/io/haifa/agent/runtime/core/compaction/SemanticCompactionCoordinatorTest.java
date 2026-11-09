@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.compaction;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -282,7 +283,8 @@ class SemanticCompactionCoordinatorTest {
 
         // Assert: 2 calls made (first failed validation, second repaired)
         assertThat(callCount.get()).isEqualTo(2);
-        assertThat(userPrompts.get(1)).contains("The previous summary output failed validation");
+        assertThat(userPrompts.get(1).contains("The previous summary output failed validation"))
+                .isTrue();
 
         var latestOpt = store.latestValid(session);
         assertThat(latestOpt).isPresent();
@@ -1459,6 +1461,149 @@ class SemanticCompactionCoordinatorTest {
     }
 
     @Test
+    void selectedSoftCompactionWaitsForUsefulCoverageAndPacksItInOneRequest() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        var policy = CompressionPolicy.defaults();
+        var coordinator = coordinator(store, () -> "selected-" + ids.incrementAndGet(), policy);
+        var run = createAndSaveRun(store);
+        var session = run.sessionId();
+        var original =
+                store.messagesAfter(session, MessageCursor.BEFORE_FIRST, 1).getFirst();
+        String durableRef = "prior-source-" + "a".repeat(80);
+        var prefix = store.appendSessionMessage(
+                draft(durableRef, session, run.id().value(), MessageRole.USER, "Refactor authentication"));
+        var material = store.appendSessionMessage(
+                draft("large-source", session, run.id().value(), MessageRole.ASSISTANT, "material ".repeat(2_600)));
+        var requests = new ArrayList<AgentChatRequest>();
+        var binding = createBindingWithContextWindow(
+                store,
+                run,
+                request -> {
+                    requests.add(request);
+                    String ref = requests.size() == 1 ? "m002" : "p1";
+                    return response(
+                            "selected-soft",
+                            VALID_SUMMARY_JSON.replace("m001", ref).replace("m002", ref));
+                },
+                12_288);
+        var selected = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(12_288, 256, 615, 300, 0, 11_117, 8_000, 3_117, 8_000, 1));
+
+        coordinator.evaluateSelected(run, 1, binding, selected);
+
+        assertThat(requests).isEmpty();
+        assertThat(store.latestValid(session)).isEmpty();
+
+        store.appendSessionMessage(
+                draft("retained-tail", session, run.id().value(), MessageRole.USER, "Keep this active"));
+        coordinator.evaluateSelected(run, 2, binding, selected);
+
+        assertThat(requests).hasSize(1);
+        assertThat(store.latestValid(session)).hasValueSatisfying(summary -> {
+            assertThat(summary.quality()).isEqualTo(CompactionQuality.SEMANTIC_VALIDATED);
+            assertThat(summary.coveredThrough()).isEqualTo(material.cursor());
+            assertThat(summary.sourceMessageIds()).containsExactly(original.id(), prefix.id(), material.id());
+        });
+
+        store.appendSessionMessage(draft(
+                "second-large-source", session, run.id().value(), MessageRole.ASSISTANT, "detail ".repeat(2_600)));
+        store.appendSessionMessage(
+                draft("second-retained-tail", session, run.id().value(), MessageRole.USER, "Check the next result"));
+        coordinator.evaluateSelected(run, 3, binding, selected);
+
+        assertThat(requests).hasSize(2);
+        assertThat(requests.getLast().messages().getLast().content()).contains("p1 = " + durableRef);
+        assertThat(store.latestVersion(session)).isEqualTo(2);
+        var folded = store.latestValid(session).orElseThrow().semanticSummary().orElseThrow();
+        assertThat(folded.goals().getFirst().sourceRefs()).containsExactly(durableRef);
+    }
+
+    @Test
+    void selectedSoftCompactionWaitsForFirstPrefixLargerThanTheTailTarget() {
+        var store = new InMemoryRuntimeStore();
+        var ids = new AtomicInteger();
+        var coordinator =
+                coordinator(store, () -> "first-prefix-" + ids.incrementAndGet(), CompressionPolicy.defaults());
+        var run = createAndSaveRun(store);
+        var session = run.sessionId();
+        var opening = store.appendSessionMessage(
+                draft("opening", session, run.id().value(), MessageRole.USER, "setup ".repeat(250)));
+        var firstBatch = store.appendSessionMessage(
+                draft("first-batch", session, run.id().value(), MessageRole.ASSISTANT, "evidence ".repeat(110)));
+        store.appendSessionMessage(
+                draft("second-batch", session, run.id().value(), MessageRole.ASSISTANT, "evidence ".repeat(110)));
+        var calls = new AtomicInteger();
+        var binding = createBindingWithContextWindow(
+                store,
+                run,
+                request -> {
+                    calls.incrementAndGet();
+                    return response("first-checkpoint", VALID_SUMMARY_JSON);
+                },
+                12_288);
+        var selected = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(12_288, 256, 615, 300, 0, 11_117, 8_000, 800, 1_200, 800));
+
+        assertThat(coordinator.evaluateSelected(run, 1, binding, selected).compacted())
+                .isFalse();
+        assertThat(calls).hasValue(0);
+        assertThat(store.latestValid(session)).isEmpty();
+
+        store.appendSessionMessage(
+                draft("third-batch", session, run.id().value(), MessageRole.ASSISTANT, "evidence ".repeat(110)));
+        assertThat(coordinator.evaluateSelected(run, 2, binding, selected).compacted())
+                .isTrue();
+        assertThat(calls).hasValue(1);
+        assertThat(store.latestValid(session)).hasValueSatisfying(summary -> {
+            assertThat(summary.coveredThrough()).isEqualTo(firstBatch.cursor());
+            assertThat(summary.sourceMessageIds()).contains(opening.id(), firstBatch.id());
+        });
+    }
+
+    @Test
+    void selectedSoftCompactionFoldsShortOpeningWithTheOversizedAtomicGroup() {
+        var store = new InMemoryRuntimeStore();
+        var ids = new AtomicInteger();
+        var coordinator = coordinator(store, () -> "deferred-" + ids.incrementAndGet(), CompressionPolicy.defaults());
+        var run = createAndSaveRun(store);
+        var session = run.sessionId();
+        var opening = store.appendSessionMessage(
+                draft("opening", session, run.id().value(), MessageRole.USER, "setup ".repeat(200)));
+        var oversized = store.appendSessionMessage(
+                draft("first-group", session, run.id().value(), MessageRole.ASSISTANT, "first evidence ".repeat(450)));
+        var requests = new ArrayList<AgentChatRequest>();
+        var binding = createBindingWithContextWindow(
+                store,
+                run,
+                request -> {
+                    requests.add(request);
+                    return response("folded", VALID_SUMMARY_JSON);
+                },
+                12_288);
+        var selected = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.SOFT_TOKEN_THRESHOLD,
+                new ContextBudgetBreakdown(12_288, 256, 615, 300, 0, 11_117, 8_000, 3_117, 4_000, 1_000));
+
+        coordinator.evaluateSelected(run, 1, binding, selected);
+
+        assertThat(requests).isEmpty();
+        assertThat(store.latestValid(session)).isEmpty();
+
+        store.appendSessionMessage(draft(
+                "second-group", session, run.id().value(), MessageRole.ASSISTANT, "second evidence ".repeat(450)));
+        coordinator.evaluateSelected(run, 2, binding, selected);
+
+        assertThat(requests).hasSize(1);
+        assertThat(store.latestValid(session)).hasValueSatisfying(summary -> {
+            assertThat(summary.coveredThrough()).isEqualTo(oversized.cursor());
+            assertThat(summary.sourceMessageIds()).contains(opening.id(), oversized.id());
+        });
+    }
+
+    @Test
     void multiBatchCompactionCommitsTheWholeEvictedRangeOnce() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AtomicInteger idGen = new AtomicInteger();
@@ -1549,7 +1694,7 @@ class SemanticCompactionCoordinatorTest {
 
         CompressionPolicy policy = CompressionPolicy.defaults()
                 .withSemanticCompactionEnabled(true)
-                .withActiveHistoryBudgetTokens(10L)
+                .withActiveHistoryBudgetTokens(125L)
                 .withTailTokenBounds(5, 10)
                 .withDegradedFallback(false);
 
@@ -1573,7 +1718,14 @@ class SemanticCompactionCoordinatorTest {
         AtomicInteger callCount = new AtomicInteger();
         AgentChatModel failingModel = request -> {
             callCount.incrementAndGet();
-            throw new RuntimeException("Simulated LLM failure during active budget compaction");
+            throw new io.haifa.agent.model.api.ModelInvocationException(
+                    io.haifa.agent.model.api.ModelErrorCategory.TIMEOUT,
+                    true,
+                    0,
+                    "timeout",
+                    request.callId(),
+                    "Simulated LLM failure during active budget compaction",
+                    null);
         };
 
         FrozenModelBinding binding = createBinding(store, run, failingModel);
@@ -2016,11 +2168,10 @@ class SemanticCompactionCoordinatorTest {
             throw new RuntimeException("Provider connection failed with secret: " + sensitiveToken);
         };
 
-        CompactionEvaluationOutcome outcome =
-                coordinator.evaluateAndCompactIfNeeded(run, 1, createBinding(store, run, failingModel));
-
-        assertThat(outcome.compacted()).isFalse();
-        assertThat(outcome.semanticCompactionReason()).isEqualTo("ACTIVE_HISTORY_BUDGET");
+        assertThatThrownBy(
+                        () -> coordinator.evaluateAndCompactIfNeeded(run, 1, createBinding(store, run, failingModel)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Compaction failed without an eligible bounded recovery");
 
         var failEvents = store.eventsFor(run.id()).stream()
                 .filter(e -> "session.compaction-failed".equals(e.type()))

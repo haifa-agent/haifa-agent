@@ -12,6 +12,7 @@ public record AgentChatRequest(
         ModelCallId callId,
         ModelRequestId requestId,
         AgentRunId runId,
+        String sessionAffinity,
         int iteration,
         int attempt,
         ResolvedModelSnapshot model,
@@ -38,6 +39,7 @@ public record AgentChatRequest(
                 callId,
                 new ModelRequestId(callId.value()),
                 runId,
+                runId.value(),
                 iteration,
                 attempt,
                 model,
@@ -64,6 +66,7 @@ public record AgentChatRequest(
                 callId,
                 new ModelRequestId(callId.value()),
                 runId,
+                runId.value(),
                 iteration,
                 attempt,
                 model,
@@ -79,6 +82,7 @@ public record AgentChatRequest(
         callId = Objects.requireNonNull(callId, "callId must not be null");
         requestId = Objects.requireNonNull(requestId, "requestId must not be null");
         runId = Objects.requireNonNull(runId, "runId must not be null");
+        sessionAffinity = sessionAffinity == null || sessionAffinity.isBlank() ? runId.value() : sessionAffinity.trim();
         if (iteration < 1 || attempt < 1) throw new IllegalArgumentException("iteration and attempt must be positive");
         model = Objects.requireNonNull(model, "model must not be null");
         messages = List.copyOf(Objects.requireNonNull(messages, "messages must not be null"));

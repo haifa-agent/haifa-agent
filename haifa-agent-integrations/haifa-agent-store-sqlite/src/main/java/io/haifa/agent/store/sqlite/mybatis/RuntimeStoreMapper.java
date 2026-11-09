@@ -34,7 +34,7 @@ public interface RuntimeStoreMapper {
 
     long nextMessageSequence(@Param("sessionId") String sessionId);
 
-    int insertMessage(@Param("row") SessionMessageRow row);
+    int insertMessage(@Param("row") SessionMessageRow row, @Param("retain") boolean retain);
 
     SessionMessageRow findMessage(@Param("messageId") String messageId);
 
@@ -44,9 +44,19 @@ public interface RuntimeStoreMapper {
     List<SessionMessageRow> recentMessages(
             @Param("sessionId") String sessionId, @Param("cursor") long cursor, @Param("limit") int limit);
 
+    List<SessionMessageRow> requiredHistory(
+            @Param("sessionId") String sessionId,
+            @Param("after") long after,
+            @Param("before") long before,
+            @Param("limit") int limit);
+
     Long latestMessageSequence(@Param("sessionId") String sessionId);
 
     List<SessionMessageRow> messagesForRun(@Param("runId") String runId);
+
+    SessionMessageRow initiatingUserMessage(@Param("runId") String runId);
+
+    SessionMessageRow latestUserMessage(@Param("runId") String runId);
 
     List<SessionMessageRow> runMessagesAfter(
             @Param("runId") String runId,

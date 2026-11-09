@@ -1,5 +1,9 @@
 # Haifa Agent SQLite Runtime Store
 
+Runtime 原始请求保留通过既有 `session_message` 的 Run/USER 关联按 sequence 读取首条记录，
+SQL `LIMIT 1` 不加载完整 transcript。Redaction 后仍返回原身份及 REDACTED 状态，由组装路径拒绝，
+不静默换成后续 USER；Store 关闭重开后语义一致，没有新增表或正文副本。
+
 Runtime command 幂等结果按同一 payload codec 的往返表示比较，避免 JSON 将小整数 `Long` 读回 `Integer`
 时误判内容冲突。真实参数数值、命令身份或结果不同仍拒绝；重开 Store 后保留原取消期限的语义。
 
@@ -300,3 +304,27 @@ Event ID/范围/head/earliest/索引计划、Outbox/Idempotency、Journal 状态
 重启恢复/竞争、Continuation 固定密钥恢复/错误密钥/
 篡改、Skill/Memory/Asset、busy/locked 分类、权限策略，以及数据库/WAL/SHM 中不出现 Credential、
 reasoning、Provider 原文或测试密钥。
+
+## Run transition contention
+
+A Run transition can wait for this adapter's single writer while that writer belongs to another parked virtual
+thread. Runtime's per-Run locking lets the contender unmount on Java 21, so the writer can resume and release its
+slot on low-core hosts. Writer queue fairness, transaction scope, interruption handling and timeout configuration
+are unchanged. A single-carrier child-JVM regression exercises the real SQLite Unit of Work and all three Runtime
+transition paths that acquire the writer under the per-Run lock.
+
+## Historical retrieval persistence
+
+Runtime history tools reuse the existing Session cursor, Run/Tool identities and immutable Tool-result asset
+codec without a migration or second body store. Closing and reopening the Store with the same continuation
+protector preserves history versions and character offsets. Changing a workspace file does not change the stored
+historical representation. This reopen scenario is covered by `SqliteRuntimeRecoveryTest` under `slow-tests`.
+
+
+Run working sets add V16: a rebuildable classification bit and partial Session/sequence index on existing
+`session_message` rows for project constraints, imported messages and parts without a historical
+reader. Upgrade backfills existing records; append classifies new records in the same transaction.
+The bounded `requiredHistory` query does not decode every Session message. Redacted records leave the
+partial index. No body store or summary state is added. Latest USER lookup is a narrow Run/sequence query,
+including tombstones so a withdrawn Steer cannot revive an older goal. Store reopen rebuilds selection from
+frozen configuration and existing execution facts; temporary selection/cache windows are not persisted.

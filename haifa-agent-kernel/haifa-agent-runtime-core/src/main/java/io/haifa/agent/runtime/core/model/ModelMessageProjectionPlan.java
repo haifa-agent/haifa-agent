@@ -14,11 +14,20 @@ public record ModelMessageProjectionPlan(
         Set<ToolCallId> prunedToolResults,
         long rawActiveTokens,
         long projectedActiveTokens,
-        long tokensSavedByPruning) {
+        long tokensSavedByPruning,
+        java.util.Map<ToolCallId, io.haifa.agent.context.item.HistoricalExcerptContent> resultViews) {
+    public ModelMessageProjectionPlan(
+            Set<ToolCallId> prunedToolResults,
+            long rawActiveTokens,
+            long projectedActiveTokens,
+            long tokensSavedByPruning) {
+        this(prunedToolResults, rawActiveTokens, projectedActiveTokens, tokensSavedByPruning, java.util.Map.of());
+    }
 
     public static final ModelMessageProjectionPlan EMPTY = new ModelMessageProjectionPlan(Set.of(), 0L, 0L, 0L);
 
     public ModelMessageProjectionPlan {
+        resultViews = java.util.Map.copyOf(Objects.requireNonNull(resultViews));
         prunedToolResults = Set.copyOf(Objects.requireNonNull(prunedToolResults, "prunedToolResults must not be null"));
         if (rawActiveTokens < 0 || projectedActiveTokens < 0 || tokensSavedByPruning < 0) {
             throw new IllegalArgumentException("projection token counters must not be negative");

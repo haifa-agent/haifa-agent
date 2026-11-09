@@ -5,21 +5,90 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProviderView;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
-import io.haifa.agent.auth.localmodel.InMemoryWindowsCredentialManagerClient;
+import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
+import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoEndpoints;
+import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.opencode.OpenCodeGoTokenClient;
+import io.haifa.coding.host.internal.CliCodingAuthenticationClient;
 import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CliCodingAuthenticationClientTest {
+    @Test
+    void localManagementCommandTargetsOnlyTheConfiguredDefaultCredentialAndStore() {
+        var store = createStore();
+        assertThat(client(store, "model-auth://deepseek/default", "deepseek", Map.of())
+                        .withLocalManagementStore("file")
+                        .localManagementCommand())
+                .contains("haifa auth connect --provider deepseek --method api-key --store file");
+        assertThat(client(store, "model-auth://openai-codex/default", "openai-codex", Map.of())
+                        .withLocalManagementStore("windows")
+                        .localManagementCommand())
+                .contains("haifa auth connect --provider openai-codex --method device --store windows");
+        assertThat(client(store, "model-auth://deepseek/custom", "deepseek", Map.of())
+                        .withLocalManagementStore("file")
+                        .localManagementCommand())
+                .isEmpty();
+        assertThat(client(store, "env://TEST_API_KEY", "deepseek", Map.of())
+                        .withLocalManagementStore("file")
+                        .localManagementCommand())
+                .isEmpty();
+    }
+
     @TempDir
     Path temp;
 
     private WindowsLocalModelAuthStore createStore() {
-        return new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
+        return CliAuthenticationTestFixture.store();
+    }
+
+    @Test
+    void exposesOpenCodeGoAsAnAuthorizationCodeOnlySubscription() {
+        var store = createStore();
+        var openCodeGoMethod = new OpenCodeGoExternalLoginMethod(
+                new OpenCodeGoTokenClient(
+                        java.net.http.HttpClient.newHttpClient(),
+                        new ObjectMapper(),
+                        java.time.Clock.systemUTC(),
+                        java.time.Duration.ofSeconds(5),
+                        new OpenCodeGoEndpoints()),
+                duration -> {});
+        var coordinator = new ExternalLoginCoordinator(
+                new ExternalLoginRegistry(java.util.List.of(openCodeGoMethod)),
+                store,
+                () -> new ExternalLoginAttemptId("01890f6c-7b2a-7cc0-8000-000000000009"),
+                java.time.Clock.systemUTC(),
+                java.util.concurrent.Executors.newSingleThreadExecutor(),
+                uri -> false,
+                8);
+        var service = new LocalModelAuthenticationService(
+                store,
+                java.util.Optional.of(coordinator),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                ignored -> null);
+        var client = new CliCodingAuthenticationClient(
+                service, "env://DEEPSEEK_API_KEY", "deepseek", java.util.List.of("env://DEEPSEEK_API_KEY"));
+
+        var openCodeGo = client.providers().stream()
+                .filter(provider -> provider.providerId().equals("opencode-go"))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(openCodeGo.category()).isEqualTo(CodingAuthenticationProviderView.Category.SUBSCRIPTION);
+        assertThat(openCodeGo.connected()).isFalse();
+        assertThat(openCodeGo.methods()).singleElement().satisfies(entry -> {
+            assertThat(entry.id()).isEqualTo("device");
+            assertThat(entry.available()).isTrue();
+        });
     }
 
     @Test
@@ -266,14 +335,7 @@ class CliCodingAuthenticationClientTest {
             String providerId,
             Map<String, String> environment,
             java.util.List<String> availableCredentialReferences) {
-        var service = new LocalModelAuthenticationService(
-                store,
-                java.util.Optional.empty(),
-                reference -> {
-                    throw new AssertionError("credential resolution is not expected");
-                },
-                environment::get);
-        return new CliCodingAuthenticationClient(
-                service, credentialReference, providerId, availableCredentialReferences);
+        return CliAuthenticationTestFixture.client(
+                store, credentialReference, providerId, environment, availableCredentialReferences);
     }
 }
