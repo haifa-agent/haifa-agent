@@ -98,6 +98,8 @@ class RunMessagePagingTest {
                     draft("original", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "original input"));
             messages.appendSessionMessage(
                     draft("later", runId, MessageRole.USER, MessageVisibility.USER_VISIBLE, "later input"));
+            messages.appendSessionMessage(
+                    draft("approval", runId, MessageRole.USER, MessageVisibility.INTERNAL, "approved"));
             assertThat(messages.initiatingUserMessage(runId).orElseThrow().id().value())
                     .isEqualTo("original");
             assertThat(messages.latestUserMessage(runId).orElseThrow().id().value())

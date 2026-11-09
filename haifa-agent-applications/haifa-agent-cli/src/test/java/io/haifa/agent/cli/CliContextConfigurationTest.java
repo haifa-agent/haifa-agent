@@ -16,10 +16,18 @@ class CliContextConfigurationTest {
     Path root;
 
     @Test
-    void defaultsStayLegacyAndExplicitReadersSurviveRollback() throws Exception {
+    void defaultsEnableUnifiedAndExplicitReadersSurviveRollback() throws Exception {
         var defaults = load("{}");
         assertThat(defaults.context()).isEqualTo(CliConfiguration.Context.defaults());
-        assertThat(defaults.context().runtimeOptions()).isEmpty();
+        assertThat(defaults.context().runtimeOptions())
+                .containsEntry("haifa.runtime.context_budget_policy", "unified-context-v1");
+        assertThat(defaults.context().historyRetrieval()).isTrue();
+        var noReaders = load("context:\n  historyRetrieval: false\n");
+        assertThat(noReaders.context().runtimeOptions()).isEmpty();
+        assertThat(noReaders.context().historyRetrieval()).isFalse();
+        var legacy = load("context:\n  policy: legacy\n");
+        assertThat(legacy.context().runtimeOptions()).isEmpty();
+        assertThat(legacy.context().historyRetrieval()).isFalse();
         var enabled = load("context:\n  policy: unified-context-v1\n  targetTokens: 4096\n  historyRetrieval: true\n");
         assertThat(enabled.context().runtimeOptions())
                 .containsEntry("haifa.runtime.context_budget_policy", "unified-context-v1")
@@ -33,7 +41,7 @@ class CliContextConfigurationTest {
     void rejectsUnsupportedOrUnsafeContextConfigurationBeforeAssembly() {
         var invalid = java.util.Map.of(
                 "policy: unknown", "context.policy",
-                "policy: unified-context-v1", "context.historyRetrieval",
+                "policy: unified-context-v1\n  historyRetrieval: false", "context.historyRetrieval",
                 "targetTokens: 127", "context.targetTokens",
                 "targetTokens: 65537", "context.targetTokens",
                 "historyRetrieval: yesplease", "must be boolean",

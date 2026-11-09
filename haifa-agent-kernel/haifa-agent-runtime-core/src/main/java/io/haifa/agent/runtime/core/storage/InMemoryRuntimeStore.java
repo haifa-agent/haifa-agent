@@ -461,7 +461,8 @@ public final class InMemoryRuntimeStore
                     .computeIfAbsent(message.sessionId(), ignored -> new java.util.TreeMap<>())
                     .put(message.sequence(), message.id());
         messagesById.put(message.id(), message);
-        if (message.role() == io.haifa.agent.core.message.MessageRole.USER)
+        if (message.role() == io.haifa.agent.core.message.MessageRole.USER
+                && message.visibility() != io.haifa.agent.core.message.MessageVisibility.INTERNAL)
             message.runId().ifPresent(id -> latestUserByRun.put(id, message.id()));
         message.runId().ifPresent(runId -> messages.computeIfAbsent(runId, ignored -> new ArrayList<>())
                 .add(message));

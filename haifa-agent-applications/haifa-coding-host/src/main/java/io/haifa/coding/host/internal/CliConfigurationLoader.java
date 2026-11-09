@@ -213,10 +213,12 @@ public final class CliConfigurationLoader {
         if (!Set.of("policy", "targetTokens", "historyRetrieval", "automaticMaintenance")
                 .containsAll(values.keySet())) throw new IllegalArgumentException("unsupported context configuration");
         var defaults = CliConfiguration.Context.defaults();
+        String implicitPolicy = Boolean.FALSE.equals(values.get("historyRetrieval")) ? "legacy" : defaults.policy();
+        String policy = text(values, "policy", implicitPolicy);
         return new CliConfiguration.Context(
-                text(values, "policy", defaults.policy()),
+                policy,
                 Math.toIntExact(number(values, "targetTokens", defaults.targetTokens())),
-                bool(values, "historyRetrieval", defaults.historyRetrieval()),
+                bool(values, "historyRetrieval", defaults.policy().equals(policy)),
                 bool(values, "automaticMaintenance", defaults.automaticMaintenance()));
     }
 

@@ -36,10 +36,11 @@ public interface RuntimeStateRepository
                 .min(java.util.Comparator.comparingLong(AgentMessage::sequence));
     }
 
-    /** Latest USER identity in this Run, including redaction so callers cannot revive a superseded goal. */
+    /** Latest USER input identity, excluding internal responses and retaining redacted goals. */
     default Optional<AgentMessage> latestUserMessage(AgentRunId runId) {
         return messages(runId).stream()
-                .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER)
+                .filter(message -> message.role() == io.haifa.agent.core.message.MessageRole.USER
+                        && message.visibility() != io.haifa.agent.core.message.MessageVisibility.INTERNAL)
                 .max(java.util.Comparator.comparingLong(AgentMessage::sequence));
     }
 

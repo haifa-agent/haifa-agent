@@ -660,8 +660,8 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
 `tools.enabled` controls built-in Project tools. The Session-scoped `history_search`/`history_read`
-readers are a separate opt-in controlled together by `context.historyRetrieval`; they are not entries in
-`tools.enabled`. Thus a restricted built-in list may still expose both readers when explicitly enabled.
+readers are controlled together by `context.historyRetrieval`. They are enabled with the default unified
+policy and may be present even with a restricted `tools.enabled` list.
 Set `context.historyRetrieval: false` to suppress them (and use legacy selection). The effective Project
 configuration includes their aliases; Skill/MCP contributions retain their existing separate controls.
 
@@ -1071,10 +1071,10 @@ panel containing Host/project, account scope, the runnable local command and ref
 After local repair, reopen `/account` in that remote TUI to read fresh Host connection status, then retry deliberately.
 Credential repair never replays a failed Run or uncertain tool automatically. `/logout` remains an explicit action.
 
-## Opt-in context selection and rollback
+## Context selection and rollback
 
-Coding keeps the legacy context strategy by default. To use the bounded Run working set and unified
-budget/compaction path, configure the existing product assembly explicitly:
+Coding defaults to the bounded Run working set and unified budget and compaction. These settings
+show the defaults:
 
 ```yaml
 context:
@@ -1097,11 +1097,12 @@ If required source content becomes unavailable, the Run fails explicitly rather 
 successfully summarized.
 
 To roll back selection while retaining saved-result readback, set `context.policy: legacy` and keep
-`context.historyRetrieval: true`, then restart the application. To restore the default tool schema as
-well, set `historyRetrieval: false` or remove the entire context section. Do not disable readers for an
+`context.historyRetrieval: true`, then restart the application. To restore the legacy tool schema as
+well, set `historyRetrieval: false`. An explicit `policy: legacy` disables readers unless retained
+with `historyRetrieval: true`. Setting only `historyRetrieval: false` also selects legacy. Do not disable readers for an
 already admitted Run that still requires them; finish or settle that Run under its frozen assembly first.
 The original history, saved results and committed summaries remain stored. Unknown context options,
 unified selection without readers, invalid targets and `automaticMaintenance: true` are rejected.
 
-This opt-in has deterministic integration coverage. Real-model quality/cost comparisons and product-wide
-default enablement remain pending; automatic summary maintenance after termination is unsupported.
+The policy has deterministic integration coverage. Automatic summary maintenance after termination
+is unsupported.

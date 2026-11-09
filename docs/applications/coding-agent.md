@@ -172,10 +172,10 @@ uses the Java product client in remote and embedded mode. The existing native en
 See the [Java SDK examples](../../examples/coding-product-sdk/README.md) for explicit Host ownership
 and standalone Client consumption.
 
-## Opt-in context selection and rollback
+## Context selection and rollback
 
-The default remains legacy. Coding can explicitly enable `context.policy: unified-context-v1` with
-`context.historyRetrieval: true`; `targetTokens` is a soft target and the model's hard limit still applies.
+Coding defaults to `context.policy: unified-context-v1` with `context.historyRetrieval: true`.
+The `targetTokens` setting is a soft target. The model's hard limit still applies.
 The policy freezes per Run. Saved historical results remain readable when selection is rolled back to
-legacy with readers retained. See the [CLI configuration, limits and restart/rollback procedure](../../haifa-agent-applications/haifa-agent-cli/README.md#opt-in-context-selection-and-rollback).
-Real-model evaluation and default enablement remain pending; terminal automatic maintenance is unsupported.
+legacy with readers retained. See the [CLI configuration, limits and restart/rollback procedure](../../haifa-agent-applications/haifa-agent-cli/README.md#context-selection-and-rollback).
+Automatic summary maintenance after termination is unsupported.
