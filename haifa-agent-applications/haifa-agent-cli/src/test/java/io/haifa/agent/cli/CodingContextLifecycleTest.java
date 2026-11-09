@@ -257,8 +257,9 @@ class CodingContextLifecycleTest {
         }
 
         try (var agent = openAgent(workspace, base, request -> {
-            assertThat(request.tools()).noneMatch(tool -> tool.name().startsWith("history_"));
-            return response("default remains legacy");
+            assertThat(request.tools().stream().map(tool -> tool.name()).toList())
+                    .contains("history_search", "history_read");
+            return response("default unified context");
         })) {
             var session = agent.client().create(agent.projectId(), "New unrelated task", "default");
             var run = session.activeRun().orElseThrow().runId();
@@ -309,13 +310,16 @@ class CodingContextLifecycleTest {
                             .modelRequestOptions())
                     .containsEntry("haifa.runtime.context_budget_policy", "unified-context-v1")
                     .containsEntry("haifa.runtime.working_set_target_tokens", 4096);
-            for (var runId : List.of(rollbackRun, defaultRun)) {
-                var run = store.ports().runs().find(runId).orElseThrow();
-                assertThat(state.configuration(run.configurationSnapshot())
-                                .orElseThrow()
-                                .modelRequestOptions())
-                        .doesNotContainKey("haifa.runtime.working_set");
-            }
+            var legacy = store.ports().runs().find(rollbackRun).orElseThrow();
+            assertThat(state.configuration(legacy.configurationSnapshot())
+                            .orElseThrow()
+                            .modelRequestOptions())
+                    .doesNotContainKey("haifa.runtime.working_set");
+            var defaultPolicy = store.ports().runs().find(defaultRun).orElseThrow();
+            assertThat(state.configuration(defaultPolicy.configurationSnapshot())
+                            .orElseThrow()
+                            .modelRequestOptions())
+                    .containsEntry("haifa.runtime.context_budget_policy", "unified-context-v1");
         }
     }
 }

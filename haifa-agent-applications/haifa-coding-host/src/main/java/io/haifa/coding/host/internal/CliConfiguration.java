@@ -180,7 +180,7 @@ public record CliConfiguration(
                 Context.defaults());
     }
 
-    /** Product opt-in; each Run freezes these options through the existing profile resolver. */
+    /** Coding context policy, frozen per Run by the product profile resolver. */
     public record Context(String policy, int targetTokens, boolean historyRetrieval, boolean automaticMaintenance) {
         public Context {
             if (!Set.of("legacy", RuntimeControlOptions.UNIFIED_CONTEXT_V1).contains(policy))
@@ -197,7 +197,11 @@ public record CliConfiguration(
         }
 
         public static Context defaults() {
-            return new Context("legacy", RuntimeControlOptions.DEFAULT_WORKING_SET_TARGET, false, false);
+            return new Context(
+                    RuntimeControlOptions.UNIFIED_CONTEXT_V1,
+                    RuntimeControlOptions.DEFAULT_WORKING_SET_TARGET,
+                    true,
+                    false);
         }
 
         public java.util.Map<String, Object> runtimeOptions() {

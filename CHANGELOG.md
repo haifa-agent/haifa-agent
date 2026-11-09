@@ -13,7 +13,7 @@
 - Keep complete saved results readable when refreshing bounded history previews, and account for documented
   OpenCode Go DeepSeek Flash input/cache lanes without counting cache tokens twice.
 
-- Add explicit, default-off Coding context selection with authorized history readers and documented legacy rollback; preserve frozen Run policy across pause/resume and SQLite reopen.
+- Default Coding to unified context selection with authorized history readers, explicit legacy rollback, and Run policy frozen across pause/resume and SQLite reopen.
 
 - Use reversible coordinates in unified saved evidence and reuse complete reads for files confirmed unchanged.
 

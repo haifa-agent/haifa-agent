@@ -404,7 +404,7 @@
 
     <select id="latestUserMessage" resultMap="sessionMessageRow">
         SELECT <include refid="messageColumns"/> FROM session_message
-        WHERE run_id = #{runId} AND role = 'USER' ORDER BY sequence DESC LIMIT 1
+        WHERE run_id = #{runId} AND role = 'USER' AND visibility != 'INTERNAL' ORDER BY sequence DESC LIMIT 1
     </select>
 
     <!-- Same predicate for bounded pages, head and rank; filtering happens before LIMIT. -->
