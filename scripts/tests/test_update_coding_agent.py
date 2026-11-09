@@ -223,21 +223,46 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual(smoke.call_count, 1)
         self.assertFalse((self.install / self.folder).exists())
 
-    def test_latest_replaces_the_previous_channel_installation(self):
-        target = self.install / 'haifa-coding-agent-latest'
+    def existing_latest(self, install, *jar_names):
+        target = install / updater.LATEST_FOLDER
         for name in ('lib', 'bin', 'jre'):
             (target / name).mkdir(parents=True)
-        (target / 'lib' / self.jar_name).write_bytes(b'old jar')
+        for jar_name in jar_names:
+            (target / 'lib' / jar_name).write_bytes(self.cli_jar())
         (target / 'bin/haifa-latest.bat').write_bytes(b'old launcher')
+        return target
 
-        with patch.object(updater, 'smoke'):
-            result = updater.assemble_latest(
-                self.latest_package(), self.install, self.version, 'feat-x-abc123', self.report
-            )
+    def test_latest_replaces_same_and_previous_versions(self):
+        self.version = '0.1.5'
+        self.folder = 'haifa-coding-agent-v' + self.version
+        self.jar_name = 'haifa-agent-cli-' + self.version + '.jar'
+        archive = self.latest_package()
+        for previous_version in ('0.1.5', '0.1.5-SNAPSHOT'):
+            with self.subTest(previous_version=previous_version):
+                install = self.install / previous_version
+                target = self.existing_latest(install, f'haifa-agent-cli-{previous_version}.jar')
+                with patch.object(updater, 'smoke'):
+                    result = updater.assemble_latest(archive, install, self.version, 'feat-x-abc123', self.report)
 
-        self.assertEqual(result['mode'], 'latest-replace')
-        self.assertEqual((target / 'bin/haifa-latest.bat').read_bytes(), b'launcher')
-        self.assertFalse(list(self.install.glob('.haifa-coding-agent-latest.previous-*')))
+                self.assertEqual(result['mode'], 'latest-replace')
+                self.assertEqual((target / 'bin/haifa-latest.bat').read_bytes(), b'launcher')
+                self.assertEqual([p.name for p in (target / 'lib').glob('*.jar')], [self.jar_name])
+                self.assertFalse(list(install.glob('.haifa-coding-agent-latest.previous-*')))
+
+    def test_latest_preserves_installation_with_unrecognized_or_multiple_cli_jars(self):
+        archive = self.latest_package()
+        for index, jar_names in enumerate((
+            ('haifa-agent-cli-unversioned.jar',),
+            ('haifa-agent-cli-0.1.5.jar', 'haifa-agent-cli-0.1.5-SNAPSHOT.jar'),
+        )):
+            with self.subTest(jar_names=jar_names):
+                install = self.install / str(index)
+                target = self.existing_latest(install, *jar_names)
+                with patch.object(updater, 'smoke'):
+                    with self.assertRaisesRegex(ValueError, 'Existing latest lib'):
+                        updater.assemble_latest(archive, install, self.version, 'feat-x-abc123', self.report)
+                self.assertEqual((target / 'bin/haifa-latest.bat').read_bytes(), b'old launcher')
+                self.assertEqual({p.name for p in (target / 'lib').glob('*.jar')}, set(jar_names))
 
     def test_latest_rejects_a_jar_without_the_version_key(self):
         with self.assertRaisesRegex(ValueError, 'coding-agent-version.properties'):

@@ -65,8 +65,9 @@ JAR 被运行中的 CA 锁定时会报错，退出 CA 后重新执行；脚本�
 `jre`、`haifa-coding.yaml`、`README.txt`、`bin\install.bat` 与版本包一致。脚本把
 `<install-root>\haifa-coding-agent-latest\bin` **追加**到用户 PATH（已存在则不重复、不动版本目录那项，
 `haifa` 与 `haifa-latest` 两个通道可并存），不改系统 PATH；重新打开终端后可直接运行 `haifa-latest`。
-目录已存在时先把旧目录改名为
-`.haifa-coding-agent-latest.previous-<ID>`，换入成功后再删除；`haifa-latest` 正在运行时会提示退出后重试。
+已有 latest 安装可以跨 POM 版本整体替换，例如从 `0.1.5-SNAPSHOT` 更新到 `0.1.5`。
+脚本先校验新包并启动冒烟，再把旧目录改名为 `.haifa-coding-agent-latest.previous-<ID>`，换入成功后删除旧目录。
+`haifa-latest` 正在运行时会提示退出后重试。
 
 版本键的来源：终端底部版本显示改为读取 `META-INF/haifa/coding-agent-version.properties`（构建期由根 POM
 版本过滤注入，Java 侧为 `CodingAgentVersion`），所以打包只需替换这一个键，不必重新编译。JAR 里缺少该键时
