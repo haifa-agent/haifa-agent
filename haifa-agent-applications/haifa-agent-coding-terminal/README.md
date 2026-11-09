@@ -136,7 +136,7 @@ Windows ConPTY Gate B。
 │                                                             │  Git branch: main              │
 │                                                             │  Model: <model> (<provider>)   │
 │                                                             │  Resources: skills, MCP        │
-│                                                             │  Haifa Agent v0.1.5-SNAPSHOT            │
+│                                                             │  Haifa Agent v0.1.5            │
 │ [交互卡片槽位：Approval / Selector / 命令面板]              │                                │
 │ ▌ [Textarea 输入区，3 行，按左栏宽度换行]                   │                                │
 │ ▌                                                           │                                │

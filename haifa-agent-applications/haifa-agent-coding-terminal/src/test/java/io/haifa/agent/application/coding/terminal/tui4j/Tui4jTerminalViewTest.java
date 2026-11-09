@@ -10,6 +10,7 @@ import com.williamcallahan.tui4j.compat.lipgloss.color.ColorProfile;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.compat.x.ansi.Strip;
 import com.williamcallahan.tui4j.term.TerminalInfo;
+import io.haifa.agent.application.coding.terminal.application.CodingAgentVersion;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.ApprovalDetails;
 import io.haifa.agent.application.coding.terminal.state.ClarificationDetails;
@@ -1791,7 +1792,7 @@ class Tui4jTerminalViewTest {
 
         String rendered = view.render(state, transcript(state), editor(120), true, false);
 
-        assertThat(rendered).contains("Resources", "Haifa Agent v0.1.5-SNAPSHOT", "ctrl+x b toggle");
+        assertThat(rendered).contains("Resources", "Haifa Agent v" + CodingAgentVersion.current(), "ctrl+x b toggle");
     }
 
     @Test

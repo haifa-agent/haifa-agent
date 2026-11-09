@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - 0.1.5-SNAPSHOT
+## 0.1.5
 
 - Add an opt-in Coding Web HTTPS ingress profile for same-origin Nginx, with a trusted proxy
   boundary and optional gateway session checks for browser RPC and SSE.
@@ -13,7 +13,9 @@
 - Keep complete saved results readable when refreshing bounded history previews, and account for documented
   OpenCode Go DeepSeek Flash input/cache lanes without counting cache tokens twice.
 
-- Default Coding to unified context selection with authorized history readers, explicit legacy rollback, and Run policy frozen across pause/resume and SQLite reopen.
+- Enable unified context selection by default in Coding, with authorized history readers and policy frozen per
+  Run across pause/resume and SQLite reopen. Set `context.policy: legacy` and `context.historyRetrieval: true`
+  to roll back selection for new Runs while retaining saved-version readback. See the [0.1.4 upgrade and rollback guide](docs/reference/upgrading.md#014-升级到-015).
 - Resume paused Coding Runs across the addition of history readers when the original frozen tool
   catalog still matches.
 
@@ -31,7 +33,7 @@
 
 - Keep Coding Terminal tool-row geometry stable when a call settles, including its metadata column and following rows.
 - Restore Ctrl+C selection copying when a remote terminal delivers a console interrupt, while preserving Host-owned Runs on client termination.
-- Unify opt-in working-set admission and compaction around the prepared model input. Add readable saved-result
+- Unify working-set admission and compaction around the prepared model input. Add readable saved-result
   previews, preserve evidence without age-based omission, and avoid replaying protected continuation after prefix
   rewrites; frozen legacy policy remains available and terminal summary maintenance remains deferred.
 
@@ -41,7 +43,7 @@
 - A trusted-local auth command repairs model credentials while Coding Host keeps its Runtime/SQLite ownership.
   Remote connection guidance shows the Host/account command and /account refreshes the repaired connection.
 
-- Add opt-in Run working sets with bounded history selection, lightweight handoff, protected in-use evidence
+- Add opt-in SDK Run working sets with bounded history selection, lightweight handoff, protected in-use evidence
   and conservative cache deferral. Keep required sources, Run hard limits and existing summary coverage rules;
   SQLite V16 backfills an index over existing source records without adding another history body store.
 
