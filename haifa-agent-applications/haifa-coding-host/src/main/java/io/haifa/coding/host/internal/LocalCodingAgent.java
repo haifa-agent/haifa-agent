@@ -35,6 +35,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
+import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.credential.api.SecretRedactor;
@@ -1391,7 +1392,7 @@ public final class LocalCodingAgent implements AutoCloseable {
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        RuntimeException failure = awaitTerminalAttempts();
+        RuntimeException failure = awaitStoppedAttempts();
         try {
             shell.ifPresent(CodingShellService::close);
         } catch (RuntimeException exception) {
@@ -1423,11 +1424,11 @@ public final class LocalCodingAgent implements AutoCloseable {
         if (failure != null) throw failure;
     }
 
-    private RuntimeException awaitTerminalAttempts() {
+    private RuntimeException awaitStoppedAttempts() {
         long deadlineMillis = System.currentTimeMillis() + CLOSE_SETTLE_TIMEOUT.toMillis();
         for (AgentRunId runId : startedRuns) {
             if (runtime.find(runId)
-                    .filter(snapshot -> snapshot.status().isTerminal())
+                    .filter(snapshot -> snapshot.status().isTerminal() || snapshot.status() == AgentRunStatus.SUSPENDED)
                     .isEmpty()) continue;
             while (!executionSettled(runId) && System.currentTimeMillis() < deadlineMillis) {
                 try {

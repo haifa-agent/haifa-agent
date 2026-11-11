@@ -55,7 +55,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 @Tag("slow")
 class LocalCodingAgentTest {
-    @TempDir
+    @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path workspace;
 
     @TempDir

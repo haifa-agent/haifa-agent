@@ -1057,7 +1057,7 @@ public final class PersonalModelFactory {
                         "purpose",
                         "Inspect filesystem drive usage",
                         "timeoutMillis",
-                        5_000);
+                        15_000);
             } else if (prompt.contains("[execution-command]")) {
                 alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
                 arguments = Map.of(

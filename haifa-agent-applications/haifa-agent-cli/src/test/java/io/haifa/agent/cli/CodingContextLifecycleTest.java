@@ -27,7 +27,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Tag("slow")
 class CodingContextLifecycleTest {
-    @TempDir
+    @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path root;
 
     @ParameterizedTest
@@ -133,6 +133,7 @@ class CodingContextLifecycleTest {
                     .doesNotContain("history_read", "history_search");
             return response("Resumed");
         })) {
+            assertThat(agent.localAgent().executionSettled(run)).isTrue();
             var upgraded = agent.localAgent().runtime();
             upgraded.resume(new ResumeAgentRunRequest("upgrade-resume", run, List.of()));
             assertThat(upgraded.handle(run)

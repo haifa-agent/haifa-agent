@@ -41,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
 class CodingHostServerTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    @TempDir
+    @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path directory;
 
     @Test

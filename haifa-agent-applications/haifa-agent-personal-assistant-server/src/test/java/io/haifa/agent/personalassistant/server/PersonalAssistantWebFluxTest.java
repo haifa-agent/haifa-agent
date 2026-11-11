@@ -871,6 +871,7 @@ class PersonalAssistantWebFluxTest {
                 .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
                 .isEqualTo("COMPLETED");
         JsonNode execution = executionActivity(activities);
+        assertThat(execution.path("toolDetail").path("processState").asText()).isEqualTo("EXITED");
         assertThat(execution.path("status").asText()).isEqualTo("SUCCEEDED");
         assertThat(execution.path("toolDetail").path("exitCode").asInt()).isZero();
         assertThat(execution.path("toolDetail").path("lineCount").asLong()).isPositive();

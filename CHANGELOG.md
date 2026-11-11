@@ -4,6 +4,7 @@
 
 - Allow up to eight physical summary calls per compaction evaluation by default. Recover active-history
   planning and summary validation failures with a reducing deterministic checkpoint when a safe turn boundary exists.
+- Finish persisting suspended Coding execution attempts before closing the Host so paused Runs can resume after restart.
 
 ## 0.1.5
 
