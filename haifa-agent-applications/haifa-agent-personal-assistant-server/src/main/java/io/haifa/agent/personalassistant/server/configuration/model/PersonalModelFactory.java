@@ -1049,8 +1049,8 @@ public final class PersonalModelFactory {
                         "mode",
                         "COMMAND",
                         "content",
-                        "[System.IO.DriveInfo]::new((Get-Location).Drive.Root) "
-                                + "| Select-Object Name, TotalSize, AvailableFreeSpace | ConvertTo-Json -Compress",
+                        "$drive = [System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($PWD.ProviderPath)); "
+                                + "[Console]::WriteLine('total={0} free={1}', $drive.TotalSize, $drive.AvailableFreeSpace)",
                         "purpose",
                         "Inspect the workspace drive usage",
                         "timeoutMillis",

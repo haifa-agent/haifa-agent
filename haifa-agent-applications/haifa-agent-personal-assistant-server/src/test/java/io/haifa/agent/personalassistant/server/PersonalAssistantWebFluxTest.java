@@ -874,7 +874,7 @@ class PersonalAssistantWebFluxTest {
         assertThat(execution.path("toolDetail").path("processState").asText()).isEqualTo("EXITED");
         assertThat(execution.path("status").asText()).isEqualTo("SUCCEEDED");
         assertThat(execution.path("toolDetail").path("exitCode").asInt()).isZero();
-        assertThat(execution.path("toolDetail").path("lineCount").asLong()).isPositive();
+        assertThat(execution.path("toolDetail").path("outputPreview").asText()).containsPattern("total=\\d+ free=\\d+");
         assertThat(activities.toString()).doesNotContain("[System.IO.DriveInfo]::new");
     }
 
