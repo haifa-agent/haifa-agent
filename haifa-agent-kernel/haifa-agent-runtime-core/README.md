@@ -412,6 +412,7 @@ response/application 和安全事件放入同一 UoW，再在提交后恢复 Run
 所有阻塞式 Interaction 在对外提交 `WAITING_APPROVAL` / `WAITING_INTERACTION` 时，也在同一 UoW
 把当前 Execution Attempt 提交为 `PAUSED`；提交前两者均不可见，回滚时两者均不生效，提交后的执行器
 不会再次结束同一个 Attempt。这样重启或并发响应不会观察到 WAITING Run 仍绑定 RUNNING Attempt。
+手动暂停也会在同一 Unit of Work 提交 `SUSPENDED` Run 和 `PAUSED` Attempt，观察到暂停后即可恢复。
 
 ## Interaction、Steer 与 Client Event（Task 01～03）
 

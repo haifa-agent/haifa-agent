@@ -31,7 +31,6 @@ import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
-import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
@@ -1484,19 +1483,10 @@ public final class DecisionExecutor {
 
     private void commitWaiting(AgentRunExecutionAttempt attempt, Runnable work) {
         unitOfWork.execute(() -> {
-            pauseAttemptAfterCommit(attempt);
+            transitions.pauseAttemptInUnitOfWork(attempt, attempts);
             work.run();
             return null;
         });
-    }
-
-    private void pauseAttemptAfterCommit(AgentRunExecutionAttempt attempt) {
-        long expectedVersion = attempt.version();
-        AgentRunExecutionAttempt paused = AgentRunExecutionAttempt.reconstitute(attempt.persistenceSnapshot());
-        var pausedAt = time.now();
-        paused.finish(ExecutionAttemptStatus.PAUSED, pausedAt, Optional.empty());
-        attempts.save(paused, expectedVersion);
-        unitOfWork.afterCommit(() -> attempt.finish(ExecutionAttemptStatus.PAUSED, pausedAt, Optional.empty()));
     }
 
     private void appendMessage(AgentRun run, MessageRole role, String text, MessageVisibility visibility) {

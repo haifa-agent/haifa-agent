@@ -856,7 +856,7 @@ class PersonalAssistantWebFluxTest {
 
         JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
         assertThat(interaction.path("safePrompt").asText())
-                .contains("Mode: COMMAND", "Get-PSDrive -PSProvider FileSystem", "Risks: HIGH");
+                .contains("Mode: COMMAND", "[System.IO.DriveInfo]::new", "Risks: HIGH");
         post(
                 "/api/v1/runs/" + runId + "/interactions/"
                         + interaction.path("id").asText() + "/response",
@@ -871,10 +871,11 @@ class PersonalAssistantWebFluxTest {
                 .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
                 .isEqualTo("COMPLETED");
         JsonNode execution = executionActivity(activities);
+        assertThat(execution.path("toolDetail").path("processState").asText()).isEqualTo("EXITED");
         assertThat(execution.path("status").asText()).isEqualTo("SUCCEEDED");
         assertThat(execution.path("toolDetail").path("exitCode").asInt()).isZero();
-        assertThat(execution.path("toolDetail").path("lineCount").asLong()).isPositive();
-        assertThat(activities.toString()).doesNotContain("Get-PSDrive -PSProvider FileSystem");
+        assertThat(execution.path("toolDetail").path("outputPreview").asText()).containsPattern("total=\\d+ free=\\d+");
+        assertThat(activities.toString()).doesNotContain("[System.IO.DriveInfo]::new");
     }
 
     @Test

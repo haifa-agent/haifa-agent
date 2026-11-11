@@ -1049,15 +1049,12 @@ public final class PersonalModelFactory {
                         "mode",
                         "COMMAND",
                         "content",
-                        "Get-PSDrive -PSProvider FileSystem | Select-Object Name, "
-                                + "@{N='Used(GB)';E={[math]::Round($_.Used/1GB,2)}}, "
-                                + "@{N='Free(GB)';E={[math]::Round($_.Free/1GB,2)}}, "
-                                + "@{N='Total(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} "
-                                + "| Format-Table -AutoSize",
+                        "$drive = [System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($PWD.ProviderPath)); "
+                                + "[Console]::WriteLine('total={0} free={1}', $drive.TotalSize, $drive.AvailableFreeSpace)",
                         "purpose",
-                        "Inspect filesystem drive usage",
+                        "Inspect the workspace drive usage",
                         "timeoutMillis",
-                        5_000);
+                        15_000);
             } else if (prompt.contains("[execution-command]")) {
                 alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
                 arguments = Map.of(

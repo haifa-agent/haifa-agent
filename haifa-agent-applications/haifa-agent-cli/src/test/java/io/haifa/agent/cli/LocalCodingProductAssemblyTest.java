@@ -50,7 +50,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 @Tag("slow")
 class LocalCodingProductAssemblyTest {
-    @TempDir
+    @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path root;
 
     @Test

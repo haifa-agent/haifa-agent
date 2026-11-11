@@ -112,7 +112,7 @@ class CodingHostRemoteClientTest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
-    @TempDir
+    @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path directory;
 
     @Test

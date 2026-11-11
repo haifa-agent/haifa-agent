@@ -27,7 +27,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Tag("slow")
 class CodingContextLifecycleTest {
-    @TempDir
+    @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path root;
 
     @ParameterizedTest

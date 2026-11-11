@@ -754,7 +754,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                     Math.max(0, completedIteration),
                     progress.forcedContextRebuildAttempts(),
                     CheckpointType.MANUAL);
-            transitions.suspended(run);
             controls.clear(run.id());
             return true;
         }
