@@ -92,6 +92,10 @@ public final class AttemptExecutor {
             AgentLoopResult loopResult = loop.run(run, attempt, traceContext);
             loopReturned = true;
             if (committedWaitingBoundary(loopResult.directive(), attempt.status())) return;
+            if (loopResult.status() == AgentRunStatus.SUSPENDING) {
+                transitions.suspended(run, attempt, attempts);
+                return;
+            }
             AgentError terminalError =
                     run.status() == AgentRunStatus.FAILED ? run.error().orElse(null) : null;
             if (terminalError != null) recordTerminalFailure(run, attempt, traceContext, terminalError);

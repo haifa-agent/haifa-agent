@@ -12,11 +12,14 @@ import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.run.RunTerminationReason;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.input.RunInputReasonCodes;
 import io.haifa.agent.runtime.core.input.RunInputRecord;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
@@ -100,8 +103,22 @@ public final class RunTransitionCoordinator {
         return mutate(run, "run.pause-requested", value -> value.requestSuspend(time.now()));
     }
 
-    public AgentRunSnapshot suspended(AgentRun run) {
-        return mutate(run, "run.suspended", value -> value.suspend(time.now()));
+    public AgentRunSnapshot suspended(
+            AgentRun run, AgentRunExecutionAttempt attempt, ExecutionAttemptRepository attempts) {
+        return mutate(run, "run.suspended", value -> {
+            pauseAttemptInUnitOfWork(attempt, attempts);
+            value.suspend(time.now());
+        });
+    }
+
+    /** Saves the paused attempt alongside its Run transition and updates the live attempt after commit. */
+    public void pauseAttemptInUnitOfWork(AgentRunExecutionAttempt attempt, ExecutionAttemptRepository attempts) {
+        long expectedVersion = attempt.version();
+        AgentRunExecutionAttempt paused = AgentRunExecutionAttempt.reconstitute(attempt.persistenceSnapshot());
+        var pausedAt = time.now();
+        paused.finish(ExecutionAttemptStatus.PAUSED, pausedAt, Optional.empty());
+        attempts.save(paused, expectedVersion);
+        unitOfWork.afterCommit(() -> attempt.finish(ExecutionAttemptStatus.PAUSED, pausedAt, Optional.empty()));
     }
 
     public AgentRunSnapshot resumed(AgentRun run) {

@@ -792,9 +792,17 @@ class RuntimeCoreTest {
         };
         Fixture fixture = fixture(model);
         runtime.set(fixture.runtime);
+        AtomicReference<ExecutionAttemptStatus> attemptStatusAtSuspend = new AtomicReference<>();
+        fixture.runtime.addListener(snapshot -> {
+            if (snapshot.status() == AgentRunStatus.SUSPENDED) {
+                attemptStatusAtSuspend.set(
+                        fixture.store.attemptsFor(snapshot.runId()).getFirst().status());
+            }
+        });
         var accepted = fixture.runtime.start(request("pause"));
         runId.set(accepted.runId().value());
         fixture.scheduler.runAll();
+        assertThat(attemptStatusAtSuspend).hasValue(ExecutionAttemptStatus.PAUSED);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.SUSPENDED);
         assertThat(fixture.store.checkpointsFor(accepted.runId())).isNotEmpty();

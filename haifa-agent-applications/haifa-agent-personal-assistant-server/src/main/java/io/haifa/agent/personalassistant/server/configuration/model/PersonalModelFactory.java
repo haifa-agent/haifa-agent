@@ -1049,13 +1049,10 @@ public final class PersonalModelFactory {
                         "mode",
                         "COMMAND",
                         "content",
-                        "Get-PSDrive -PSProvider FileSystem | Select-Object Name, "
-                                + "@{N='Used(GB)';E={[math]::Round($_.Used/1GB,2)}}, "
-                                + "@{N='Free(GB)';E={[math]::Round($_.Free/1GB,2)}}, "
-                                + "@{N='Total(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} "
-                                + "| Format-Table -AutoSize",
+                        "[System.IO.DriveInfo]::new((Get-Location).Drive.Root) "
+                                + "| Select-Object Name, TotalSize, AvailableFreeSpace | ConvertTo-Json -Compress",
                         "purpose",
-                        "Inspect filesystem drive usage",
+                        "Inspect the workspace drive usage",
                         "timeoutMillis",
                         15_000);
             } else if (prompt.contains("[execution-command]")) {

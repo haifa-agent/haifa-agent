@@ -58,7 +58,7 @@ class LocalCodingAgentTest {
     @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path workspace;
 
-    @TempDir
+    @TempDir(factory = CanonicalWorkspaceTempDir.class)
     Path configuredSkillRoot;
 
     @Test

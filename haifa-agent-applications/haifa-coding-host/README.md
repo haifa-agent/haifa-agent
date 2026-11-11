@@ -16,8 +16,7 @@ new tool or credential SPI. Database ownership conflicts fail without takeover.
 
 `owner.embeddedClient()` returns the same safe API used by the remote Client. Closing that client
 releases its observations and consent; it does not close Host or cancel accepted execution. Only
-`owner.close()` closes the assembly. For a suspended or terminal Run, the owner waits for the
-execution attempt to settle before closing persistence. Legacy standalone/native compatibility remains in CLI.
+`owner.close()` closes the assembly. Legacy standalone/native compatibility remains in CLI.
 
 New Coding Runs default to unified context with authorized history readers. Configure
 `context.policy: legacy` to roll back selection. Set `context.historyRetrieval: true` with legacy
