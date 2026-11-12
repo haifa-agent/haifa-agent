@@ -30,6 +30,7 @@ import zipfile
 # The three Coding Agent commands share one contracts module; keep the import usable
 # when this file is loaded by path (tests) instead of being run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from coding_installers import render_installer  # noqa: E402 - repository scripts run unpackaged
 from distribution_contracts import (  # noqa: E402 - repository scripts run unpackaged
     read_pom_version,
     sha256_file,
@@ -637,7 +638,7 @@ def release_artifacts(output_dir: Path, version: str) -> list[Path]:
 def write_checksums(output_dir: Path, version: str) -> None:
     checksums_file = output_dir / "sha256sums.txt"
     lines = [f"{sha256_file(artifact)}  {artifact.name}" for artifact in release_artifacts(output_dir, version)]
-    with open(checksums_file, "w", encoding="utf-8") as f:
+    with open(checksums_file, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
 
     print("\n" + "=" * 70)
@@ -817,9 +818,11 @@ def main():
         if product == "jre":
             preparation.jre(target_platform)
             continue
-        package_target(
+        archive = package_target(
             product, target_platform, repo_root, work_dir, output_dir, version, preparation
         )
+        if product == "ca":
+            render_installer(archive, output_dir)
         packaged = True
 
     if packaged:
