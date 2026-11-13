@@ -140,42 +140,11 @@ Tool、MCP、Execution、Memory 等能力不会被默认全部打开，而是根
 
 ### 方式一：运行 Coding Agent
 
-#### macOS / Linux
-
-构建本地发行目录：
-
-```bash
-./scripts/package-local-coding-agent.sh
-export PATH="$HOME/.haifa-agent/coding:$PATH"
-```
-
-无桌面密钥环的 Linux / WSL2 环境可显式启用文件认证存储：`export HAIFA_CODING_AUTH_STORE=file`。
-此时模型登录凭据保存在当前用户的 `~/.haifa-agent/auth.json`，文件权限为 `0600`；不会自动从桌面密钥库降级。
-
-进入任意项目：
-
-```bash
-cd /path/to/your/project
-haifa-coding
-```
-
-#### Windows
-
-```powershell
-.\scripts\package-local-coding-agent.ps1
-$env:Path = "$env:USERPROFILE\.haifa-agent\coding;$env:Path"
-```
-
-然后：
-
-```powershell
-Set-Location D:\path\to\your\project
-haifa-coding
-```
-
-首次使用时根据 Terminal 引导配置 Model Credential。
-
+Windows x64 和 Ubuntu 24.04 / WSL2 x64 可通过 [一键安装命令](docs/get-started/installation.md#coding-agent)
+安装内置 Java 21 的 Coding Agent。安装后进入项目目录，运行 `haifa`，按终端引导连接模型。
 Coding Agent 默认使用当前目录作为 Workspace。
+
+macOS 和源码开发环境可使用 [本地发行目录](haifa-agent-applications/haifa-agent-cli/README.md#构建与运行)。
 
 ### 方式二：嵌入 Java 应用
 

@@ -221,6 +221,9 @@ an INT signal only detaches the client. TERM retains the JVM exit path. Only an 
 TUI (`Esc`/`Ctrl+C` delivered as a key, without a selection) sends `run/cancel`.
 ## 构建与运行
 
+Windows x64 与 Ubuntu 24.04 / WSL2 x64 的正式版使用内置 Java 21 的发行包。安装、启动和升级见
+[Coding Agent 安装](../../docs/get-started/installation.md#coding-agent)。以下本地打包方式用于源码开发。
+
 ### 本地发行目录（macOS / Linux）
 
 `scripts/package-local-coding-agent.sh` 会构建唯一的 shaded CLI JAR，并把可搬运的本地制品放进

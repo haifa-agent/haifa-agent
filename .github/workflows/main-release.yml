@@ -35,7 +35,7 @@ jobs:
                   java-version: "21"
                   cache: maven
             - name: SDK packaging contracts
-              run: python3 -m unittest scripts.tests.test_release_distributions
+              run: python3 -m unittest scripts.tests.test_release_distributions scripts.tests.test_release_assets
             - name: Fast release verification
               run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-fast clean verify
 
@@ -61,7 +61,7 @@ jobs:
         name: Release artifact gate
         if: github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/main'
         needs: release-unit
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04
         timeout-minutes: 30
         steps:
             - uses: actions/checkout@v4
@@ -100,6 +100,27 @@ jobs:
                       dist-support/output/haifa-agent-sdk-*.zip
                       dist-support/output/sha256sums.txt
                   if-no-files-found: error
+            - name: Package and verify Linux Coding Agent
+              if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+              shell: bash
+              run: |
+                  args=()
+                  if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+                    args=(--version "${GITHUB_REF_NAME#v}")
+                  fi
+                  python3 dist-support/scripts/package_distributions.py ca:linux-x64 --output-dir dist-support/linux-ca "${args[@]}"
+                  python3 dist-support/scripts/smoke_distributions.py verify-ca-linux --output-dir dist-support/linux-ca
+                  python3 dist-support/scripts/smoke_coding_install.py --output-dir dist-support/linux-ca
+            - name: Upload the Linux Coding Agent package
+              if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: haifa-linux-ca-package-${{ github.sha }}
+                  path: |
+                      dist-support/linux-ca/*.tar.gz
+                      dist-support/linux-ca/install-haifa.sh
+                      dist-support/linux-ca/sha256sums.txt
+                  if-no-files-found: error
 
     release-gate:
         name: Release gate
@@ -129,8 +150,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         runs-on: windows-latest
         timeout-minutes: 60
-        permissions:
-            contents: write
         steps:
             - uses: actions/checkout@v4
             - uses: actions/setup-java@v4
@@ -160,40 +179,66 @@ jobs:
                   } else {
                     python dist-support/scripts/package_distributions.py ca pa pa:linux-x64
                   }
-            - name: Collect the SDK package built on Linux
-              if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-              uses: actions/download-artifact@v4
-              with:
-                  name: haifa-sdk-package-${{ github.sha }}
-                  path: dist-support/sdk-package
-            - name: Merge the SDK package into the release set
-              if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  cp dist-support/sdk-package/*.zip dist-support/output/
-                  cat dist-support/sdk-package/sha256sums.txt dist-support/output/sha256sums.txt \
-                    | sort -u > dist-support/output/sha256sums.merged
-                  mv dist-support/output/sha256sums.merged dist-support/output/sha256sums.txt
             - name: Verify extracted Windows distributions
               run: python dist-support/scripts/smoke_distributions.py verify
+            - name: Verify clean Windows Coding Agent install
+              run: python dist-support/scripts/smoke_coding_install.py
             - name: Upload Windows packages
               uses: actions/upload-artifact@v4
               with:
                   name: haifa-windows-packages-${{ github.sha }}
                   path: |
                       dist-support/output/*.zip
+                      dist-support/output/install-haifa.ps1
                       dist-support/output/sha256sums.txt
                   if-no-files-found: error
-            - name: Publish packages to the GitHub Release
-              if: startsWith(github.ref, 'refs/tags/v')
+
+    publish-release:
+        name: Publish all release packages
+        needs: [release-artifacts, release-windows-packages]
+        runs-on: ubuntu-24.04
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/download-artifact@v4
+              with:
+                  name: haifa-sdk-package-${{ github.sha }}
+                  path: packages/sdk
+            - uses: actions/download-artifact@v4
+              with:
+                  name: haifa-linux-ca-package-${{ github.sha }}
+                  path: packages/linux
+            - uses: actions/download-artifact@v4
+              with:
+                  name: haifa-windows-packages-${{ github.sha }}
+                  path: packages/windows
+            - name: Assemble and verify the release set
               shell: bash
+              run: |
+                  set -euo pipefail
+                  tag="v$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "dist-support/scripts"); from distribution_contracts import read_pom_version; print(read_pom_version(Path("pom.xml")))')"
+                  if [[ "$GITHUB_REF" == refs/tags/v* ]]; then test "$tag" = "$GITHUB_REF_NAME"; fi
+                  python3 dist-support/scripts/release_assets.py assemble "$tag" packages release
+            - name: Publish the complete, verified GitHub Release
+              if: startsWith(github.ref, 'refs/tags/v')
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
                   set -euo pipefail
                   tag="${GITHUB_REF_NAME}"
-                  if ! gh release view "$tag" >/dev/null 2>&1; then
-                    gh release create "$tag" --title "Haifa Agent $tag" --generate-notes --verify-tag
+                  prerelease=false
+                  if [[ "$tag" == *-* ]]; then prerelease=true; fi
+                  if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft); then
+                    if [[ "$draft" != true ]]; then
+                      echo "Release $tag is already published."
+                      exit 1
+                    fi
+                  else
+                    gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "Haifa Agent $tag" \
+                      --generate-notes --verify-tag --draft --prerelease="$prerelease"
                   fi
-                  gh release upload "$tag" dist-support/output/*.zip dist-support/output/sha256sums.txt --clobber
+                  gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber release/*
+                  gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,assets > draft-assets.json
+                  python3 dist-support/scripts/release_assets.py verify-draft release draft-assets.json
+                  gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease="$prerelease"

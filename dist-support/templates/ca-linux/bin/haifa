@@ -2,7 +2,7 @@
 set -eu
 umask 077
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+script_dir=$(dirname -- "$(readlink -f -- "$0")")
 package_dir=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
 
 set -- "$package_dir"/lib/haifa-agent-cli-*.jar "$@"

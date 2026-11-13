@@ -51,8 +51,14 @@
 
 6. **`sha256sums.txt`**
    - **本次打包版本**全部压缩包（`*.zip` 与 `*.tar.gz`）的 SHA-256 校验清单；输出目录里其他版本的
-     旧包不会混入。CI 只上传 `*.zip` 与该清单；
-     Linux CA 的 `tar.gz` 需人工打包上传，其校验值不会自动进入该清单。
+     旧包不会混入。Release 检查 Windows、Linux 和 SDK 的清单是否完整，并确认安装脚本与对应压缩包匹配。
+     GitHub 草稿中的全部附件通过名称、上传状态和 SHA-256 校验后才会公开。手动运行 Main Release Gate
+     会构建并校验完整发布集合，只有版本 Tag 会触发 GitHub Release 发布。
+
+7. **`install-haifa.ps1` 与 `install-haifa.sh`**
+   - 打包时生成的用户级安装入口，各自固定同一 Release Tag 下的压缩包 URL 与 SHA-256。
+     入口调用包内的 Java 21 运行时注册 `haifa`，Windows 更新用户 PATH，Linux 为 Bash 配置用户 PATH。
+     公开安装命令见 [安装文档](../docs/get-started/installation.md#coding-agent)。
 
 ---
 
@@ -164,6 +170,8 @@ bash dist-support/scripts/build-distributions.sh ca:linux-x64
 bash dist-support/scripts/build-distributions.sh ca:linux-x64 --rebuild-jre
 # 从压缩包重新解压，用内置 Java 检查启动；使用临时数据，不调用模型
 python3 dist-support/scripts/smoke_distributions.py verify-ca-linux
+# 用空用户目录和无 Java 的 PATH 测试安装器，下载地址由本地 HTTP 夹具提供
+python3 dist-support/scripts/smoke_coding_install.py
 
 tar -xzf dist-support/output/haifa-coding-agent-linux-x64-v0.1.6-SNAPSHOT.tar.gz
 ./haifa-coding-agent-v0.1.6-SNAPSHOT/bin/haifa --terminal --workspace /absolute/workspace
@@ -171,7 +179,7 @@ tar -xzf dist-support/output/haifa-coding-agent-linux-x64-v0.1.6-SNAPSHOT.tar.gz
 
 若 WSL 不可用（`wsl.exe -d Ubuntu -- bash -lc true` 直接失败并报 `Wsl/Service/E_UNEXPECTED`，或只
 输出 `localhost` 转发告警后退出），本机无法生成该包：先 `wsl.exe --shutdown` 重试，仍失败则改在
-Linux 主机打包。CI 不产出该包，需要人工上传到 Release。
+Linux 主机打包。正式 Release 的 Linux x64 制品由 Ubuntu 24.04 GitHub Actions runner 构建和验证。
 
 Windows PowerShell 进入当前 worktree 对应的 WSL 挂载目录后，也可调用同一入口：
 
@@ -187,8 +195,8 @@ tar.gz 明确保留启动脚本、Java 与进程辅助程序的执行权限，�
 挂载盘上也无需手动 chmod。包内 README 说明模型连接与数据目录；首次运行会打开连接模型窗口。
 
 内置 JRE 的兼容范围取决于构建 JDK。已在 WSL Ubuntu 24.04 验证，其他发行版、旧 glibc
-与 musl 环境未验证。`all` 不自动跨系统生成该包；发布 Linux CA 时须在 Linux 主机单独执行
-`ca:linux-x64`，现有 Windows Release 上传流程仍保持原有产物范围。
+与 musl 环境未验证。`all` 在当前宿主生成制品。正式发版由同一 Tag 的 Linux、Windows 和 SDK 构建任务
+提供制品，发布任务一次性上传全部压缩包、两份安装脚本和校验清单。
 
 ---
 

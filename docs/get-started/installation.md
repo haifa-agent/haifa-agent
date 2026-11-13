@@ -1,5 +1,36 @@
 # 安装
 
+## Coding Agent
+
+一键安装支持 Windows x64 和 Ubuntu 24.04 / WSL2 Ubuntu 24.04 x64。发行包内置 Java 21，
+安装到当前用户目录。安装器从 GitHub Releases 下载并校验发行包，安装完成后可在同一个终端运行 `haifa`。
+
+安装命令在首个包含 `install-haifa.ps1` 和 `install-haifa.sh` 的正式版发布后可用。
+也可以先从 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases) 下载并查看安装脚本。
+
+**Windows x64（PowerShell）**
+
+```powershell
+& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((Invoke-WebRequest -UseBasicParsing 'https://github.com/haifa-agent/haifa-agent/releases/latest/download/install-haifa.ps1').RawContentStream.ToArray())))
+```
+
+**Linux x64（Bash，需要 `curl`）**
+
+```bash
+installer=$(mktemp) && (trap 'rm -f "$installer"' EXIT; curl -fLSs https://github.com/haifa-agent/haifa-agent/releases/latest/download/install-haifa.sh -o "$installer" && sh "$installer") && export PATH="$HOME/.local/bin:$PATH"
+```
+
+进入项目目录运行 `haifa`。Linux / WSL2 用户可显式启用文件认证存储，用 `HAIFA_CODING_AUTH_STORE=file haifa`
+启动并按终端引导连接模型。之后启动需使用同一存储设置。模型凭据保存在 `~/.haifa-agent/auth.json`，权限为 `0600`。
+
+重新执行安装命令可升级。安装器会校验新版压缩包，然后切换 `haifa` 指向的版本。
+Windows 安装目录为 `%LOCALAPPDATA%\HaifaAgent`，Linux 安装目录为
+`~/.local/share/haifa-agent`，命令位于 `~/.local/bin/haifa`。两端的会话和日志默认存放在
+用户目录下的 `.haifa-agent/coding`，独立于安装目录。升级会保留旧版本的程序文件。要切换到指定版本，将链接中的
+`releases/latest/download/` 换成 `releases/download/<tag>/`，选择带安装脚本的 Release。
+
+## Java SDK
+
 Haifa Agent 面向 Java 21。当前源码开发线为 `0.1.6-SNAPSHOT`，下文以正式版 `0.1.5` SDK 为例。
 
 SDK 通过 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases) 的
@@ -17,7 +48,7 @@ SDK 通过 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases
 ~~~
 
 将 URL 替换为解压目录的绝对文件 URL；macOS/Linux 使用 `file:///absolute/path/.../repository`。
-Windows CA / PA 便携包内置 Java 21，可从同一 Release 下载。
+Windows Personal Assistant 便携包内置 Java 21，可从同一 Release 下载。
 
 ## 前置条件
 
