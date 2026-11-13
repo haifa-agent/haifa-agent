@@ -51,7 +51,9 @@
 
 6. **`sha256sums.txt`**
    - **本次打包版本**全部压缩包（`*.zip` 与 `*.tar.gz`）的 SHA-256 校验清单；输出目录里其他版本的
-     旧包不会混入。Release 合并 Windows、Linux 和 SDK 三个任务的校验清单后，再验证并发布完整制品。
+     旧包不会混入。Release 检查 Windows、Linux 和 SDK 的清单是否完整，并确认安装脚本与对应压缩包匹配。
+     GitHub 草稿中的全部附件通过名称、上传状态和 SHA-256 校验后才会公开。手动运行 Main Release Gate
+     会构建并校验完整发布集合，只有版本 Tag 会触发 GitHub Release 发布。
 
 7. **`install-haifa.ps1` 与 `install-haifa.sh`**
    - 打包时生成的用户级安装入口，各自固定同一 Release Tag 下的压缩包 URL 与 SHA-256。

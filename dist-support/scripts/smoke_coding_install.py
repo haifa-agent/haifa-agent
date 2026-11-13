@@ -8,10 +8,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from threading import Thread
+import zipfile
 
-from coding_installers import RELEASE_URL
+from coding_installers import RELEASE_URL, render_installer
+from distribution_contracts import sha256_file
 from smoke_distributions import checksummed_archive
 
 
@@ -20,7 +23,7 @@ class ReleaseHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def verify_linux(url, bad_url, home, environment):
+def verify_linux(url, upgrade_url, bad_url, old_id, new_id, home, environment):
     environment.update(HOME=str(home), PATH="/usr/bin:/bin", HAIFA_CODING_AUTH_STORE="file")
     # Ubuntu normally has a system Java on CI runners. Expose just the OS tools
     # used by the installer and launcher, then confirm all checks use bundled Java.
@@ -30,6 +33,11 @@ def verify_linux(url, bad_url, home, environment):
                  "gzip", "mv", "grep", "cat", "dirname", "readlink", "groups"):
         (tools / name).symlink_to(shutil.which(name, path=environment["PATH"]))
     environment["PATH"] = str(tools)
+    old_command = tools / "haifa"
+    old_command.write_text("#!/bin/sh\nexit 42\n", encoding="utf-8")
+    old_command.chmod(0o755)
+    (home / ".bashrc").write_text('export PATH="$PATH:$HOME/.local/bin"\n', encoding="utf-8")
+    command = home / ".local/bin/haifa"
 
     def shell(command, *arguments, check=True):
         return subprocess.run(
@@ -46,10 +54,16 @@ haifa --help >/dev/null
 haifa auth status --store file >/dev/null
 """
     shell(install, url)
+    old_launcher = command.readlink()
+    assert old_launcher.parent.parent.name == old_id
     state = home / "data" / "preserve-me"
     state.write_text("existing data", encoding="utf-8")
     shell(install, url)
     assert shell(install, bad_url, check=False).returncode != 0, "Bad archive installed"
+    assert command.readlink() == old_launcher
+    shell(install, upgrade_url)
+    assert command.readlink().parent.parent.name == new_id
+    assert old_launcher.is_file()
     subprocess.run(
         ["/bin/bash", "--noprofile", "-ic", "haifa --help >/dev/null"],
         cwd=home, env=environment, check=True, timeout=60,
@@ -58,7 +72,7 @@ haifa auth status --store file >/dev/null
     assert (home / ".bashrc").read_text(encoding="utf-8").count("# Haifa Agent PATH") == 1
 
 
-def verify_windows(url, bad_url, home, environment):
+def verify_windows(url, upgrade_url, bad_url, old_id, new_id, home, environment):
     import ctypes
     import winreg
 
@@ -68,6 +82,11 @@ def verify_windows(url, bad_url, home, environment):
                        COMSPEC=str(system / "cmd.exe"), PATHEXT=".COM;.EXE;.BAT;.CMD")
     environment.pop("PATH", None)
     environment.pop("PSMODULEPATH", None)
+    app = home / "Local" / "HaifaAgent"
+    command = app / "bin" / "haifa.bat"
+    portable = home / "older portable bin"
+    portable.mkdir()
+    (portable / "haifa.bat").write_bytes(b"@exit /b 42\r\n")
 
     def shell(command, check=True, **variables):
         return subprocess.run(
@@ -89,10 +108,20 @@ exit $LASTEXITCODE
             previous = None
         try:
             shell(install, HAIFA_TEST_URL=url)
+            old_command = command.read_bytes()
+            assert old_id.encode() in old_command
             state = home / "data" / "preserve-me"
             state.write_text("existing data", encoding="utf-8")
             shell(install, HAIFA_TEST_URL=url)
             assert shell(install, check=False, HAIFA_TEST_URL=bad_url).returncode != 0, "Bad archive installed"
+            assert command.read_bytes() == old_command
+            winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, f"{portable};{command.parent};%SystemRoot%")
+            shell(install, HAIFA_TEST_URL=upgrade_url)
+            assert new_id.encode() in command.read_bytes()
+            assert (app / "packages" / old_id / "bin" / "haifa.bat").is_file()
+            assert winreg.QueryValueEx(key, "Path") == (
+                f"{command.parent};{portable};%SystemRoot%", winreg.REG_EXPAND_SZ
+            )
             shell("""
 $bin = Join-Path $env:LOCALAPPDATA 'HaifaAgent/bin'
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
@@ -113,6 +142,29 @@ exit $LASTEXITCODE
             ctypes.windll.user32.SendMessageTimeoutW(
                 ctypes.c_void_p(0xFFFF), 0x1A, ctypes.c_size_t(0), ctypes.c_wchar_p("Environment"), 2, 200, None
             )
+
+
+def make_upgrade(archive: Path, old_tag: str, output: Path) -> Path:
+    # Reuse the packaged runtime and CLI under a second release tag. The new
+    # archive has a different checksum and must activate a different launcher.
+    new_tag = "v999.0.0"
+    old_root = f"haifa-coding-agent-{old_tag}"
+    new_root = f"haifa-coding-agent-{new_tag}"
+    output.mkdir(parents=True)
+    upgraded = output / archive.name.replace(old_tag, new_tag)
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as source, zipfile.ZipFile(upgraded, "w", zipfile.ZIP_DEFLATED) as destination:
+            for entry in source.infolist():
+                destination.writestr(entry.filename.replace(old_root, new_root, 1), source.read(entry))
+    else:
+        with tarfile.open(archive, "r:gz") as source, tarfile.open(upgraded, "w:gz", compresslevel=1) as destination:
+            for entry in source:
+                contents = source.extractfile(entry) if entry.isfile() else None
+                entry.name = entry.name.replace(old_root, new_root, 1)
+                if entry.islnk():
+                    entry.linkname = entry.linkname.replace(old_root, new_root, 1)
+                destination.addfile(entry, contents)
+    return upgraded
 
 
 def main():
@@ -142,26 +194,36 @@ def main():
         payload = release / "ok" / tag
         payload.mkdir(parents=True)
         shutil.copyfile(archive, payload / archive.name)
-        bad = release / "bad" / tag
+        upgrade = make_upgrade(archive, tag, release / "ok" / "v999.0.0")
+        render_installer(upgrade, upgrade.parent)
+        old_id = f"{tag}-{checksums[archive.name][:16]}"
+        new_id = f"{upgrade.parent.name}-{sha256_file(upgrade)[:16]}"
+        bad = release / "bad" / upgrade.parent.name
         bad.mkdir(parents=True)
-        (bad / archive.name).write_bytes(b"truncated archive")
+        (bad / upgrade.name).write_bytes(b"truncated archive")
         with ThreadingHTTPServer(("127.0.0.1", 0), partial(ReleaseHandler, directory=str(release))) as server:
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
                 base = f"http://127.0.0.1:{server.server_port}"
                 (payload / installer).write_text(script.replace(RELEASE_URL, base + "/ok"), encoding="utf-8")
-                (bad / installer).write_text(script.replace(RELEASE_URL, base + "/bad"), encoding="utf-8")
+                upgraded_script = upgrade.parent / installer
+                upgrade_script = upgraded_script.read_text(encoding="utf-8")
+                upgraded_script.write_text(upgrade_script.replace(RELEASE_URL, base + "/ok"), encoding="utf-8")
+                (bad / installer).write_text(upgrade_script.replace(RELEASE_URL, base + "/bad"), encoding="utf-8")
                 environment = {key: value for key, value in os.environ.items() if not key.upper().startswith(
                     ("HAIFA_", "JAVA_", "JDK_", "_JAVA_", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
                 )}
                 environment["HAIFA_DATA_ROOT"] = str(home / "data")
                 verify = verify_windows if windows else verify_linux
-                verify(f"{base}/ok/{tag}/{installer}", f"{base}/bad/{tag}/{installer}", home, environment)
+                verify(
+                    f"{base}/ok/{tag}/{installer}", f"{base}/ok/{upgrade.parent.name}/{installer}",
+                    f"{base}/bad/{upgrade.parent.name}/{installer}", old_id, new_id, home, environment,
+                )
             finally:
                 server.shutdown()
                 thread.join()
-    print(f"PASS: {platform} clean install, launch, auth status, reinstall and checksum failure")
+    print(f"PASS: {platform} clean install, launch, auth status, reinstall, upgrade and checksum failure")
 
 
 if __name__ == "__main__":

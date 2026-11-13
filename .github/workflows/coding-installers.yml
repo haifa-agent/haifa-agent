@@ -45,7 +45,7 @@ jobs:
               run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 2 -pl :haifa-agent-cli -am -Prelease-artifacts verify
             - name: Check distribution contracts
               if: runner.os == 'Linux'
-              run: python -m unittest scripts.tests.test_release_distributions scripts.tests.test_smoke_distributions
+              run: python -m unittest scripts.tests.test_release_distributions scripts.tests.test_smoke_distributions scripts.tests.test_release_assets
             - name: Package Coding Agent
               run: python dist-support/scripts/package_distributions.py ca:${{ matrix.platform }}
             - name: Install and run haifa from an empty user directory

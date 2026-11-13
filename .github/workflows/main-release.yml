@@ -35,7 +35,7 @@ jobs:
                   java-version: "21"
                   cache: maven
             - name: SDK packaging contracts
-              run: python3 -m unittest scripts.tests.test_release_distributions
+              run: python3 -m unittest scripts.tests.test_release_distributions scripts.tests.test_release_assets
             - name: Fast release verification
               run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-fast clean verify
 
@@ -195,12 +195,12 @@ jobs:
 
     publish-release:
         name: Publish all release packages
-        if: startsWith(github.ref, 'refs/tags/v')
         needs: [release-artifacts, release-windows-packages]
         runs-on: ubuntu-24.04
         permissions:
             contents: write
         steps:
+            - uses: actions/checkout@v4
             - uses: actions/download-artifact@v4
               with:
                   name: haifa-sdk-package-${{ github.sha }}
@@ -213,20 +213,20 @@ jobs:
               with:
                   name: haifa-windows-packages-${{ github.sha }}
                   path: packages/windows
+            - name: Assemble and verify the release set
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  tag="v$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "dist-support/scripts"); from distribution_contracts import read_pom_version; print(read_pom_version(Path("pom.xml")))')"
+                  if [[ "$GITHUB_REF" == refs/tags/v* ]]; then test "$tag" = "$GITHUB_REF_NAME"; fi
+                  python3 dist-support/scripts/release_assets.py assemble "$tag" packages release
             - name: Publish the complete, verified GitHub Release
+              if: startsWith(github.ref, 'refs/tags/v')
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
                   set -euo pipefail
                   tag="${GITHUB_REF_NAME}"
-                  mkdir release
-                  cp "packages/sdk/haifa-agent-sdk-$tag.zip" \
-                     "packages/linux/haifa-coding-agent-linux-x64-$tag.tar.gz" packages/linux/install-haifa.sh \
-                     "packages/windows/haifa-coding-agent-windows-x64-$tag.zip" packages/windows/install-haifa.ps1 \
-                     "packages/windows/haifa-personal-assistant-windows-x64-$tag.zip" \
-                     "packages/windows/haifa-personal-assistant-linux-x64-$tag.zip" release/
-                  cat packages/{sdk,linux,windows}/sha256sums.txt | sort > release/sha256sums.txt
-                  (cd release && sha256sum --check --strict sha256sums.txt)
                   prerelease=false
                   if [[ "$tag" == *-* ]]; then prerelease=true; fi
                   if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft); then
@@ -239,4 +239,6 @@ jobs:
                       --generate-notes --verify-tag --draft --prerelease="$prerelease"
                   fi
                   gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber release/*
+                  gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,assets > draft-assets.json
+                  python3 dist-support/scripts/release_assets.py verify-draft release draft-assets.json
                   gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease="$prerelease"

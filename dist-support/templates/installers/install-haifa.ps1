@@ -36,10 +36,13 @@ try {
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
     try {
         $userPath = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        $expanded = [Environment]::ExpandEnvironmentVariables($userPath)
-        if (($expanded -split ';').TrimEnd('\') -notcontains $bin) {
+        $entries = $userPath -split ';'
+        if ([Environment]::ExpandEnvironmentVariables($entries[0]).TrimEnd('\') -ne $bin) {
             $pathKind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { 'ExpandString' }
-            $newPath = ($bin + ';' + $userPath).TrimEnd(';')
+            $remaining = @($entries | Where-Object {
+                $_ -and [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ne $bin
+            })
+            $newPath = (@($bin) + $remaining) -join ';'
             $key.SetValue('Path', $newPath, $pathKind)
             # Notify Explorer and other top-level windows that the user environment changed.
             if (-not ('Haifa.InstallEnvironment' -as [type])) {

@@ -42,7 +42,7 @@ for file in "$HOME/.bashrc" "$profile"; do
 
 # Haifa Agent PATH
 case ":$PATH:" in
-    *":$HOME/.local/bin:"*) ;;
+    ":$HOME/.local/bin:"*) ;;
     *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 HAIFA_PATH

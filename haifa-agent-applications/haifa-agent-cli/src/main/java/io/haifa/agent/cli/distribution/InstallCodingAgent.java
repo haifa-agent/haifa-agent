@@ -2,7 +2,6 @@ package io.haifa.agent.cli.distribution;
 
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 import static java.nio.file.StandardCopyOption.ATOMIC_MOVE;
-import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -34,6 +33,9 @@ public final class InstallCodingAgent {
         if (!Files.isRegularFile(installedLauncher) || !Files.isExecutable(installedLauncher)) {
             throw new IOException("Installed release is missing its executable launcher");
         }
+        if (!Files.isRegularFile(installedPackage.resolve("haifa-coding.yaml"))) {
+            throw new IOException("Installed release is missing its configuration: " + installedPackage);
+        }
         Files.createDirectories(bin);
         if (!isManagedCommand(command, packages, windows)) {
             throw new IOException("An existing command already occupies " + command);
@@ -64,7 +66,7 @@ public final class InstallCodingAgent {
             } else {
                 Files.createSymbolicLink(next, launcher);
             }
-            Files.move(next, command, ATOMIC_MOVE, REPLACE_EXISTING);
+            Files.move(next, command, ATOMIC_MOVE);
         } finally {
             Files.deleteIfExists(next);
             Files.delete(staging);

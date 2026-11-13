@@ -10,7 +10,7 @@ TEMPLATES = Path(__file__).resolve().parents[1] / "templates" / "installers"
 RELEASE_URL = "https://github.com/haifa-agent/haifa-agent/releases/download"
 
 
-def render_installer(archive: Path, output: Path) -> Path:
+def render_installer(archive: Path, output: Path, digest: str | None = None) -> Path:
     match = re.fullmatch(
         r"haifa-coding-agent-(windows-x64|linux-x64)-(v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)(\.zip|\.tar\.gz)",
         archive.name,
@@ -21,7 +21,7 @@ def render_installer(archive: Path, output: Path) -> Path:
     if (platform == "windows-x64") != (extension == ".zip"):
         raise ValueError(f"Wrong archive format for {platform}: {archive.name}")
     installer = "install-haifa.ps1" if platform == "windows-x64" else "install-haifa.sh"
-    digest = sha256_file(archive)
+    digest = digest or sha256_file(archive)
     tokens = {
         "TAG": tag,
         "ARCHIVE": archive.name,

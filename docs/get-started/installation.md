@@ -23,7 +23,8 @@ installer=$(mktemp) && (trap 'rm -f "$installer"' EXIT; curl -fLSs https://githu
 进入项目目录运行 `haifa`。Linux / WSL2 用户可显式启用文件认证存储，用 `HAIFA_CODING_AUTH_STORE=file haifa`
 启动并按终端引导连接模型。之后启动需使用同一存储设置。模型凭据保存在 `~/.haifa-agent/auth.json`，权限为 `0600`。
 
-重新执行安装命令可升级。Windows 安装目录为 `%LOCALAPPDATA%\HaifaAgent`，Linux 安装目录为
+重新执行安装命令可升级。安装器会校验新版压缩包，然后切换 `haifa` 指向的版本。
+Windows 安装目录为 `%LOCALAPPDATA%\HaifaAgent`，Linux 安装目录为
 `~/.local/share/haifa-agent`，命令位于 `~/.local/bin/haifa`。两端的会话和日志默认存放在
 用户目录下的 `.haifa-agent/coding`，独立于安装目录。升级会保留旧版本的程序文件。要切换到指定版本，将链接中的
 `releases/latest/download/` 换成 `releases/download/<tag>/`，选择带安装脚本的 Release。
