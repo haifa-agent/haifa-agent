@@ -76,6 +76,12 @@ public final class AgentRuns {
         return runtime.recover(Objects.requireNonNull(runId, "runId must not be null"));
     }
 
+    /** Continues the same Run with a stored Tool approval that has yet to be applied. */
+    public AgentRunSnapshot resumeApprovedTool(
+            AgentRunId runId, io.haifa.agent.runtime.api.InteractionRequestId requestId) {
+        return runtime.resumeApprovedTool(runId, requestId);
+    }
+
     public Optional<AgentRunViewSnapshot> view(AgentRunId runId) {
         return runtime.view(Objects.requireNonNull(runId, "runId must not be null"));
     }

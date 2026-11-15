@@ -1916,6 +1916,64 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void resumesTheExactStoredApprovalAfterResponseCommitWithoutAnAttempt() {
+        var calls = new AtomicInteger();
+        var request = toolRequest("recovery", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        var fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        TestToolPlatform.approvalRequired(),
+                        invocation -> {
+                            calls.incrementAndGet();
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        }));
+        var runId = fixture.runtime.start(request("approval-recovery")).runId();
+        fixture.scheduler.runAll();
+        var approval = fixture.interactions.pending(runId).orElseThrow();
+        var view = fixture.runtime.pendingInteraction(runId).orElseThrow();
+        var toolId = fixture.store.toolCalls(runId).getFirst().id();
+        assertThatThrownBy(() -> fixture.runtime.resumeApprovedTool(runId, approval.id()))
+                .isInstanceOf(io.haifa.agent.runtime.api.RuntimeContractException.class);
+
+        // Model a failure after committing the response and before starting the next attempt.
+        var now = Instant.parse("2026-07-21T00:00:00Z");
+        fixture.interactions.respond(
+                new io.haifa.agent.runtime.api.InteractionResponseSubmission(
+                        new InteractionResponseId("saved-approve"),
+                        approval.id(),
+                        runId,
+                        view.revision(),
+                        io.haifa.agent.runtime.api.InteractionAction.APPROVE,
+                        List.of(),
+                        "saved-approve-key",
+                        now),
+                new RuntimeCallerContext(approval.tenant(), approval.requester()),
+                now);
+        assertThat(fixture.store.attemptsFor(runId)).hasSize(1);
+        assertThat(fixture.runtime.pendingInteraction(runId)).isEmpty();
+        assertThat(calls).hasValue(0);
+
+        fixture.runtime.resumeApprovedTool(runId, approval.id());
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.toolCalls(runId)).singleElement().satisfies(call -> {
+            assertThat(call.id()).isEqualTo(toolId);
+            assertThat(call.status()).isEqualTo(ToolCallStatus.COMPLETED);
+        });
+        assertThat(fixture.interactions.record(approval.id()).orElseThrow().state())
+                .isEqualTo(io.haifa.agent.runtime.api.InteractionState.APPLIED);
+        assertThatThrownBy(() -> fixture.runtime.resumeApprovedTool(runId, approval.id()))
+                .isInstanceOf(io.haifa.agent.runtime.api.RuntimeContractException.class);
+        assertThat(fixture.store.attemptsFor(runId)).hasSize(2);
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
     void projectsExplicitToolOutputPreviewWithRedactionAndProducerTruncationFacts() {
         ToolRequest request =
                 toolRequest("written-preview", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));

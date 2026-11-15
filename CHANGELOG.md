@@ -6,6 +6,7 @@
 - Allow up to eight physical summary calls per compaction evaluation by default. Recover active-history
   planning and summary validation failures with a reducing deterministic checkpoint when a safe turn boundary exists.
 - Commit suspended Runs and their paused execution attempts together so Runs can resume as soon as suspension is visible.
+- Add an SDK command to resume a waiting Run from its recorded, unapplied tool approval.
 
 ## 0.1.5
 

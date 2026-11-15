@@ -294,6 +294,38 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         return accepted;
     }
 
+    @Override
+    public AgentRunSnapshot resumeApprovedTool(
+            AgentRunId runId, io.haifa.agent.runtime.api.InteractionRequestId requestId) {
+        Objects.requireNonNull(requestId, "requestId must not be null");
+        var resumeRequest = unitOfWork.executeReadOnly(() -> {
+            AgentRun run = requireRunForContract(Objects.requireNonNull(runId, "runId must not be null"));
+            requireContractCaller(run);
+            if (run.status() != AgentRunStatus.WAITING_APPROVAL
+                    || run.waitingFor()
+                            .filter(ref -> requestId.value().equals(ref.interactionRequestId()))
+                            .isEmpty()) {
+                throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_STATE_CONFLICT,
+                        "The Run is not waiting on this Tool approval");
+            }
+            var resolution = interactions
+                    .unappliedToolResolution(runId)
+                    .filter(saved -> requestId.equals(saved.request().id()))
+                    .filter(saved -> saved.response().type() == InteractionResponseType.APPROVE)
+                    .orElseThrow(() -> new io.haifa.agent.runtime.api.RuntimeContractException(
+                            io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERACTION_ACTION_NOT_ALLOWED,
+                            "There is no accepted and unapplied approval for this Tool"));
+            verifyApprovalForContract(resolution.request(), callers.current());
+            return new ResumeAgentRunRequest(
+                    "tool-approval-response:" + resolution.response().idempotencyKey(),
+                    runId,
+                    java.util.OptionalLong.of(run.version()),
+                    List.of());
+        });
+        return resume(resumeRequest);
+    }
+
     private void awaitPreviousAttempt(AgentRun run) {
         if (run.status() != AgentRunStatus.WAITING_INTERACTION && run.status() != AgentRunStatus.WAITING_APPROVAL) {
             return;
