@@ -86,6 +86,11 @@ public final class AgentRuns {
         return runtime.view(Objects.requireNonNull(runId, "runId must not be null"));
     }
 
+    /** Checks a Tool alias in an authorized Run's admission snapshot, including after restart. */
+    public boolean hasFrozenTool(AgentRunId runId, String alias) {
+        return runtime.hasFrozenTool(runId, alias);
+    }
+
     /**
      * Returns redacted Prompt composition evidence when this process built Context for an
      * authorized Run. This method does not promise availability across process restarts.

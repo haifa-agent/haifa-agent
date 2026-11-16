@@ -842,6 +842,23 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         }
     }
 
+    @Override
+    public boolean hasFrozenTool(AgentRunId runId, String alias) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(alias, "alias must not be null");
+        var caller = callers.current();
+        try {
+            return runs.findVisible(runId, caller.tenant(), caller.principal())
+                    .map(run -> state.configuration(run.configurationSnapshot()).orElseThrow().toolBindings().stream()
+                            .anyMatch(binding -> alias.equals(binding.alias().value())))
+                    .orElse(false);
+        } catch (RuntimeException unreadable) {
+            throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERNAL_ERROR,
+                    "Frozen Tool bindings are unavailable");
+        }
+    }
+
     private FrozenInstructionDiagnostic projectFrozenInstruction(AgentRun run) {
         try {
             var configuration = state.configuration(run.configurationSnapshot()).orElseThrow();

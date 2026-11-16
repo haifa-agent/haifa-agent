@@ -75,6 +75,11 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("transport-ready Run views are not supported");
     }
 
+    /** Tests whether the caller-visible Run has this alias in its frozen Tool bindings. */
+    default boolean hasFrozenTool(io.haifa.agent.core.run.AgentRunId runId, String alias) {
+        throw new UnsupportedOperationException("frozen Tool queries are not supported");
+    }
+
     /** Returns the authoritative plan when this Runtime has one for the caller-visible Run. */
     default Optional<AgentPlanView> plan(io.haifa.agent.core.run.AgentRunId runId) {
         throw new UnsupportedOperationException("public plan views are not supported");

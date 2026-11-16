@@ -1934,6 +1934,8 @@ class RuntimeCoreTest {
                         }));
         var runId = fixture.runtime.start(request("approval-recovery")).runId();
         fixture.scheduler.runAll();
+        assertThat(fixture.runtime.hasFrozenTool(runId, "write")).isTrue();
+        assertThat(fixture.runtime.hasFrozenTool(runId, "unregistered")).isFalse();
         var approval = fixture.interactions.pending(runId).orElseThrow();
         var view = fixture.runtime.pendingInteraction(runId).orElseThrow();
         var toolId = fixture.store.toolCalls(runId).getFirst().id();
