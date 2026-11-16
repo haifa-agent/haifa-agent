@@ -1918,20 +1918,22 @@ class RuntimeCoreTest {
     @Test
     void resumesTheExactStoredApprovalAfterResponseCommitWithoutAnAttempt() {
         var calls = new AtomicInteger();
+        var policy = new AtomicReference<>(TestToolPlatform.approvalRequired());
         var request = toolRequest("recovery", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
         var fixture = fixture(
                 model(new ToolCallDecision(List.of(request)), finalDecision("done")),
                 builder -> TestToolPlatform.install(
-                        builder,
-                        "write",
-                        "1.0.0",
-                        "write.input",
-                        true,
-                        TestToolPlatform.approvalRequired(),
-                        invocation -> {
-                            calls.incrementAndGet();
-                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
-                        }));
+                                builder,
+                                "write",
+                                "1.0.0",
+                                "write.input",
+                                true,
+                                TestToolPlatform.approvalRequired(),
+                                invocation -> {
+                                    calls.incrementAndGet();
+                                    return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                                })
+                        .publicToolPolicy((run, binding, toolRequest) -> policy.get()));
         var runId = fixture.runtime.start(request("approval-recovery")).runId();
         fixture.scheduler.runAll();
         assertThat(fixture.runtime.hasFrozenTool(runId, "write")).isTrue();
@@ -1960,6 +1962,14 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.pendingInteraction(runId)).isEmpty();
         assertThat(calls).hasValue(0);
 
+        policy.set(TestToolPlatform.deny());
+        assertThatThrownBy(() -> fixture.runtime.resumeApprovedTool(runId, approval.id()))
+                .isInstanceOf(SecurityException.class);
+        assertThat(fixture.runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(fixture.store.attemptsFor(runId)).hasSize(1);
+        assertThat(calls).hasValue(0);
+
+        policy.set(TestToolPlatform.approvalRequired());
         fixture.runtime.resumeApprovedTool(runId, approval.id());
         fixture.scheduler.runAll();
         assertThat(fixture.runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
