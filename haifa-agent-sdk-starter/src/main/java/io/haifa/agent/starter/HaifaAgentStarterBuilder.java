@@ -92,7 +92,7 @@ public final class HaifaAgentStarterBuilder {
      * @return this builder
      */
     public HaifaAgentStarterBuilder instructions(String value) {
-        instructions = requireText(value, "instructions");
+        instructions = requireText(value, "instructions", ProductProfile.MAX_INSTRUCTIONS_LENGTH);
         defaultInstructions = false;
         return this;
     }

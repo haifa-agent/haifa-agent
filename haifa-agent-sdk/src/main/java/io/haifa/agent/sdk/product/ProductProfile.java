@@ -26,6 +26,9 @@ public record ProductProfile(
         Set<String> allowedSkills,
         Set<String> allowedChildAgents) {
 
+    /** Maximum Java string length of normalized trusted product instructions. */
+    public static final int MAX_INSTRUCTIONS_LENGTH = 150_000;
+
     /** A profile whose runs cannot delegate to child agents. */
     public ProductProfile(
             ProductId productId,
@@ -57,7 +60,7 @@ public record ProductProfile(
         productVersion = Objects.requireNonNull(productVersion, "productVersion must not be null");
         definitionId = Objects.requireNonNull(definitionId, "definitionId must not be null");
         definitionVersion = Objects.requireNonNull(definitionVersion, "definitionVersion must not be null");
-        instructions = ProductValues.text(instructions, "instructions", 32_000);
+        instructions = ProductValues.text(instructions, "instructions", MAX_INSTRUCTIONS_LENGTH);
         defaultRunProfile = Objects.requireNonNull(defaultRunProfile, "defaultRunProfile must not be null");
         budget = Objects.requireNonNull(budget, "budget must not be null");
         limits = Objects.requireNonNull(limits, "limits must not be null");

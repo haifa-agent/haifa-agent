@@ -26,6 +26,16 @@ class ProductProfileTest {
     }
 
     @Test
+    void acceptsTrustedInstructionsAt150000CharactersAndRejectsOneMore() {
+        String instructions = "x".repeat(150_000);
+        assertThat(profile(instructions, Set.of(), Set.of()).instructions().length())
+                .isEqualTo(150_000);
+        assertThatThrownBy(() -> profile(instructions + "x", Set.of(), Set.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("instructions");
+    }
+
+    @Test
     void rejectsBlankInstructionsAndMissingFields() {
         assertThatThrownBy(() -> ProductProfile.create(
                         new ProductId("profile-test"),
@@ -102,12 +112,16 @@ class ProductProfileTest {
     }
 
     private static ProductProfile profile(Set<String> tools, Set<String> skills) {
+        return profile("Safe instructions.", tools, skills);
+    }
+
+    private static ProductProfile profile(String instructions, Set<String> tools, Set<String> skills) {
         return ProductProfile.create(
                 new ProductId("profile-test"),
                 new ProductVersion("1.0.0"),
                 new AgentDefinitionId("profile-test-agent"),
                 new AgentDefinitionVersion(1, 0, 0),
-                "Safe instructions.",
+                instructions,
                 new ProductRunProfileRef("profile-test-chat", "1.0.0"),
                 new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
                 new AgentRunLimits(2, 0, 1, 10_000, 10_000),
