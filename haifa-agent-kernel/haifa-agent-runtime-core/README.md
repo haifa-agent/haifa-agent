@@ -251,6 +251,9 @@ Pending，直到响应或显式取消。Approval 响应仍重新校验精确 Too
 Run 会持久化累计人工等待和当前等待起点；AgentLoop、模型重试窗口与恢复预算使用排除人工等待后的
 活动执行时间。进程重启后继续等待或批准恢复，都不会把人工等待计入 `maxWallTimeMillis`。
 
+如果批准已持久化、续跑尚未准入，调用方可用 `resumeApprovedTool(runId, requestId)` 恢复同一个 Run。
+该命令读取对应的未应用批准，并复用正常恢复路径的检查点、工具目标、调用方权限及幂等键校验。
+
 ## Tool outcome convergence
 
 After an approval or intentional pause, pending tools use the same request-rejection handling as a new batch.

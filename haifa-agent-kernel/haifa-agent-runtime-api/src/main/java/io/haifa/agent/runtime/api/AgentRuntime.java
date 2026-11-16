@@ -38,6 +38,15 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("revision-aware interaction responses are not supported");
     }
 
+    /**
+     * Resumes a Run from its exact, durably accepted and unapplied Tool approval.
+     * The current caller and frozen resume configuration must still pass validation.
+     */
+    default AgentRunSnapshot resumeApprovedTool(
+            io.haifa.agent.core.run.AgentRunId runId, InteractionRequestId requestId) {
+        throw new UnsupportedOperationException("durable Tool approval recovery is not supported");
+    }
+
     default RunInputReceipt submitInput(RunInputSubmission input) {
         throw new UnsupportedOperationException("durable Run Input is not supported");
     }
@@ -64,6 +73,11 @@ public interface AgentRuntime {
 
     default Optional<AgentRunViewSnapshot> view(io.haifa.agent.core.run.AgentRunId runId) {
         throw new UnsupportedOperationException("transport-ready Run views are not supported");
+    }
+
+    /** Tests whether the caller-visible Run has this alias in its frozen Tool bindings. */
+    default boolean hasFrozenTool(io.haifa.agent.core.run.AgentRunId runId, String alias) {
+        throw new UnsupportedOperationException("frozen Tool queries are not supported");
     }
 
     /** Returns the authoritative plan when this Runtime has one for the caller-visible Run. */

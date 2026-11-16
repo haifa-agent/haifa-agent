@@ -15,6 +15,7 @@ import io.haifa.agent.skill.api.SkillVisibilityContext;
 import io.haifa.agent.tool.api.ToolInvoker;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 /** Validates and applies the durable state needed before a resumed attempt is scheduled. */
 public final class ResumeCoordinator {
@@ -25,6 +26,7 @@ public final class ResumeCoordinator {
     private final RunAccessValidator access;
     private final ToolInvoker tools;
     private final SkillContentLoader skills;
+    private final Consumer<AgentRun> validateSavedApproval;
 
     public ResumeCoordinator(
             InteractionPort interactions,
@@ -44,6 +46,18 @@ public final class ResumeCoordinator {
             RunAccessValidator access,
             ToolInvoker tools,
             SkillContentLoader skills) {
+        this(interactions, checkpoints, transitions, state, access, tools, skills, run -> {});
+    }
+
+    public ResumeCoordinator(
+            InteractionPort interactions,
+            CheckpointRepository checkpoints,
+            RunTransitionCoordinator transitions,
+            RuntimeStateRepository state,
+            RunAccessValidator access,
+            ToolInvoker tools,
+            SkillContentLoader skills,
+            Consumer<AgentRun> validateSavedApproval) {
         this.interactions = Objects.requireNonNull(interactions);
         this.checkpoints = Objects.requireNonNull(checkpoints);
         this.transitions = Objects.requireNonNull(transitions);
@@ -51,6 +65,7 @@ public final class ResumeCoordinator {
         this.access = Objects.requireNonNull(access);
         this.tools = Objects.requireNonNull(tools);
         this.skills = Objects.requireNonNull(skills);
+        this.validateSavedApproval = Objects.requireNonNull(validateSavedApproval);
     }
 
     /** Applies a resume only after validate has succeeded in the same resume Unit of Work. */
@@ -91,5 +106,6 @@ public final class ResumeCoordinator {
         if (interactions.pending(run.id()).isPresent()) {
             throw new IllegalStateException("pending interaction must be resolved through InteractionResponse");
         }
+        validateSavedApproval.accept(run);
     }
 }

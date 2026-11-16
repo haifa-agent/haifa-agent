@@ -665,7 +665,14 @@ public final class RuntimeCoreBuilder {
                 events,
                 outbox);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
-                interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
+                interactions,
+                checkpointsRepository,
+                transitions,
+                state,
+                access,
+                toolInvoker,
+                skillContentLoader,
+                decisionExecutor::validateSavedToolApproval);
 
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state);
         RunInputApplier runInputApplier =

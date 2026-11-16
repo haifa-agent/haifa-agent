@@ -1098,11 +1098,7 @@ public final class DecisionExecutor {
     }
 
     public void resolveToolApproval(AgentRun run, ToolApprovalTarget target, InteractionResponseType responseType) {
-        ToolCall call = state.toolCalls(run.id()).stream()
-                .filter(candidate -> candidate.id().equals(target.toolCallId()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("tool approval target is unavailable"));
-        tools.validateApprovalTarget(run, call, requestFrom(call), target);
+        ToolCall call = validateToolApproval(run, target);
         if (responseType == InteractionResponseType.APPROVE) {
             call.approve();
             state.appendToolCall(call);
@@ -1127,6 +1123,23 @@ public final class DecisionExecutor {
                 time.now());
         state.appendStep(step);
         appendToolResult(run, call, "Tool execution was rejected by the operator.");
+    }
+
+    private ToolCall validateToolApproval(AgentRun run, ToolApprovalTarget target) {
+        ToolCall call = state.toolCalls(run.id()).stream()
+                .filter(candidate -> candidate.id().equals(target.toolCallId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("tool approval target is unavailable"));
+        tools.validateApprovalTarget(run, call, requestFrom(call), target);
+        return call;
+    }
+
+    public void validateSavedToolApproval(AgentRun run) {
+        interactions
+                .unappliedToolResolution(run.id())
+                .filter(saved -> saved.response().type() == InteractionResponseType.APPROVE)
+                .ifPresent(saved -> validateToolApproval(
+                        run, (ToolApprovalTarget) saved.request().target()));
     }
 
     public void applyPendingToolApproval(AgentRun run) {
