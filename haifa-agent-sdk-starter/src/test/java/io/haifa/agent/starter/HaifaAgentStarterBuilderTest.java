@@ -61,6 +61,20 @@ public class HaifaAgentStarterBuilderTest {
     }
 
     @Test
+    void starterUsesTheProductProfileInstructionLimit() {
+        String instructions = "x".repeat(150_000);
+        try (var agent = HaifaAgentStarter.builder()
+                .environment(ignored -> "test-secret")
+                .instructions(instructions)
+                .build()) {
+            assertThat(agent.profile().instructions().length()).isEqualTo(150_000);
+        }
+        assertThatThrownBy(() -> HaifaAgentStarter.builder().instructions(instructions + "x"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("instructions");
+    }
+
+    @Test
     void buildsDeepSeekVisionAssemblyWithExactModelBinding() {
         assertThat(HaifaAgentStarterBuilder.SUPPORTED_DEEPSEEK_MODELS)
                 .contains(HaifaAgentStarterBuilder.MODEL_ID, HaifaAgentStarterBuilder.VISION_MODEL_ID);

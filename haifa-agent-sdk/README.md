@@ -380,7 +380,8 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
 `ChildAgentSpec` 接受小写字母、数字、下划线和连字符组成的非空自然名称，允许数字或连字符开头，
 不再用 64 字符 ID、1000 字符 description 或 32000 字符 Child instructions 的 SDK 构造边界拒绝可信定义。
 `ProductProfile.allowedChildAgents` 和命名 Run Profile 的 ID 保留完整自然标识；不会截断或转换为别名。定义文本仍必须非空，
-Child 工具授权、Runtime 预算和模型上下文准入继续生效，普通 Parent instructions 等已有长度限制保留。
+Child 工具授权、Runtime 预算和模型上下文准入继续生效。普通 Parent 的可信 instructions 上限为
+`ProductProfile.MAX_INSTRUCTIONS_LENGTH`（150,000 字符），模型上下文仍按 Runtime 预算准入。
 
 ## Shared Child capacity
 

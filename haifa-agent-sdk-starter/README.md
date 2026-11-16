@@ -161,7 +161,8 @@ var mcp = McpToolPlatforms.connect(List.of(search, jobs), tenant, principal, too
 行为与之前一致。
 
 默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
-`DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name` 仅用于展示和
+`DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。
+可信 instructions 的长度上限取自 `ProductProfile.MAX_INSTRUCTIONS_LENGTH`（150,000 字符）。`name` 仅用于展示和
 Conversation display name，不进入 Prompt 或选择逻辑；Agent `description` 暂不暴露。多轮、重试、
 revision、取消和事件订阅继续使用显式
 Conversation/Run API。
