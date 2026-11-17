@@ -115,6 +115,10 @@ existing backoff window, a matching prefix can retry once its removable history 
 configured minimum saving and enough to exceed the observed excess. Hard capacity recovery can still
 evaluate these sources immediately.
 
+Complete-source compaction uses the persisted, sanitized text of a complete `execution_run` result.
+Matching UTF-8 stdout and stderr references are metadata in this case. The raw channel bytes stay
+outside the compaction request.
+
 Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
 `SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain
 unchanged; source refusal never authorizes deterministic fallback or blind retry. A Run requiring that

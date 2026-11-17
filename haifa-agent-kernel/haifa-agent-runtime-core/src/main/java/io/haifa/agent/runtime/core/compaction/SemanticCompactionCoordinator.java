@@ -34,9 +34,11 @@ import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
+import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshot;
 import io.haifa.agent.runtime.core.context.ActiveContextSnapshots;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
@@ -1707,8 +1709,11 @@ public final class SemanticCompactionCoordinator {
                 var result =
                         history == null ? call.result().orElseThrow() : history.savedResultForCompaction(run, call);
                 if (!result.artifacts().isEmpty()
-                        || result.assets().stream().anyMatch(asset -> !asset.assetId()
-                                .equals("tool-result:" + call.id().value())))
+                        || result.assets().stream()
+                                .anyMatch(asset -> !asset.assetId()
+                                                .equals("tool-result:"
+                                                        + call.id().value())
+                                        && !hasSavedExecutionText(call, result, asset)))
                     throw new ContextBuildException(
                             ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
                             "complete compaction requires readable asset and artifact bodies");
@@ -1736,6 +1741,22 @@ public final class SemanticCompactionCoordinator {
                 parts,
                 message.metadata(),
                 message.createdAt());
+    }
+
+    private static boolean hasSavedExecutionText(ToolCall call, ToolResult result, AssetRef asset) {
+        // The command already saved its complete sanitized text. Raw channel refs remain metadata.
+        var data = result.structuredData();
+        if (!"execution_run".equals(call.toolName())
+                || !"text/plain; charset=utf-8".equals(asset.mimeType())
+                || !(data.get("executionId") instanceof String executionId)
+                || executionId.isBlank()
+                || !(data.get("output") instanceof String)
+                || !Boolean.FALSE.equals(data.get("truncated"))
+                || !Boolean.FALSE.equals(data.get("outputIncomplete"))
+                || !(data.get("outputRefs") instanceof List<?> refs)
+                || !refs.contains(asset.assetId())) return false;
+        String prefix = "execution:" + executionId + ":";
+        return asset.assetId().equals(prefix + "stdout") || asset.assetId().equals(prefix + "stderr");
     }
 
     private static String completeValue(Object value) {

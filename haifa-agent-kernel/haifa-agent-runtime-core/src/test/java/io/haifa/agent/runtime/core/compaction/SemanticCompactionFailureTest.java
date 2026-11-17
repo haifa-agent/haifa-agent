@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.ContextBuildException;
+import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.compression.CompactionQuality;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.ConversationSummary;
@@ -17,15 +18,25 @@ import io.haifa.agent.context.compression.SummaryId;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.content.ToolCallPart;
+import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
+import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
@@ -1096,6 +1107,110 @@ class SemanticCompactionFailureTest {
                         .containsEntry("outcome", "NO_REDUCTION")
                         .containsEntry("committed", false)
                         .containsEntry("version", 1L));
+    }
+
+    @Test
+    void completeCompactionUsesSavedShellOutputWithAnExecutionAsset() {
+        checkSavedShellOutputCompaction(false);
+    }
+
+    @Test
+    void incompleteSavedShellOutputStillRefusesCompleteCompaction() {
+        checkSavedShellOutputCompaction(true);
+    }
+
+    private void checkSavedShellOutputCompaction(boolean outputIncomplete) {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createRun(store);
+        var policy = CompressionPolicy.defaults().withTailTokenBounds(5, 5);
+        var ids = new AtomicInteger();
+        var compactor =
+                coordinator(store, () -> "shell-output-" + ids.incrementAndGet(), new RunControlRegistry(), policy);
+        var callId = new ToolCallId("shell-call");
+        var correlation = new ProviderToolCallCorrelationId("shell-provider-call");
+        var call = new ToolCall(
+                callId,
+                run.id(),
+                new AgentStepId("shell-step"),
+                correlation,
+                new RuntimeIdempotencyKey("shell-idempotency"),
+                "execution_run",
+                "1",
+                new ToolArguments("shell-input", "1", Map.of("command", "printf synthetic")),
+                NOW);
+        var asset = new AssetRef("execution:fixture:stdout", "text/plain; charset=utf-8", "fixture-stdout.txt");
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW);
+        call.complete(
+                new ToolResult(
+                        true,
+                        "Command exited (exit 0)",
+                        Map.of(
+                                "executionId",
+                                "fixture",
+                                "output",
+                                "synthetic saved shell output",
+                                "outputRefs",
+                                List.of(asset.assetId()),
+                                "truncated",
+                                false,
+                                "outputIncomplete",
+                                outputIncomplete),
+                        List.of(asset),
+                        List.of(),
+                        true),
+                NOW);
+        store.appendToolCall(call);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("shell-request"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(callId, correlation, "execution_run", "1")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("shell-result"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(callId, correlation, "result preview")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(draft("shell-answer", run, MessageRole.ASSISTANT, "evidence ".repeat(500)));
+        appendTurn(store, run, "shell-tail-user", "shell-tail-answer", "continue", "ok");
+        var decision = CompactionTriggerDecision.compact(
+                CompactionTriggerReason.ACTIVE_HISTORY_BUDGET,
+                new CompactionTriggerEvaluator(policy).calculateBreakdown(100_000, 8192, 0, 0, 90_000));
+
+        var calls = new AtomicInteger();
+        var binding = binding(store, run, request -> {
+            calls.incrementAndGet();
+            assertThat(request.messages().stream()
+                            .anyMatch(message -> message.content().contains("synthetic saved shell output")))
+                    .isTrue();
+            return validSummaryResponse();
+        });
+        if (outputIncomplete) {
+            assertThatThrownBy(() -> compactor.evaluateSelected(run, 1, binding, decision))
+                    .isInstanceOfSatisfying(ContextBuildException.class, error -> assertThat(error.failure())
+                            .isEqualTo(ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT));
+            assertThat(calls).hasValue(0);
+            assertThat(store.latestValid(run.sessionId())).isEmpty();
+            return;
+        }
+
+        var outcome = compactor.evaluateSelected(run, 1, binding, decision);
+
+        assertThat(outcome.compacted()).isTrue();
+        assertThat(store.latestValid(run.sessionId())).isPresent();
     }
 
     @Test
