@@ -167,7 +167,8 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
                             request.path(),
                             "source changed while the patch was being transformed");
                 }
-                try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+                try (FileChannel channel =
+                        FileChannel.open(temporary, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                     channel.force(true);
                 }
                 validateHash(
@@ -457,11 +458,13 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
 
     private static boolean replacePreparedFile(Path temporary, Path target, WorkspacePath logical) {
         try {
-            var targetView = Files.getFileAttributeView(target, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+            var targetView =
+                    Files.getFileAttributeView(target, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
             if (targetView != null) {
                 var attributes = targetView.readAttributes();
                 if (!attributes.isRegularFile()) {
-                    throw failure(MutationErrorCode.CONCURRENT_MODIFICATION, logical, "target is no longer a regular file");
+                    throw failure(
+                            MutationErrorCode.CONCURRENT_MODIFICATION, logical, "target is no longer a regular file");
                 }
                 Files.getFileAttributeView(temporary, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
                         .setPermissions(attributes.permissions());

@@ -105,11 +105,12 @@ class HostWorkspaceMutationServiceTest {
         Path ordinary = Files.createFile(root.resolve("ordinary.txt"));
         Fixture fixture = fixture();
 
-        fixture.local().create(new CreateFileRequest(
-                fixture.path("created.txt"),
-                bytes("created\n"),
-                MutationPrecondition.absent(fixture.workspace().revision()),
-                context("create-permissions")));
+        fixture.local()
+                .create(new CreateFileRequest(
+                        fixture.path("created.txt"),
+                        bytes("created\n"),
+                        MutationPrecondition.absent(fixture.workspace().revision()),
+                        context("create-permissions")));
 
         assertThat(Files.getPosixFilePermissions(root.resolve("created.txt")))
                 .isEqualTo(Files.getPosixFilePermissions(ordinary));
@@ -124,11 +125,12 @@ class HostWorkspaceMutationServiceTest {
             var permissions = PosixFilePermissions.fromString(mode);
             Files.setPosixFilePermissions(target, permissions);
 
-            fixture.local().write(new WriteFileRequest(
-                    fixture.path(target.getFileName().toString()),
-                    bytes("updated\n"),
-                    MutationPrecondition.existing(fixture.workspace().revision(), hash("old\n")),
-                    context("write-" + mode)));
+            fixture.local()
+                    .write(new WriteFileRequest(
+                            fixture.path(target.getFileName().toString()),
+                            bytes("updated\n"),
+                            MutationPrecondition.existing(fixture.workspace().revision(), hash("old\n")),
+                            context("write-" + mode)));
 
             assertThat(Files.getPosixFilePermissions(target)).isEqualTo(permissions);
         }
