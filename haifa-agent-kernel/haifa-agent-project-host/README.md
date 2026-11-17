@@ -16,3 +16,6 @@ fingerprint），不保存或推导额外权限。产品/UI 投影（`Authorized
 link/reparse point、互斥根、稳定 canonical 身份与独立的物理目录身份 fingerprint。同一规范路径被物理替换时
 fail closed 并要求显式重新授权；换成另一个 canonical path、状态非 ACTIVE 或无法验证时一律 fail closed。
 `file.*` 的模型输入仍是宿主绝对路径；`host-guarded` 不提供 OS 文件系统隔离。
+
+文件写入与补丁提交前在目标文件系统的私有目录内暂存内容。POSIX 上，覆盖现有文件保留普通读、写、执行权限，
+新文件采用文件系统默认创建权限（受进程 umask 约束）。

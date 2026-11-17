@@ -2,6 +2,7 @@
 
 ## Unreleased - 0.1.6-SNAPSHOT
 
+- Preserve existing POSIX file permissions during Coding Agent writes and patches, and honor the process umask for new files.
 - Let Coding Agent compact history containing complete saved Shell output with separate text references.
 - Raise the trusted system instructions limit to 150,000 characters in ProductProfile and Starter.
 - Add one-command Coding Agent installs for Windows and Linux x64 and publish the Linux archive with each release.

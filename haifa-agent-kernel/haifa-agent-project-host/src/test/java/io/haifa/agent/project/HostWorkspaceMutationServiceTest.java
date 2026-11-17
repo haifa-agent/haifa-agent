@@ -36,6 +36,7 @@ import io.haifa.agent.project.workspace.WorkspaceRevision;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -96,6 +97,41 @@ class HostWorkspaceMutationServiceTest {
                         context("delete")));
         assertThat(Files.exists(root.resolve("c.txt"))).isFalse();
         assertThat(deleted.changes()).hasSize(1);
+    }
+
+    @Test
+    void createsFilesWithTheSamePermissionsAsOrdinaryNewFiles() throws Exception {
+        Assumptions.assumeTrue(Files.getFileStore(root).supportsFileAttributeView("posix"));
+        Path ordinary = Files.createFile(root.resolve("ordinary.txt"));
+        Fixture fixture = fixture();
+
+        fixture.local().create(new CreateFileRequest(
+                fixture.path("created.txt"),
+                bytes("created\n"),
+                MutationPrecondition.absent(fixture.workspace().revision()),
+                context("create-permissions")));
+
+        assertThat(Files.getPosixFilePermissions(root.resolve("created.txt")))
+                .isEqualTo(Files.getPosixFilePermissions(ordinary));
+    }
+
+    @Test
+    void preservesExistingExecutableAndPrivatePermissionsOnWrite() throws Exception {
+        Assumptions.assumeTrue(Files.getFileStore(root).supportsFileAttributeView("posix"));
+        Fixture fixture = fixture();
+        for (String mode : List.of("rwxr-xr-x", "rw-------")) {
+            Path target = Files.writeString(root.resolve(mode + ".txt"), "old\n");
+            var permissions = PosixFilePermissions.fromString(mode);
+            Files.setPosixFilePermissions(target, permissions);
+
+            fixture.local().write(new WriteFileRequest(
+                    fixture.path(target.getFileName().toString()),
+                    bytes("updated\n"),
+                    MutationPrecondition.existing(fixture.workspace().revision(), hash("old\n")),
+                    context("write-" + mode)));
+
+            assertThat(Files.getPosixFilePermissions(target)).isEqualTo(permissions);
+        }
     }
 
     @Test
@@ -242,13 +278,18 @@ class HostWorkspaceMutationServiceTest {
         }
         try (var entries = Files.list(root)) {
             assertThat(entries.map(path -> path.getFileName().toString()))
-                    .noneMatch(name -> name.startsWith(".haifa-patch-") && name.endsWith(".tmp"));
+                    .noneMatch(name -> name.startsWith(".haifa-mutation-"));
         }
     }
 
     @Test
     void parsesAndAppliesMultiFileContextPatchWithMove() throws Exception {
-        Files.writeString(root.resolve("old.txt"), "section\nold\n", StandardCharsets.UTF_8);
+        Path original = Files.writeString(root.resolve("old.txt"), "section\nold\n", StandardCharsets.UTF_8);
+        boolean posix = Files.getFileStore(root).supportsFileAttributeView("posix");
+        var executable = PosixFilePermissions.fromString("r-xr-xr-x");
+        if (posix) {
+            Files.setPosixFilePermissions(original, executable);
+        }
         Fixture fixture = fixture();
         var document = new ApplyPatchParser(10, 100, 1_000, 64 * 1024)
                 .parse(
@@ -280,6 +321,9 @@ class HostWorkspaceMutationServiceTest {
         assertThat(Files.exists(root.resolve("old.txt"))).isFalse();
         assertThat(Files.readString(root.resolve("moved.txt"))).isEqualTo("section\nnew\n");
         assertThat(Files.readString(root.resolve("added.txt"))).isEqualTo("created\n");
+        if (posix) {
+            assertThat(Files.getPosixFilePermissions(root.resolve("moved.txt"))).isEqualTo(executable);
+        }
     }
 
     @Test

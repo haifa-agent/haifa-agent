@@ -26,6 +26,7 @@ import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -34,6 +35,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -148,12 +150,12 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
             validateHash(before, request.precondition(), request.path());
             Path temporary = null;
             try {
-                temporary = Files.createTempFile(target.getParent(), ".haifa-patch-", ".tmp");
+                temporary = stageContent(target);
                 MessageDigest sourceDigest = sha256Digest();
                 try (var input = new DigestInputStream(
                                 Files.newInputStream(target, StandardOpenOption.READ), sourceDigest);
                         var output = Files.newOutputStream(
-                                temporary, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                                temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                     new HostStreamingPatchTransformer()
                             .transform(request.patch(), input, output, request.maxOutputBytes());
                 }
@@ -165,7 +167,7 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
                             request.path(),
                             "source changed while the patch was being transformed");
                 }
-                try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                     channel.force(true);
                 }
                 validateHash(
@@ -173,7 +175,6 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
                         request.precondition(),
                         request.path());
                 boolean atomic = replacePreparedFile(temporary, target, request.path());
-                temporary = null;
                 FileVersion after = requireRegularVersion(resolveExisting(access, request.path()), request.path());
                 return advanceWorkspaceRevision(
                         access.workspace(),
@@ -187,13 +188,7 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
             } catch (IOException exception) {
                 throw failure(MutationErrorCode.IO_FAILURE, request.path(), "unable to apply streaming patch");
             } finally {
-                if (temporary != null) {
-                    try {
-                        Files.deleteIfExists(temporary);
-                    } catch (IOException ignoredDelete) {
-                        // A managed temporary file is harmless.
-                    }
-                }
+                discardStagedContent(temporary);
             }
         }
     }
@@ -415,44 +410,62 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
 
     private static boolean writeAtomically(
             Path target, byte[] content, boolean replace, WorkspacePath logical, Runnable beforeCommit) {
-        Path parent = target.getParent();
         Path temporary = null;
         try {
-            temporary = Files.createTempFile(parent, ".haifa-write-", ".tmp");
+            temporary = stageContent(target);
             try (FileChannel channel =
-                    FileChannel.open(temporary, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                channel.write(java.nio.ByteBuffer.wrap(content));
+                    FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                ByteBuffer buffer = ByteBuffer.wrap(content);
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
                 channel.force(true);
             }
             beforeCommit.run();
-            boolean atomic = true;
-            try {
-                if (replace) {
-                    Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                } else {
-                    Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
-                }
-            } catch (AtomicMoveNotSupportedException exception) {
-                atomic = false;
-                if (replace) Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-                else Files.move(temporary, target);
+            if (replace) {
+                return replacePreparedFile(temporary, target, logical);
             }
-            return atomic;
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+                return true;
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(temporary, target);
+                return false;
+            }
         } catch (IOException exception) {
             throw failure(MutationErrorCode.IO_FAILURE, logical, "unable to commit guarded file write");
         } finally {
-            if (temporary != null) {
-                try {
-                    Files.deleteIfExists(temporary);
-                } catch (IOException ignored) {
-                    // Ignored.
-                }
+            discardStagedContent(temporary);
+        }
+    }
+
+    private static Path stageContent(Path target) throws IOException {
+        // Keep unpublished contents private while allowing new files to use the normal file creation mode.
+        return Files.createTempDirectory(target.getParent(), ".haifa-mutation-").resolve("content");
+    }
+
+    private static void discardStagedContent(Path temporary) {
+        if (temporary != null) {
+            try {
+                Files.deleteIfExists(temporary);
+                Files.deleteIfExists(temporary.getParent());
+            } catch (IOException ignored) {
+                // Leave the private staging directory if it cannot be removed.
             }
         }
     }
 
     private static boolean replacePreparedFile(Path temporary, Path target, WorkspacePath logical) {
         try {
+            var targetView = Files.getFileAttributeView(target, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+            if (targetView != null) {
+                var attributes = targetView.readAttributes();
+                if (!attributes.isRegularFile()) {
+                    throw failure(MutationErrorCode.CONCURRENT_MODIFICATION, logical, "target is no longer a regular file");
+                }
+                Files.getFileAttributeView(temporary, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
+                        .setPermissions(attributes.permissions());
+            }
             try {
                 Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 return true;
@@ -461,7 +474,7 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
                 return false;
             }
         } catch (IOException exception) {
-            throw failure(MutationErrorCode.IO_FAILURE, logical, "unable to commit guarded patch");
+            throw failure(MutationErrorCode.IO_FAILURE, logical, "unable to commit guarded replacement");
         }
     }
 
