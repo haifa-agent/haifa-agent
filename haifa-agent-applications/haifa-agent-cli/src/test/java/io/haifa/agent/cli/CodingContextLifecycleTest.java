@@ -99,6 +99,37 @@ class CodingContextLifecycleTest {
     }
 
     @Test
+    void freezesTenMinuteReasoningDurationForLongerRuns() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("reasoning-budget-workspace"));
+        var configuration = CliConfigurationBuilder.from(sqliteConfiguration(root.resolve("reasoning.db")))
+                .timeout(Duration.ofMinutes(15))
+                .build();
+        AgentRunId run;
+        try (var agent = openAgent(workspace, configuration, request -> response("done"))) {
+            var session = agent.client().create(agent.projectId(), "Check the frozen budget", "reasoning-budget");
+            run = session.activeRun().orElseThrow().runId();
+            assertThat(agent.localAgent()
+                            .runtime()
+                            .handle(run)
+                            .awaitCompletion(Duration.ofSeconds(15))
+                            .orElseThrow()
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+        try (var store = io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly.open(
+                configuration.persistence(), java.time.Clock.systemUTC(), () -> "reasoning-budget-read", protector())) {
+            var saved = store.ports().runs().find(run).orElseThrow();
+            var options = store.ports()
+                    .state()
+                    .configuration(saved.configurationSnapshot())
+                    .orElseThrow()
+                    .modelRequestOptions();
+            assertThat(((Number) options.get("haifa.runtime.max_reasoning_duration_millis")).longValue())
+                    .isEqualTo(600_000L);
+        }
+    }
+
+    @Test
     void defaultCodingResumesAnOldRunWithItsFrozenToolCatalog() throws Exception {
         Path workspace = Files.createDirectory(root.resolve("upgrade-workspace"));
         var current = CliConfigurationBuilder.from(sqliteConfiguration(root.resolve("upgrade.db")))

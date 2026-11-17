@@ -798,7 +798,7 @@ Credential Binding。
 
 CLI 根据冻结模型目录解析 reasoning：`NONE/OPTIONAL` 缺省关闭，`ALWAYS` 缺省开启，`ADAPTIVE` 优先使用
 adaptive（目录不允许时退为 enabled）；显式 mode/effort 必须通过目录校验后才进入请求。CLI 为每个模型调用
-冻结 `512 KiB / 最长 5 分钟` reasoning 预算（更短的 Run wall timeout 优先），任一超限即不可重试失败。
+冻结 `512 KiB / 最长 10 分钟` reasoning 预算（更短的 Run wall timeout 优先），任一超限即不可重试失败。
 Runtime output listener 只实时打印安全的
 answer delta；reasoning 原文不会进入终端，`--verbose` 只显示最终有效 mode/effort 和供应商报告的 token 数。
 

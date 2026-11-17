@@ -613,7 +613,7 @@ public final class LocalCodingAgent implements AutoCloseable {
             runtimeOptions.put(
                     RuntimeControlOptions.MAX_REASONING_DURATION_MILLIS,
                     Math.min(
-                            Duration.ofMinutes(5).toMillis(),
+                            Duration.ofMinutes(10).toMillis(),
                             configuration.timeout().toMillis()));
             var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())

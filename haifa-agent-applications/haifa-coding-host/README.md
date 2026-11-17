@@ -24,6 +24,9 @@ to retain saved-version readback. The policy remains frozen for each admitted Ru
 A paused Run admitted before the history readers were added can resume when its frozen tool
 catalog matches the current catalog before those two additions. The Run retains its original tools.
 
+Each model call has a 512 KiB reasoning output budget and a ten-minute reasoning duration budget.
+A shorter Run timeout lowers the duration budget for that Run.
+
 The native terminal capability adds `product/terminalSession` and `product/activity` to a negotiated
 native connection. The Host verifies both Session ownership and Run membership before returning a
 bounded activity page. The browser grant does not authorize these operations.
