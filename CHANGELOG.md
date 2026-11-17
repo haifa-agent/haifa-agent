@@ -2,6 +2,7 @@
 
 ## Unreleased - 0.1.6-SNAPSHOT
 
+- Account for protected continuation size when selecting the retained tail for Coding Agent compaction.
 - Raise the Coding Agent's maximum per-call reasoning duration to ten minutes.
 - Preserve existing POSIX file permissions during Coding Agent writes and patches, and honor the process umask for new files.
 - Let Coding Agent compact history containing complete saved Shell output with separate text references.

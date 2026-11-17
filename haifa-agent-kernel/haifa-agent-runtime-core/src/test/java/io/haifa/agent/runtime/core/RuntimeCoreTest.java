@@ -4210,6 +4210,82 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void unifiedCompactionFreesKafkaShapedContinuationReserve() {
+        assertContinuationReserveCompacts(
+                new int[] {
+                    131, 1244, 5424, 548, 291, 1024, 22489, 10861, 9754, 1454, 23635, 22375, 901, 73, 16038, 554, 717,
+                    33683, 4361, 136171, 871, 982, 35801
+                },
+                5_500);
+    }
+
+    @Test
+    void unifiedCompactionFreesVf2ShapedContinuationReserve() {
+        assertContinuationReserveCompacts(
+                new int[] {
+                    9880, 637, 311, 121, 609, 1173, 25113, 24458, 6630, 104, 445, 952, 30117, 27333, 1981, 549, 39790,
+                    28643, 19655, 20997, 5459, 14357, 34731
+                },
+                8_200);
+    }
+
+    @Test
+    void unifiedHardOverflowCanCompactBeforeDispatchingTheNextModelRequest() {
+        assertContinuationReserveCompacts(new int[] {100_000, 100_000, 400_000}, 3_000);
+    }
+
+    private static void assertContinuationReserveCompacts(int[] bytes, int visibleCharacters) {
+        // Recreate counts and approximate visible sizes with synthetic text and tool calls.
+        String visible = "synthetic observation ".repeat(visibleCharacters / 22);
+        var ordinary = new ArrayList<AgentChatRequest>();
+        var policy = CompressionPolicy.defaults()
+                .withDynamicActiveBudget(50, 64_000, Long.MAX_VALUE)
+                .withTailTokenBounds(24_000, Integer.MAX_VALUE)
+                .withTargetTailTokenPercent(30);
+        var fixture = workingSetFixture(
+                call -> {
+                    if (call.structuredOutput().isPresent()) return ContextLifecycleHistoryFixture.summary(call);
+                    ordinary.add(call);
+                    int turn = ordinary.size();
+                    if (turn > bytes.length) return response(finalDecision("done"));
+                    return new AgentChatResponse(
+                            "answer-" + turn,
+                            call.model().providerModelId(),
+                            visible,
+                            List.of(new ModelToolCall(
+                                    new ProviderToolCallCorrelationId("call-" + turn),
+                                    "history_search",
+                                    Map.of("messageId", "synthetic-absent-" + turn))),
+                            ModelFinishReason.TOOL_CALLS,
+                            ModelUsage.unpriced(1, 1),
+                            "",
+                            Map.of(),
+                            Optional.of(
+                                    io.haifa.agent.model.api.SensitiveModelReasoning.of("x".repeat(bytes[turn - 1]))));
+                },
+                Map.of(RuntimeControlOptions.CONTEXT_BUDGET_POLICY, RuntimeControlOptions.UNIFIED_CONTEXT_V1),
+                () -> ContextLifecycleHistoryFixture.NOW,
+                new AtomicInteger(),
+                builder -> builder.compressionPolicy(policy)
+                        .publicToolPolicy((run, binding, request) -> TestToolPlatform.allow()));
+        var started = fixture.runtime.start(
+                workingSetRequest("reasoning-pressure", "Follow the synthetic observations", "reasoning-profile"));
+        fixture.scheduler.runAll();
+        var run = fixture.store.find(started.runId()).orElseThrow();
+        assertThat(run.status())
+                .as(
+                        "run status after %s ordinary calls, error %s",
+                        ordinary.size(), run.error().map(error -> error.code()))
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(ordinary).hasSize(bytes.length + 1);
+        assertThat(fixture.store.latestValid(run.sessionId())).isPresent();
+        assertThat(ordinary.getLast().messages().stream()
+                        .filter(message -> message.reasoning().isPresent())
+                        .count())
+                .isLessThan(bytes.length);
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void unifiedPressureCommitsTwoSemanticSummariesThenCompletesWithoutRepeatingReads() {
         var ordinary = new ArrayList<AgentChatRequest>();
@@ -4631,7 +4707,11 @@ class RuntimeCoreTest {
                                                             ? constrainedContextModel(32768, 4096)
                                                             : id.equals("tiny-profile")
                                                                     ? constrainedContextModel()
-                                                                    : DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                                                                    : id.equals("reasoning-profile")
+                                                                            ? constrainedContextModel(
+                                                                                    1_000_000, 384_000)
+                                                                            : DefaultResolvedModelSnapshots
+                                                                                    .deepSeekV4Pro(),
                                     Map.of(),
                                     id.equals("seed-profile")
                                             ? withOption(options, RuntimeControlOptions.WORKING_SET_TARGET, 16384)

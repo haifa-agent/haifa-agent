@@ -276,7 +276,9 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
             memoryItems = List.of();
             prepared = prepareUnified(run, model, middlewareContext.prompts(), tools, budget, items);
         }
-        if (prepared.estimatedTokens() > budget.availableInputTokens()) throw new LocalContextOverflowException();
+        if (prepared.estimatedTokens() > budget.availableInputTokens()) {
+            throw new LocalContextOverflowException(prepared.continuationReserves());
+        }
         var decision = selectedDecision(prepared, items);
         if (decision.shouldCompact()
                 && items.stream()

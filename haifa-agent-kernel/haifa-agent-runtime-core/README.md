@@ -4,6 +4,10 @@ Saved history previews revalidate source identity before projection. Initial exc
 both text and source truncation from the materialized result; truncation of an inline asset preview does not mark
 the complete saved source as truncated. Version, current access and withdrawal checks still apply.
 
+Unified context compaction includes the outgoing request's protected continuation reserve when choosing which
+complete message groups to retain. Only byte counts are used for budgeting. Compaction source and summaries
+continue to use authorized visible evidence.
+
 ## History baseline and retrieval limits
 
 `ContextLifecycleHistoryFixture` and `RuntimeCoreTest.contextLifecycleBaseline` preserve fixed

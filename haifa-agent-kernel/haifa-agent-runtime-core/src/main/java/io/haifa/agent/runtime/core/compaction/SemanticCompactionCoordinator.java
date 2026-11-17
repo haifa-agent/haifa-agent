@@ -221,7 +221,16 @@ public final class SemanticCompactionCoordinator {
 
     public CompactionEvaluationOutcome evaluateSelected(
             AgentRun run, int iteration, FrozenModelBinding binding, CompactionTriggerDecision selected) {
-        return evaluateAndCompactIfNeeded(run, iteration, binding, 0, selected);
+        return evaluateSelected(run, iteration, binding, selected, Map.of());
+    }
+
+    public CompactionEvaluationOutcome evaluateSelected(
+            AgentRun run,
+            int iteration,
+            FrozenModelBinding binding,
+            CompactionTriggerDecision selected,
+            Map<AgentMessageId, Long> continuationReserves) {
+        return evaluateAndCompactIfNeeded(run, iteration, binding, 0, selected, continuationReserves);
     }
 
     public void requireSelectedRetention(long tokens, CompactionTriggerDecision decision, long declaredRetention) {
@@ -238,7 +247,7 @@ public final class SemanticCompactionCoordinator {
 
     private CompactionEvaluationOutcome evaluateAndCompactIfNeeded(
             AgentRun run, int iteration, FrozenModelBinding binding, int boundedPageCount) {
-        return evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount, null);
+        return evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount, null, Map.of());
     }
 
     private CompactionEvaluationOutcome evaluateAndCompactIfNeeded(
@@ -246,7 +255,8 @@ public final class SemanticCompactionCoordinator {
             int iteration,
             FrozenModelBinding binding,
             int boundedPageCount,
-            CompactionTriggerDecision selected) {
+            CompactionTriggerDecision selected,
+            Map<AgentMessageId, Long> continuationReserves) {
         if (history != null) history.requireCurrentScope(run);
         long startNanos = System.nanoTime();
         if (!policy.semanticCompactionEnabled()) {
@@ -291,9 +301,9 @@ public final class SemanticCompactionCoordinator {
                 throw new IllegalStateException("active context cold-start compaction exceeded 128 bounded pages");
             }
             CompactionEvaluationOutcome pageOutcome =
-                    compactTruncatedWindow(run, iteration, binding, activeSnapshot, startNanos);
-            CompactionEvaluationOutcome finalOutcome =
-                    evaluateAndCompactIfNeeded(run, iteration, binding, boundedPageCount + 1, selected);
+                    compactTruncatedWindow(run, iteration, binding, activeSnapshot, startNanos, continuationReserves);
+            CompactionEvaluationOutcome finalOutcome = evaluateAndCompactIfNeeded(
+                    run, iteration, binding, boundedPageCount + 1, selected, continuationReserves);
             return finalOutcome.triggerReason() == null ? pageOutcome : finalOutcome;
         }
         List<AgentMessage> visible = activeSnapshot == null
@@ -447,7 +457,8 @@ public final class SemanticCompactionCoordinator {
                 selected != null || plansAfterSelection(run),
                 selected != null
                         && selected.budgetBreakdown().currentSessionTokens()
-                                <= selected.budgetBreakdown().availableSessionTokens());
+                                <= selected.budgetBreakdown().availableSessionTokens(),
+                continuationReserves);
         if (targetPressure && selected == null) {
             Optional<ConversationSummary> latestSelected = summaries.latestValid(run.sessionId());
             List<AgentMessage> remaining = groupsAfterSummary(visible, latestSelected).stream()
@@ -477,7 +488,12 @@ public final class SemanticCompactionCoordinator {
     }
 
     private CompactionEvaluationOutcome compactTruncatedWindow(
-            AgentRun run, int iteration, FrozenModelBinding binding, ActiveContextSnapshot snapshot, long startNanos) {
+            AgentRun run,
+            int iteration,
+            FrozenModelBinding binding,
+            ActiveContextSnapshot snapshot,
+            long startNanos,
+            Map<AgentMessageId, Long> continuationReserves) {
         List<AgentMessage> visible = snapshot.activeMessages();
         List<List<AgentMessage>> groups = snapshot.atomicGroups();
         if (groups.size() < 2) {
@@ -505,7 +521,8 @@ public final class SemanticCompactionCoordinator {
                 policy.minTailTokens(),
                 startNanos,
                 plansAfterSelection(run),
-                false);
+                false,
+                continuationReserves);
         if (summaries.latestVersion(run.sessionId()) <= expectedPreviousVersion) {
             throw new IllegalStateException("bounded cold-start compaction made no summary progress");
         }
@@ -516,11 +533,20 @@ public final class SemanticCompactionCoordinator {
      * Forces immediate compaction upon receiving CONTEXT_TOO_LONG error from provider.
      */
     public CompactionEvaluationOutcome forceCompactOnOverflow(AgentRun run, int iteration, FrozenModelBinding binding) {
-        return forceCompactOnOverflow(run, iteration, binding, 0);
+        return forceCompactOnOverflow(run, iteration, binding, Map.of());
+    }
+
+    public CompactionEvaluationOutcome forceCompactOnOverflow(
+            AgentRun run, int iteration, FrozenModelBinding binding, Map<AgentMessageId, Long> continuationReserves) {
+        return forceCompactOnOverflow(run, iteration, binding, 0, continuationReserves);
     }
 
     private CompactionEvaluationOutcome forceCompactOnOverflow(
-            AgentRun run, int iteration, FrozenModelBinding binding, int boundedPageCount) {
+            AgentRun run,
+            int iteration,
+            FrozenModelBinding binding,
+            int boundedPageCount,
+            Map<AgentMessageId, Long> continuationReserves) {
         if (history != null) history.requireCurrentScope(run);
         long startNanos = System.nanoTime();
         if (!policy.semanticCompactionEnabled()) {
@@ -534,9 +560,9 @@ public final class SemanticCompactionCoordinator {
                 throw new IllegalStateException("forced active-context compaction exceeded 128 bounded pages");
             }
             CompactionEvaluationOutcome pageOutcome =
-                    compactTruncatedWindow(run, iteration, binding, activeSnapshot, startNanos);
+                    compactTruncatedWindow(run, iteration, binding, activeSnapshot, startNanos, continuationReserves);
             CompactionEvaluationOutcome finalOutcome =
-                    forceCompactOnOverflow(run, iteration, binding, boundedPageCount + 1);
+                    forceCompactOnOverflow(run, iteration, binding, boundedPageCount + 1, continuationReserves);
             return finalOutcome.triggerReason() == null ? pageOutcome : finalOutcome;
         }
         List<AgentMessage> visible = activeSnapshot == null
@@ -594,7 +620,8 @@ public final class SemanticCompactionCoordinator {
                 policy.minTailTokens(),
                 startNanos,
                 plansAfterSelection(run),
-                false);
+                false,
+                continuationReserves);
     }
 
     private CompactionEvaluationOutcome compactSession(
@@ -613,7 +640,8 @@ public final class SemanticCompactionCoordinator {
             long targetTailBudget,
             long startNanos,
             boolean completeSource,
-            boolean selectedInputFits) {
+            boolean selectedInputFits,
+            Map<AgentMessageId, Long> continuationReserves) {
         List<List<AgentMessage>> activeGroups = groupsAfterSummary(visible, previousSummary);
         if (activeGroups.isEmpty()) {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
@@ -623,7 +651,7 @@ public final class SemanticCompactionCoordinator {
 
         // Retained-tail selection must measure the authoritative payloads the tail will actually send, not the short
         // reference/summary metadata. Source-summary prompt sizing (nextBatchEnd) stays on its own projected estimate.
-        int split = tailSplit(activeGroups, targetTailBudget, resolver, completeSource);
+        int split = tailSplit(activeGroups, targetTailBudget, resolver, completeSource, continuationReserves);
         if (split <= 0) {
             return CompactionEvaluationOutcome.untriggered(initialEstimatedTokens, elapsedMillis(startNanos));
         }
@@ -659,7 +687,11 @@ public final class SemanticCompactionCoordinator {
         }
 
         boolean softComplete = completeSource && reason == CompactionTriggerReason.SOFT_TOKEN_THRESHOLD;
-        long prefixTokens = softComplete ? estimateGroups(activeGroups.subList(0, safeSplit), resolver) : 0L;
+        var sourceGroups = activeGroups.subList(0, safeSplit);
+        long prefixReserve = sourceGroups.stream()
+                .mapToLong(group -> continuationReserve(group, continuationReserves))
+                .sum();
+        long prefixTokens = softComplete ? estimateGroups(sourceGroups, resolver) + prefixReserve : 0L;
         int minSaving = softComplete
                 ? io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions.contextMinSavingTokens(
                         binding.configuration().modelRequestOptions())
@@ -679,9 +711,8 @@ public final class SemanticCompactionCoordinator {
             }
         }
 
-        List<AgentMessage> sourceToCompact = activeGroups.subList(0, safeSplit).stream()
-                .flatMap(List::stream)
-                .toList();
+        List<AgentMessage> sourceToCompact =
+                sourceGroups.stream().flatMap(List::stream).toList();
         var backoffScope = CompactionFailureBackoff.Scope.of(run, binding, policy, expectedPreviousVersion, reason);
         if (softComplete
                 && failureBackoff.contains(
@@ -998,7 +1029,7 @@ public final class SemanticCompactionCoordinator {
         SemanticConversationSummaryV1 candidate = workingSemantic.orElseThrow();
         int summaryTokens =
                 Math.max(1, HeuristicTokenEstimator.tokens(SemanticSummaryRenderer.renderMarkdown(candidate)));
-        long historyGrowth = summaryTokens + retainedTailTokens - initialEstimatedTokens;
+        long historyGrowth = summaryTokens + retainedTailTokens - initialEstimatedTokens - prefixReserve;
         if (softComplete && selectedInputFits && historyGrowth >= 0) {
             // Try again once the removable prefix can absorb the observed excess and has grown meaningfully.
             invoker.checkControl(run);
@@ -1890,11 +1921,13 @@ public final class SemanticCompactionCoordinator {
             List<List<AgentMessage>> groups,
             long retainedTailBudget,
             Function<ToolCallId, ToolCall> resolver,
-            boolean atomicBoundary) {
+            boolean atomicBoundary,
+            Map<AgentMessageId, Long> continuationReserves) {
         long retained = 0L;
         int candidateSplit = groups.size();
         for (int index = groups.size() - 1; index >= 0; index--) {
-            long groupTokens = estimateGroup(groups.get(index), resolver);
+            var group = groups.get(index);
+            long groupTokens = estimateGroup(group, resolver) + continuationReserve(group, continuationReserves);
             if (candidateSplit < groups.size() && (retained + groupTokens > retainedTailBudget)) {
                 break;
             }
@@ -1923,6 +1956,12 @@ public final class SemanticCompactionCoordinator {
             backward--;
         }
         return backward;
+    }
+
+    private static long continuationReserve(List<AgentMessage> group, Map<AgentMessageId, Long> reserves) {
+        return group.stream()
+                .mapToLong(message -> reserves.getOrDefault(message.id(), 0L))
+                .sum();
     }
 
     private boolean isTurnAnchor(List<AgentMessage> group) {
