@@ -369,6 +369,7 @@ java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
 
 构建后也可以将 `bin` 目录加入 `PATH`，使用 `haifa-cli.ps1` 启动。
 
+`-m/--message` 接受单个消息参数，支持以 `-` 或 Markdown 分隔线开头的文本。通过 Shell 调用时应引用整段消息。
 `--terminal` 与 `-m/--message` 不能同时使用。非交互、`dumb` 或不支持的终端会快速返回稳定的
 `TUI_UNAVAILABLE`。同一规范化且非符号链接的 Workspace 会生成带版本 namespace 的稳定
 Project/Workspace 身份；绝对路径不进入 Prompt、Client Event、JSONL 或普通错误输出。
