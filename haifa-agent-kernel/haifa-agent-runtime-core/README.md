@@ -8,6 +8,10 @@ Unified context compaction includes the outgoing request's protected continuatio
 complete message groups to retain. Only byte counts are used for budgeting. Compaction source and summaries
 continue to use authorized visible evidence.
 
+When semantic compaction processes a saved Shell tool result, it uses the persisted text and
+its truncation flag. Verified stdout and stderr references remain metadata, including binary
+channels. Incomplete captures and unsupported assets or artifacts still fail source preparation.
+
 ## History baseline and retrieval limits
 
 `ContextLifecycleHistoryFixture` and `RuntimeCoreTest.contextLifecycleBaseline` preserve fixed

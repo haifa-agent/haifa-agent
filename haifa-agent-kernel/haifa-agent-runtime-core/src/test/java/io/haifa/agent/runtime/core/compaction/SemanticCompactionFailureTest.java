@@ -1111,15 +1111,25 @@ class SemanticCompactionFailureTest {
 
     @Test
     void completeCompactionUsesSavedShellOutputWithAnExecutionAsset() {
-        checkSavedShellOutputCompaction(false);
+        checkSavedShellOutputCompaction("text/plain; charset=utf-8", false, false);
+    }
+
+    @Test
+    void completeCompactionUsesTruncatedSavedTextFromGpt2ArchiveShape() {
+        checkSavedShellOutputCompaction("text/plain; charset=utf-8", true, false);
+    }
+
+    @Test
+    void completeCompactionUsesSavedTextWithBinaryChannelFromPathTracingArchiveShape() {
+        checkSavedShellOutputCompaction("application/octet-stream", false, false);
     }
 
     @Test
     void incompleteSavedShellOutputStillRefusesCompleteCompaction() {
-        checkSavedShellOutputCompaction(true);
+        checkSavedShellOutputCompaction("text/plain; charset=utf-8", false, true);
     }
 
-    private void checkSavedShellOutputCompaction(boolean outputIncomplete) {
+    private void checkSavedShellOutputCompaction(String channelMimeType, boolean truncated, boolean outputIncomplete) {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentRun run = createRun(store);
         var policy = CompressionPolicy.defaults().withTailTokenBounds(5, 5);
@@ -1138,7 +1148,7 @@ class SemanticCompactionFailureTest {
                 "1",
                 new ToolArguments("shell-input", "1", Map.of("command", "printf synthetic")),
                 NOW);
-        var asset = new AssetRef("execution:fixture:stdout", "text/plain; charset=utf-8", "fixture-stdout.txt");
+        var asset = new AssetRef("execution:fixture:stdout", channelMimeType, "fixture-stdout");
         call.beginValidation();
         call.beginPolicyCheck();
         call.start(NOW);
@@ -1154,12 +1164,12 @@ class SemanticCompactionFailureTest {
                                 "outputRefs",
                                 List.of(asset.assetId()),
                                 "truncated",
-                                false,
+                                truncated,
                                 "outputIncomplete",
                                 outputIncomplete),
                         List.of(asset),
                         List.of(),
-                        true),
+                        truncated),
                 NOW);
         store.appendToolCall(call);
         store.appendSessionMessage(new SessionMessageDraft(
@@ -1193,9 +1203,8 @@ class SemanticCompactionFailureTest {
         var calls = new AtomicInteger();
         var binding = binding(store, run, request -> {
             calls.incrementAndGet();
-            assertThat(request.messages().stream()
-                            .anyMatch(message -> message.content().contains("synthetic saved shell output")))
-                    .isTrue();
+            assertThat(request.messages()).anySatisfy(message -> assertThat(message.content())
+                    .contains("synthetic saved shell output", "truncated: " + truncated));
             return validSummaryResponse();
         });
         if (outputIncomplete) {

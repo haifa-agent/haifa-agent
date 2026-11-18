@@ -1744,7 +1744,7 @@ public final class SemanticCompactionCoordinator {
                                 .anyMatch(asset -> !asset.assetId()
                                                 .equals("tool-result:"
                                                         + call.id().value())
-                                        && !hasSavedExecutionText(call, result, asset)))
+                                        && !isSavedExecutionChannel(call, result, asset)))
                     throw new ContextBuildException(
                             ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
                             "complete compaction requires readable asset and artifact bodies");
@@ -1774,15 +1774,17 @@ public final class SemanticCompactionCoordinator {
                 message.createdAt());
     }
 
-    private static boolean hasSavedExecutionText(ToolCall call, ToolResult result, AssetRef asset) {
-        // The command already saved its complete sanitized text. Raw channel refs remain metadata.
+    private static boolean isSavedExecutionChannel(ToolCall call, ToolResult result, AssetRef asset) {
+        // Summarize the persisted tool result. A raw channel stays a reference even if it is binary
+        // or the tool bounded its text preview. The saved result carries the truncation flag.
         var data = result.structuredData();
         if (!"execution_run".equals(call.toolName())
-                || !"text/plain; charset=utf-8".equals(asset.mimeType())
+                || !Set.of("text/plain; charset=utf-8", "application/octet-stream")
+                        .contains(asset.mimeType())
                 || !(data.get("executionId") instanceof String executionId)
                 || executionId.isBlank()
                 || !(data.get("output") instanceof String)
-                || !Boolean.FALSE.equals(data.get("truncated"))
+                || !(data.get("truncated") instanceof Boolean)
                 || !Boolean.FALSE.equals(data.get("outputIncomplete"))
                 || !(data.get("outputRefs") instanceof List<?> refs)
                 || !refs.contains(asset.assetId())) return false;
