@@ -4,6 +4,14 @@ Saved history previews revalidate source identity before projection. Initial exc
 both text and source truncation from the materialized result; truncation of an inline asset preview does not mark
 the complete saved source as truncated. Version, current access and withdrawal checks still apply.
 
+Unified context compaction includes the outgoing request's protected continuation reserve when choosing which
+complete message groups to retain. Only byte counts are used for budgeting. Compaction source and summaries
+continue to use authorized visible evidence.
+
+When semantic compaction processes a saved Shell tool result, it uses the persisted text and
+its truncation flag. Verified stdout and stderr references remain metadata, including binary
+channels. Incomplete captures and unsupported assets or artifacts still fail source preparation.
+
 ## History baseline and retrieval limits
 
 `ContextLifecycleHistoryFixture` and `RuntimeCoreTest.contextLifecycleBaseline` preserve fixed
@@ -114,6 +122,10 @@ that would leave the estimated active history unchanged or larger does not advan
 existing backoff window, a matching prefix can retry once its removable history grows by at least the
 configured minimum saving and enough to exceed the observed excess. Hard capacity recovery can still
 evaluate these sources immediately.
+
+Complete-source compaction uses the persisted, sanitized text of a complete `execution_run` result.
+Matching UTF-8 stdout and stderr references are metadata in this case. The raw channel bytes stay
+outside the compaction request.
 
 Unreadable complete sources fail with `UNSUPPORTED_CONTEXT_CONTENT`, a `SOURCE_PREPARATION` (or subsequent
 `SOURCE_VALIDATION`) compaction failure and `NO_REDUCTION`. The previous valid summary and coverage remain

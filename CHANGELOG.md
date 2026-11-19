@@ -2,6 +2,11 @@
 
 ## Unreleased - 0.1.6-SNAPSHOT
 
+- Accept dash-prefixed task text in the Coding CLI's one-shot message argument.
+- Account for protected continuation size when selecting the retained tail for Coding Agent compaction.
+- Raise the Coding Agent's maximum per-call reasoning duration to ten minutes.
+- Preserve existing POSIX file permissions during Coding Agent writes and patches, and honor the process umask for new files.
+- Let Coding Agent compact history containing complete saved Shell output with separate text references.
 - Raise the trusted system instructions limit to 150,000 characters in ProductProfile and Starter.
 - Add one-command Coding Agent installs for Windows and Linux x64 and publish the Linux archive with each release.
 - Allow up to eight physical summary calls per compaction evaluation by default. Recover active-history

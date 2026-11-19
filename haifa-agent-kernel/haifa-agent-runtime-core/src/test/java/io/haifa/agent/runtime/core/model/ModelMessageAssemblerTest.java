@@ -569,6 +569,8 @@ class ModelMessageAssemblerTest {
                 new ModelMessageAssembler(countingStore).assembleWithMetrics(RUN_ID, context, previousModel);
         var sameModelMessages = sameModelAssembly.messages();
         assertThat(sameModelMessages.get(1).reasoning()).contains(reasoning);
+        assertThat(sameModelAssembly.continuationReserves())
+                .containsExactlyEntriesOf(Map.of(assistant.id(), (long) reasoning.byteLength()));
         assertThat(sameModelMessages.get(1).toolCalls().getFirst().providerCorrelationId())
                 .isEqualTo(correlationId);
         assertThat(singleMessageReads).hasValue(0);
@@ -578,13 +580,14 @@ class ModelMessageAssemblerTest {
         assertThat(sameModelAssembly.metrics().continuationRecordCount()).isEqualTo(1);
 
         var rewritten = new ModelMessageAssembler(countingStore)
-                .assemble(RUN_ID, withPhase(context, "rewritten"), previousModel);
-        assertThat(rewritten).allSatisfy(message -> {
+                .assembleWithMetrics(RUN_ID, withPhase(context, "rewritten"), previousModel);
+        assertThat(rewritten.continuationReserves()).isEmpty();
+        assertThat(rewritten.messages()).allSatisfy(message -> {
             assertThat(message.reasoning()).isEmpty();
             assertThat(message.toolCalls()).isEmpty();
             assertThat(message.role()).isNotEqualTo(ModelMessageRole.TOOL);
         });
-        assertThat(rewritten).anySatisfy(message -> {
+        assertThat(rewritten.messages()).anySatisfy(message -> {
             assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
             assertThat(message.content()).contains("haifa", "rejected by the operator");
         });

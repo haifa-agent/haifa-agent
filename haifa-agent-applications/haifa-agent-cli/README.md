@@ -369,6 +369,7 @@ java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
 
 构建后也可以将 `bin` 目录加入 `PATH`，使用 `haifa-cli.ps1` 启动。
 
+`-m/--message` 接受单个消息参数，支持以 `-` 或 Markdown 分隔线开头的文本。通过 Shell 调用时应引用整段消息。
 `--terminal` 与 `-m/--message` 不能同时使用。非交互、`dumb` 或不支持的终端会快速返回稳定的
 `TUI_UNAVAILABLE`。同一规范化且非符号链接的 Workspace 会生成带版本 namespace 的稳定
 Project/Workspace 身份；绝对路径不进入 Prompt、Client Event、JSONL 或普通错误输出。
@@ -798,7 +799,7 @@ Credential Binding。
 
 CLI 根据冻结模型目录解析 reasoning：`NONE/OPTIONAL` 缺省关闭，`ALWAYS` 缺省开启，`ADAPTIVE` 优先使用
 adaptive（目录不允许时退为 enabled）；显式 mode/effort 必须通过目录校验后才进入请求。CLI 为每个模型调用
-冻结 `512 KiB / 最长 5 分钟` reasoning 预算（更短的 Run wall timeout 优先），任一超限即不可重试失败。
+冻结 `512 KiB / 最长 10 分钟` reasoning 预算（更短的 Run wall timeout 优先），任一超限即不可重试失败。
 Runtime output listener 只实时打印安全的
 answer delta；reasoning 原文不会进入终端，`--verbose` 只显示最终有效 mode/effort 和供应商报告的 token 数。
 

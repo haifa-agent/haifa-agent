@@ -83,11 +83,13 @@ public final class ModelMessageAssembler {
             List<ModelMessage> messages,
             AssemblyMetrics metrics,
             Map<String, Long> sources,
+            Map<AgentMessageId, Long> continuationReserves,
             ModelMessageProjectionPlan projection,
             long sourceOccurrences,
             long repeatedSourceOccurrences) {
         AssemblyResult {
             messages = List.copyOf(messages);
+            continuationReserves = Map.copyOf(continuationReserves);
             Objects.requireNonNull(metrics, "metrics must not be null");
         }
     }
@@ -272,6 +274,7 @@ public final class ModelMessageAssembler {
                                 HISTORY_SOURCE_RULE_ID.equals(prompt.id().value()));
         AgentRunId precedingExcerptRun = null;
         boolean precedingCompactExcerpt = false;
+        var continuationReserves = new HashMap<AgentMessageId, Long>();
         for (ContextItem item : context.items()) {
             int firstMapped = messages.size();
             if (!(item.content() instanceof HistoricalExcerptContent)) precedingExcerptRun = null;
@@ -308,7 +311,12 @@ public final class ModelMessageAssembler {
                             default -> "currentRunAssistant";
                         };
                     }
-                    mapped.forEach(value -> origins.put(value, source));
+                    for (ModelMessage value : mapped) {
+                        origins.put(value, source);
+                        value.reasoning()
+                                .ifPresent(reasoning -> continuationReserves.merge(
+                                        message.id(), (long) reasoning.byteLength(), Long::sum));
+                    }
                     messages.addAll(mapped);
                 }
             } else if (item.content() instanceof HistoricalExcerptContent excerpt) {
@@ -423,6 +431,7 @@ public final class ModelMessageAssembler {
                         reusable.isPresent() ? 0 : toolCallsByRun.size(),
                         reusable.isPresent()),
                 ModelInputAccounting.sources(assembled, origins),
+                continuationReserves,
                 projectionPlan,
                 contextMessages.size(),
                 contextMessages.size()

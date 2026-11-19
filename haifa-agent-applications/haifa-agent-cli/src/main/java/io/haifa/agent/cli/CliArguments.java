@@ -132,7 +132,10 @@ record CliArguments(
     private static String requireValue(List<String> values, int index, String option) {
         if (index >= values.size()) throw new IllegalArgumentException("missing value for " + option);
         String value = values.get(index).trim();
-        if (value.isEmpty() || value.startsWith("-")) throw new IllegalArgumentException("missing value for " + option);
+        boolean messageOption = option.equals("-m") || option.equals("--message");
+        if (value.isEmpty() || (!messageOption && value.startsWith("-"))) {
+            throw new IllegalArgumentException("missing value for " + option);
+        }
         return value;
     }
 

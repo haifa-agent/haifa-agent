@@ -63,6 +63,16 @@ class CliArgumentsTest {
     }
 
     @Test
+    void acceptsDashPrefixedMarkdownAsOneShotMessage() {
+        String message = "---\nObjective\n- Run the tests";
+
+        assertThat(CliArguments.parse(new String[] {"--message", message, "--quiet"})
+                        .message())
+                .contains(message);
+        assertThat(CliArguments.parse(new String[] {"-m", message}).message()).contains(message);
+    }
+
+    @Test
     void selectsTerminalExplicitlyOrByMissingMessageAndRejectsModeConflict() {
         assertThat(CliArguments.parse(new String[] {"--terminal"}).terminal()).isTrue();
         assertThat(CliArguments.parse(new String[0]).message()).isEmpty();
@@ -74,6 +84,10 @@ class CliArgumentsTest {
     void rejectsUnknownAndMissingOptions() {
         assertThatThrownBy(() -> CliArguments.parse(new String[] {"--unknown"})).hasMessageContaining("unknown option");
         assertThatThrownBy(() -> CliArguments.parse(new String[] {"-m"})).hasMessageContaining("missing value");
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"--message", "  "}))
+                .hasMessageContaining("missing value for --message");
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"--config", "--quiet"}))
+                .hasMessageContaining("missing value for --config");
         assertThatThrownBy(() -> CliArguments.parse(new String[] {"--trace", "unsafe"}))
                 .hasMessageContaining("summary, detail, or jsonl");
         assertThatThrownBy(() -> CliArguments.parse(new String[] {"--trace-file", "trace.jsonl"}))

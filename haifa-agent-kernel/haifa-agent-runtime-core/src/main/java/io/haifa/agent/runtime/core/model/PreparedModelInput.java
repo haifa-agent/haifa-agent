@@ -2,6 +2,8 @@ package io.haifa.agent.runtime.core.model;
 
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.budget.ContextWindowBudget;
+import io.haifa.agent.core.message.AgentMessageId;
+import java.util.Map;
 
 /** Per-call projection, not persisted. Its opaque payload stays inside the model boundary. */
 public final class PreparedModelInput {
@@ -42,6 +44,10 @@ public final class PreparedModelInput {
 
     public long sessionTokens() {
         return estimatedTokens - fixedTokens - otherTokens;
+    }
+
+    public Map<AgentMessageId, Long> continuationReserves() {
+        return assembly.continuationReserves();
     }
 
     ModelMessageAssembler.AssemblyResult assembly() {

@@ -52,6 +52,7 @@ import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelInvocationResult;
+import io.haifa.agent.runtime.core.model.PreparedModelInput;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
@@ -520,7 +521,14 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 progress.recordForcedContextRebuild();
 
                                 if (compactionCoordinator != null) {
-                                    compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+                                    compactionCoordinator.forceCompactOnOverflow(
+                                            run,
+                                            progress.iteration(),
+                                            model,
+                                            builtRef[0]
+                                                    .preparedInput()
+                                                    .map(PreparedModelInput::continuationReserves)
+                                                    .orElse(Map.of()));
                                 }
                                 builtRef[0] = contextBuilder.build(run, progress, model);
                                 middlewareContextRef[0] = builtRef[0].middlewareContext();
@@ -1128,7 +1136,14 @@ public final class DefaultAgentLoop implements AgentLoop {
                             .filter(decision -> decision.shouldCompact())
                             .isPresent()) {
                 var decision = built.compactionDecision().orElseThrow();
-                var outcome = compactionCoordinator.evaluateSelected(run, progress.iteration(), model, decision);
+                var outcome = compactionCoordinator.evaluateSelected(
+                        run,
+                        progress.iteration(),
+                        model,
+                        decision,
+                        built.preparedInput()
+                                .map(PreparedModelInput::continuationReserves)
+                                .orElse(Map.of()));
                 var rebuilt = contextBuilder.build(run, progress, model);
                 rebuilt.preparedInput()
                         .ifPresent(input -> compactionCoordinator.requireSelectedRetention(
@@ -1145,7 +1160,13 @@ public final class DefaultAgentLoop implements AgentLoop {
             progress.recordForcedContextRebuild();
             CompactionEvaluationOutcome overflowOutcome = initialOutcome;
             if (compactionCoordinator != null) {
-                overflowOutcome = compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+                overflowOutcome = compactionCoordinator.forceCompactOnOverflow(
+                        run,
+                        progress.iteration(),
+                        model,
+                        overflow instanceof LocalContextOverflowException local
+                                ? local.continuationReserves()
+                                : Map.of());
             }
             try {
                 return new ContextBuildExecution(contextBuilder.build(run, progress, model), overflowOutcome);
