@@ -1,104 +1,46 @@
 # Haifa Agent
 
-[![Feature PR Fast](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml/badge.svg?branch=dev)](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml)
-![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
-![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.1.6--SNAPSHOT-blue)
+[![Feature PR Fast](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml/badge.svg?branch=dev)](https://github.com/haifa-agent/haifa-agent/actions/workflows/feature-pr-fast.yml) ![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white) ![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?logo=springboot&logoColor=white) ![Version](https://img.shields.io/badge/version-0.1.6--SNAPSHOT-blue)
 
-**Java / Spring 生态的 Agent Runtime、SDK 与本地 Agent 应用。**
+**面向 Java / Spring 生态的 Agent Runtime。**
 
-用 Pure Java 构建可以调用 Tool、进行多轮 Conversation、支持 HITL、持久化与长任务执行的 AI Agent。
+用纯 Java 构建能调用工具、支持人工审批和暂停恢复的 AI Agent。通过 **Java SDK** 把 Agent 嵌入现有 Java / Spring Boot 应用，也可以直接使用基于同一 Runtime 的 **Coding Agent** 和 **Personal Assistant**。
 
-你可以直接使用 Haifa Agent 自带的 **Coding Agent** 和 **Personal Assistant**，也可以通过 **Java SDK** 把 Agent 能力嵌入现有 Java / Spring Boot 应用。
+[**看 Coding Agent 演示**](#coding-agent-演示) · [下载 Coding Agent](https://github.com/haifa-agent/haifa-agent/releases/latest) · [接入 Java SDK](#java-sdk-快速开始)
 
 > 当前开发线为 `0.1.6-SNAPSHOT`，最新正式版为 `0.1.5`。已发布制品见 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases)。
 >
 > 项目仍处于快速演进阶段，README 和 `docs/` 只描述当前源码已经实现的能力。
 
----
+## Coding Agent 演示
 
-## 三种使用 Haifa Agent 的方式
+看 Coding Agent 如何阅读现有实现、生成 HTML 交互稿并验证改动。演示来自实际会话回放，点击终端截图播放约 22 秒的完整片段。
 
-### Coding Agent
+[![Coding Agent 在终端读取 Java 实现并显示工具调用，点击播放编程任务回放](docs/assets/readme/coding-agent-preview.png)](https://haifa-portal.pages.dev/demos/coding-agent/01-coding-loop.mp4)
 
-面向本地软件开发的 Terminal Agent：读取和修改代码、执行 Shell / Build / Test、使用 `git` / `gh`，并通过持续 Conversation 完成长任务。
+| 场景 | 回放里能看到什么 |
+| --- | --- |
+| [读代码并修改](https://haifa-portal.pages.dev/demos/coding-agent/01-coding-loop.mp4) | 阅读项目、修改文件、运行校验。 |
+| [遇到失败后调整](https://haifa-portal.pages.dev/demos/coding-agent/02-failure-recovery.mp4) | 根据命令失败的原因调整做法并继续。 |
+| [向用户澄清](https://haifa-portal.pages.dev/demos/coding-agent/03-clarification.mp4) | 列出选项，等待用户选择后继续。 |
+| [执行前审批](https://haifa-portal.pages.dev/demos/coding-agent/05-approval.mp4) | 在工具执行前查看操作及范围，选择批准或拒绝。 |
+| [验证并报告](https://haifa-portal.pages.dev/demos/coding-agent/04-verify-and-report.mp4) | 运行构建，说明验证结果、遇到的阻碍和后续步骤。 |
 
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│ Haifa Coding Agent                                      GPT-5.6 Sol │
-├──────────────────────────────────────────────────────────────────────┤
-│ > Fix the failing tests in haifa-agent-runtime-core                 │
-│                                                                      │
-│ Searched for RuntimeCoreTest                                        │
-│ Viewed RuntimeCore.java:120-260                                     │
-│ Ran: ./mvnw -pl :haifa-agent-runtime-core -am test                  │
-│                                                                      │
-│ ✦ Found the failure in checkpoint recovery                          │
-│ ✦ Updated 2 files                                                   │
-│ ✦ Tests: 48 passed                                                  │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│ > _                                                                  │
-└──────────────────────────────────────────────────────────────────────┘
-```
+[在 Haifa Portal 中观看五段回放](https://haifa-portal.pages.dev/zh-cn/agent/)
 
-支持：
+### 在自己的项目里试用
 
-- File read / write / patch
-- Shell / Build / Test
-- `git` / `gh`
-- Multi-turn Coding Session
-- Workspace authorization
-- Model selection
-- HITL Approval
-- Session persistence / resume
+Windows x64 用户可以下载 [Coding Agent 便携包](https://github.com/haifa-agent/haifa-agent/releases/latest)。解压后运行 `bin/install.bat`，重新打开终端，在项目目录输入 `haifa`，首次使用按提示配置模型。Coding Agent 默认使用当前目录作为工作区。
 
-[查看 Coding Agent →](docs/applications/coding-agent.md)
+[一键安装指南](docs/get-started/installation.md#coding-agent)面向 Windows x64 和 Ubuntu 24.04 / WSL2 x64。一键安装命令随首个带安装脚本的正式版提供。macOS 和源码开发环境可使用[本地发行目录](haifa-agent-applications/haifa-agent-cli/README.md#构建与运行)。
 
----
+## Java SDK 快速开始
 
-### Personal Assistant
+Coding Agent 的工具执行、人工审批和任务状态由 Haifa Agent Runtime 协调。Java 21 应用可以通过纯 Java Starter 接入同一 Runtime，Spring Boot 应用可以用 [Spring Boot Starter](docs/get-started/spring-boot.md) 装配 Agent 和工具 Bean。
 
-本地 Web Assistant，在同一个 Runtime 上组合 Conversation、Tool、Skill、Memory、Mission 与 Deep Research。
+使用 JDK 21 和 Maven 3.9+，也可以使用仓库自带的 Maven Wrapper。从 [GitHub Releases](https://github.com/haifa-agent/haifa-agent/releases/latest) 下载 SDK ZIP。将解压后的 `repository/` 配置为 Maven 文件仓库，再导入对应版本的 BOM 和 Starter。 [安装与 Maven 配置](docs/get-started/installation.md#java-sdk)
 
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│ Haifa Personal Assistant                                  DeepSeek  │
-├───────────────────────┬──────────────────────────────────────────────┤
-│ Conversations         │ 帮我调研最近两周 Java Agent 生态的发展     │
-│                       │                                              │
-│ ▸ Agent Runtime       │ Research Plan                                │
-│ ▸ AI Infrastructure  │   ✓ 搜索资料                                 │
-│ ▸ Weekly Research     │   ✓ 阅读来源                                 │
-│                       │   ◉ 综合报告                                 │
-│                       │                                              │
-│ Missions              │ Sources 12 · Tool Calls 28                   │
-│ ▸ Java Agent Research │                                              │
-│                       │ Java Agent 生态目前主要沿着……                │
-├───────────────────────┴──────────────────────────────────────────────┤
-│ Ask anything...                                                     │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-支持：
-
-- Multi-turn Conversation
-- 多 Model / Provider
-- Tool / Skill / MCP
-- Memory
-- Mission
-- Deep Research
-- Image / Audio input
-- Local Web UI
-- Durable SQLite state
-
-[查看 Personal Assistant →](docs/applications/personal-assistant.md)
-
----
-
-### Java SDK
-
-把 Agent 直接嵌入你的 Java 应用。
+设置 `DEEPSEEK_API_KEY` 后，运行以下代码发起一次真实模型调用。默认模型是 DeepSeek V4 Flash。
 
 ```java
 import io.haifa.agent.starter.HaifaAgentStarter;
@@ -106,54 +48,18 @@ import io.haifa.agent.starter.HaifaAgentStarter;
 public class HelloHaifa {
     public static void main(String[] args) throws Exception {
         try (var agent = HaifaAgentStarter.create()) {
-            var response = agent
-                    .chat("用一句话介绍 Haifa Agent")
-                    .await();
-
-            System.out.println(response.text());
+            System.out.println(agent.chat("用一句话介绍 Haifa Agent").await().text());
         }
     }
 }
 ```
 
-输出示例：
+Starter 默认在进程内保存状态。要体验跨进程恢复，按 [SQLite 持久化示例](haifa-agent-applications/haifa-agent-sdk-example/src/main/java/io/haifa/example/sdk/advanced/SqliteDurableReferenceAssemblyExample.java) 装配持久化。
 
-```text
-Haifa Agent 是一个面向 Java 与 Spring 生态的 Agent Runtime 与开发框架。
-```
+可以先用本地 Stub 模型试跑，无需 API Key。[天气查询示例](haifa-agent-applications/haifa-agent-sdk-example/src/main/java/io/haifa/example/sdk/intermediate/TypedJavaToolExample.java) 演示了「模型发起工具调用 → Java 工具返回结果 → 模型生成回答」。 [运行示例](haifa-agent-applications/haifa-agent-sdk-example/README.md)
 
-Starter 默认使用 DeepSeek V4 Flash。设置：
-
-```bash
-export DEEPSEEK_API_KEY="<your-api-key>"
-```
-
-即可运行第一个真实 Model 请求。
-
-Tool、MCP、Execution、Memory 等能力不会被默认全部打开，而是根据产品需要显式装配。
-
-[SDK Quickstart →](docs/get-started/quickstart.md)
-
----
-
-## 快速开始
-
-### 方式一：运行 Coding Agent
-
-Windows x64 和 Ubuntu 24.04 / WSL2 x64 可通过 [一键安装命令](docs/get-started/installation.md#coding-agent)
-安装内置 Java 21 的 Coding Agent。安装后进入项目目录，运行 `haifa`，按终端引导连接模型。
-Coding Agent 默认使用当前目录作为 Workspace。
-
-macOS 和源码开发环境可使用 [本地发行目录](haifa-agent-applications/haifa-agent-cli/README.md#构建与运行)。
-
-### 方式二：嵌入 Java 应用
-
-Haifa Agent 当前要求：
-
-- Java 21
-- Maven 3.9+，或直接使用仓库自带 Maven Wrapper
-
-Pure Java 项目：
+<details>
+<summary>查看 Pure Java 项目的 Maven 依赖配置</summary>
 
 ```xml
 <dependencyManagement>
@@ -176,9 +82,14 @@ Pure Java 项目：
 </dependencies>
 ```
 
-SDK 发行包包含 Maven 文件仓库。使用与 BOM 版本相同的 ZIP，配置方式见 [Installation](docs/get-started/installation.md)。
+</details>
 
-[Installation →](docs/get-started/installation.md)
+## Agent Loop 如何推进任务
+
+- **模型决定下一步。** 根据任务和已有结果，模型选择调用工具、向用户提问，或给出最终结果。
+- **Runtime 负责执行。** 每轮构建上下文并调用模型，检查权限和执行预算，按策略执行工具，再把结果交给模型判断下一步。 [了解 Agent Runtime](docs/core-components/agent-runtime.md)
+
+工具调用需要**人工审批**时，Runtime 会在执行前暂停，等待用户批准或拒绝。启用持久化后，已保存暂停状态的任务可以在进程重启后**继续执行**。 [了解持久化与恢复](docs/core-components/persistence-and-recovery.md)
 
 ---
 
@@ -371,6 +282,8 @@ Haifa Agent 的核心结构很简单：
 
 ## Coding Agent
 
+面向本地软件开发的 Terminal Agent：读取和修改代码、执行 Shell / Build / Test、使用 `git` / `gh`，并通过持续 Conversation 完成长任务。
+
 Coding Agent 不是 SDK Demo，而是 Haifa Runtime 的实际产品之一。
 
 它把：
@@ -388,6 +301,17 @@ Model
 ```
 
 组合成一个可以长期使用的 Terminal Coding Agent。
+
+### 工具与会话能力
+
+- File read / write / patch
+- Shell / Build / Test
+- `git` / `gh`
+- Multi-turn Coding Session
+- Workspace authorization
+- Model selection
+- HITL Approval
+- Session persistence / resume
 
 典型任务：
 
@@ -440,7 +364,45 @@ PA 使用本地 Spring Boot Server + React Web，并默认运行在 Loopback Tru
 
 它不是一个面向公网、多租户的通用 Agent Server。
 
-[了解 Personal Assistant →](docs/applications/personal-assistant.md)
+<details>
+<summary>界面示意与功能列表</summary>
+
+本地 Web Assistant，在同一个 Runtime 上组合 Conversation、Tool、Skill、Memory、Mission 与 Deep Research。
+
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│ Haifa Personal Assistant                                  DeepSeek  │
+├───────────────────────┬──────────────────────────────────────────────┤
+│ Conversations         │ 帮我调研最近两周 Java Agent 生态的发展     │
+│                       │                                              │
+│ ▸ Agent Runtime       │ Research Plan                                │
+│ ▸ AI Infrastructure  │   ✓ 搜索资料                                 │
+│ ▸ Weekly Research     │   ✓ 阅读来源                                 │
+│                       │   ◉ 综合报告                                 │
+│                       │                                              │
+│ Missions              │ Sources 12 · Tool Calls 28                   │
+│ ▸ Java Agent Research │                                              │
+│                       │ Java Agent 生态目前主要沿着……                │
+├───────────────────────┴──────────────────────────────────────────────┤
+│ Ask anything...                                                     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+支持：
+
+- Multi-turn Conversation
+- 多 Model / Provider
+- Tool / Skill / MCP
+- Memory
+- Mission
+- Deep Research
+- Image / Audio input
+- Local Web UI
+- Durable SQLite state
+
+[查看 Personal Assistant →](docs/applications/personal-assistant.md)
+
+</details>
 
 ---
 
