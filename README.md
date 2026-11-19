@@ -14,9 +14,9 @@
 
 ## Coding Agent 演示
 
-看 Coding Agent 如何阅读现有实现、生成 HTML 交互稿并验证改动。演示来自实际会话回放，点击终端截图播放约 22 秒的完整片段。
+看 Coding Agent 如何阅读现有实现、生成 HTML 交互稿并验证改动。下方 GIF 循环播放约 12 秒的会话片段，点击可观看约 22 秒的完整回放。
 
-[![Coding Agent 在终端读取 Java 实现并显示工具调用，点击播放编程任务回放](docs/assets/readme/coding-agent-preview.png)](https://haifa-portal.pages.dev/demos/coding-agent/01-coding-loop.mp4)
+[![Coding Agent 在终端读取 Java 实现、修改文件、运行验证并报告结果](docs/assets/readme/coding-agent-demo.gif)](https://haifa-portal.pages.dev/demos/coding-agent/01-coding-loop.mp4)
 
 | 场景 | 回放里能看到什么 |
 | --- | --- |
