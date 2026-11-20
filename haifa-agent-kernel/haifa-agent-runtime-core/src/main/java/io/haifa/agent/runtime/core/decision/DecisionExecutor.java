@@ -30,6 +30,8 @@ import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
+import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
@@ -1138,8 +1140,16 @@ public final class DecisionExecutor {
         interactions
                 .unappliedToolResolution(run.id())
                 .filter(saved -> saved.response().type() == InteractionResponseType.APPROVE)
-                .ifPresent(saved -> validateToolApproval(
-                        run, (ToolApprovalTarget) saved.request().target()));
+                .ifPresent(saved -> {
+                    try {
+                        validateToolApproval(
+                                run, (ToolApprovalTarget) saved.request().target());
+                    } catch (SecurityException exception) {
+                        throw new RuntimeContractException(
+                                RuntimeApiErrorCode.APPROVAL_TARGET_STALE,
+                                "The saved Tool approval no longer matches the current invocation or policy");
+                    }
+                });
     }
 
     public void applyPendingToolApproval(AgentRun run) {

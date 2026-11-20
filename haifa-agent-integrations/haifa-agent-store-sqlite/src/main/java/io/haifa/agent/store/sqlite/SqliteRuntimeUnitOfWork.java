@@ -1,5 +1,6 @@
 package io.haifa.agent.store.sqlite;
 
+import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.store.sqlite.mybatis.SqliteMyBatisSessionFactory;
 import java.sql.Connection;
@@ -193,10 +194,16 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
                     if (transactionStarted) {
                         rollback(connection, exception);
                     }
-                    RuntimeException failure = exception instanceof SqliteStoreException storeException
-                            ? storeException
-                            : new SqliteStoreException(
-                                    SqliteStoreFailure.TRANSACTION_FAILED, "SQLite unit of work failed", exception);
+                    RuntimeException failure =
+                            switch (exception) {
+                                case SqliteStoreException storeException -> storeException;
+                                case RuntimeContractException rejection -> rejection;
+                                default ->
+                                    new SqliteStoreException(
+                                            SqliteStoreFailure.TRANSACTION_FAILED,
+                                            "SQLite unit of work failed",
+                                            exception);
+                            };
                     // The failure path is logged too: a unit of work that never committed used to leave no trace,
                     // which made a slow or failed holder of the write slot impossible to identify.
                     logUnitOfWork(
@@ -236,9 +243,11 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     }
 
     private static String failureCode(RuntimeException failure) {
-        return failure instanceof SqliteStoreException storeException
-                ? storeException.failure().name()
-                : SqliteStoreFailure.TRANSACTION_FAILED.name();
+        return switch (failure) {
+            case SqliteStoreException storeException -> storeException.failure().name();
+            case RuntimeContractException rejection -> rejection.code().name();
+            default -> SqliteStoreFailure.TRANSACTION_FAILED.name();
+        };
     }
 
     private static void logUnitOfWork(

@@ -13,6 +13,7 @@
   planning and summary validation failures with a reducing deterministic checkpoint when a safe turn boundary exists.
 - Commit suspended Runs and their paused execution attempts together so Runs can resume as soon as suspension is visible.
 - Add an SDK command to resume a waiting Run from its recorded, unapplied tool approval.
+- Return `APPROVAL_TARGET_STALE` when a saved tool approval no longer matches the current invocation or policy.
 
 ## 0.1.5
 
