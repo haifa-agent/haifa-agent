@@ -49,11 +49,14 @@ import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
+import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.DefaultAgentRuntime;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
@@ -718,10 +721,23 @@ class SqliteRuntimeRecoveryTest {
                     providerCalls,
                     changedRequirement);
 
-            processB.runtime().respond(approvalResponse(runId, interactionId, "digest-approval"));
+            assertThatThrownBy(
+                            () -> processB.runtime().respond(approvalResponse(runId, interactionId, "digest-approval")))
+                    .isInstanceOfSatisfying(RuntimeContractException.class, failure -> assertThat(failure.code())
+                            .isEqualTo(RuntimeApiErrorCode.APPROVAL_TARGET_STALE));
             processB.scheduler().runAll();
 
-            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(processB.runtime().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(processB.ports()
+                            .interactions()
+                            .record(interactionId)
+                            .orElseThrow()
+                            .state())
+                    .isEqualTo(InteractionState.RESPONDED);
+            assertThat(processB.ports().attempts().attemptsFor(runId))
+                    .singleElement()
+                    .satisfies(attempt -> assertThat(attempt.status()).isEqualTo(ExecutionAttemptStatus.PAUSED));
             assertThat(providerCalls).hasValue(0);
         }
     }

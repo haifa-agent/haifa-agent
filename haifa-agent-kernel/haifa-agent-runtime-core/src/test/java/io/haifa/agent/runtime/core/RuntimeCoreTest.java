@@ -1964,7 +1964,8 @@ class RuntimeCoreTest {
 
         policy.set(TestToolPlatform.deny());
         assertThatThrownBy(() -> fixture.runtime.resumeApprovedTool(runId, approval.id()))
-                .isInstanceOf(SecurityException.class);
+                .isInstanceOfSatisfying(RuntimeContractException.class, failure -> assertThat(failure.code())
+                        .isEqualTo(RuntimeApiErrorCode.APPROVAL_TARGET_STALE));
         assertThat(fixture.runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
         assertThat(fixture.store.attemptsFor(runId)).hasSize(1);
         assertThat(calls).hasValue(0);
