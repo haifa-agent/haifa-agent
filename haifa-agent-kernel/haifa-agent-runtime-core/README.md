@@ -536,7 +536,9 @@ Checkpoint 或 JSONL。通道按 Run 维护有界缓冲和 source-local cursor�
 AgentLoop，Run 终态后清理。Reasoning delta 只触发按物理调用每 10 秒节流的 content-free
 `MODEL_ACTIVITY`；冻结配置可通过 `haifa.runtime.max_reasoning_bytes` 和
 `haifa.runtime.max_reasoning_duration_millis` 限制 reasoning，二者分别按 UTF-8 字节和第一段非空 delta
-起算的持续时间计量，任一超限都会取消当前调用并以不可重试 `OUTPUT_LIMIT_EXCEEDED` 结束。诊断只包含
+起算的持续时间计量。两种超限都会取消当前调用，分别产生不可重试的 `MODEL_REASONING_BYTE_LIMIT_EXCEEDED` 和
+`MODEL_REASONING_TIMEOUT`。同一 delta 同时超限时按字节上限处理。调用事件保留本地超限原因、实际收到的
+Provider finish reason 和 Run 总时限终止码。诊断只包含
 字节、时长、事件数和阈值。有效模型决策仍由 `DecisionExecutor` 按 Final、Continue 或 Tool Call 的既有
 领域语义写入 `session_message`；完整正文不复制到 `runtime_event`。Provider 要求 Tool reasoning 连续性时，
 只有冻结 profile 显式声明后 adapter 才把 Tool Call reasoning 交给受保护 continuation。

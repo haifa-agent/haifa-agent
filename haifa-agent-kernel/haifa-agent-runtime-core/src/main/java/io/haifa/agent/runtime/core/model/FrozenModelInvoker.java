@@ -528,9 +528,9 @@ public final class FrozenModelInvoker {
                 RuntimeControlOptions.maxReasoningBytes(binding.configuration().modelRequestOptions()),
                 RuntimeControlOptions.maxReasoningDurationMillis(
                         binding.configuration().modelRequestOptions()));
-        AgentChatResponse response;
+        String observedFinishReason = "";
         try {
-            response = binding.chatModel().invokeStreaming(request, event -> {
+            AgentChatResponse response = binding.chatModel().invokeStreaming(request, event -> {
                 if (controls.signal(run.id()).stopsExecution()) return ModelStreamControl.CANCEL;
                 if (event instanceof ModelStreamEvent.ContentDelta content) {
                     output.content(run.id(), callId.value(), physicalAttempt, content.delta());
@@ -540,7 +540,11 @@ public final class FrozenModelInvoker {
                 }
                 return ModelStreamControl.CONTINUE;
             });
+            observedFinishReason = response.finishReason().name();
             ModelInputAccounting.recordUsage(events, time, binding, request, "ORDINARY", response.usage());
+            if (reasoningBudget.limitFailure() != null) {
+                throw new IllegalStateException("Model returned after local reasoning cancellation");
+            }
             if (workingSets != null) workingSets.recordRequest(run, request, startedAt.toEpochMilli(), context);
             RunControlSignal completedSignal = controls.signal(run.id());
             if (completedSignal.stopsExecution()) {
@@ -609,17 +613,19 @@ public final class FrozenModelInvoker {
                     null);
             return invocation;
         } catch (RuntimeException exception) {
-            RunControlSignal stopSignal = controls.signal(run.id());
+            var directive = controls.directive(run.id());
+            RunControlSignal stopSignal = directive.signal();
             boolean cancelled = stopSignal.stopsExecution();
             RuntimeException failure = exception;
-            if (!cancelled && reasoningBudget.exceeded()) {
+            ModelErrorCategory limitFailure = reasoningBudget.limitFailure();
+            if (!cancelled && limitFailure != null) {
                 failure = new ModelInvocationException(
-                        ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
+                        limitFailure,
                         false,
                         0,
-                        "reasoning_budget_exceeded",
+                        "",
                         callId,
-                        "reasoning budget exceeded",
+                        "Local model reasoning limit exceeded",
                         exception,
                         null,
                         true);
@@ -630,6 +636,7 @@ public final class FrozenModelInvoker {
                                 "modelCallId", callId.value(),
                                 "modelRequestId", requestId.value(),
                                 "attempt", physicalAttempt,
+                                "reasonCode", limitFailure.name(),
                                 "reasoningBytes", reasoningBudget.bytes(),
                                 "reasoningEvents", reasoningBudget.events(),
                                 "reasoningDurationMillis", reasoningBudget.durationMillis(),
@@ -671,23 +678,27 @@ public final class FrozenModelInvoker {
                     0,
                     0,
                     0,
-                    "",
-                    cancelled
-                            ? "CANCELLED"
-                            : failure instanceof ModelInvocationException modelFailure
-                                    ? modelFailure.category().name()
-                                    : failure
-                                                    instanceof
-                                                    io.haifa.agent.runtime.core.model.continuation
-                                                                    .ModelContinuationException
-                                                            continuationFailure
-                                            ? continuationFailure.failure().name()
-                                            : "MODEL_CALL_FAILED",
+                    observedFinishReason,
+                    stopSignal == RunControlSignal.TIMEOUT
+                            ? directive.terminationReason().orElseThrow().code()
+                            : cancelled
+                                    ? "CANCELLED"
+                                    : failure instanceof ModelInvocationException modelFailure
+                                            ? modelFailure.category().name()
+                                            : failure
+                                                            instanceof
+                                                            io.haifa.agent.runtime.core.model.continuation
+                                                                            .ModelContinuationException
+                                                                    continuationFailure
+                                                    ? continuationFailure
+                                                            .failure()
+                                                            .name()
+                                                    : "MODEL_CALL_FAILED",
                     elapsedMillis(startedAt),
                     failure instanceof ModelInvocationException modelFailure ? modelFailure : null);
             if (cancelled) {
                 if (stopSignal == RunControlSignal.CANCEL || stopSignal == RunControlSignal.TIMEOUT) {
-                    throw new CancellationObservedException(controls.directive(run.id()));
+                    throw new CancellationObservedException(directive);
                 }
                 throw new CancellationObservedException(stopSignal);
             }

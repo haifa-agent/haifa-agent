@@ -112,6 +112,8 @@ public record ModelRetryPolicy(
                     CONTEXT_TOO_LONG,
                     CONTENT_REJECTED,
                     OUTPUT_LIMIT_EXCEEDED,
+                    REASONING_TIME_LIMIT_EXCEEDED,
+                    REASONING_BYTE_LIMIT_EXCEEDED,
                     PARTIAL_RESPONSE,
                     CANCELLED,
                     UNKNOWN_PROVIDER_ERROR -> false;

@@ -988,6 +988,12 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.TIMEOUT);
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().terminationReason())
                 .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("WALL_TIME_EXCEEDED"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.call.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("status", "CANCELLED")
+                        .containsEntry("reasonCode", "WALL_TIME_EXCEEDED"));
         assertThat(fixture.store.attemptsFor(accepted.runId()))
                 .singleElement()
                 .satisfies(attempt -> assertThat(attempt.status().name()).isEqualTo("FAILED"));
@@ -1269,8 +1275,20 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void reasoningBudgetCancelsThePhysicalCallWithoutRetryOrSensitivePayloads() {
+    void reasoningByteLimitCancelsThePhysicalCallWithoutRetryOrSensitivePayloads() {
+        assertReasoningLimit(
+                false, AgentErrorCode.MODEL_REASONING_BYTE_LIMIT_EXCEEDED, "REASONING_BYTE_LIMIT_EXCEEDED");
+    }
+
+    @Test
+    void reasoningTimeLimitCancelsThePhysicalCallWithoutRetryOrSensitivePayloads() {
+        assertReasoningLimit(true, AgentErrorCode.MODEL_REASONING_TIMEOUT, "REASONING_TIME_LIMIT_EXCEEDED");
+    }
+
+    private void assertReasoningLimit(boolean timeLimit, AgentErrorCode errorCode, String reasonCode) {
         AtomicInteger calls = new AtomicInteger();
+        Instant start = Instant.parse("2026-07-21T00:00:00Z");
+        AtomicReference<Instant> clock = new AtomicReference<>(start);
         AgentChatModel model = new AgentChatModel() {
             @Override
             public AgentChatResponse invoke(AgentChatRequest request) {
@@ -1285,6 +1303,7 @@ class RuntimeCoreTest {
                         .isEqualTo(ModelStreamControl.CONTINUE);
                 assertThat(sink.emit(new ModelStreamEvent.ReasoningDelta(request.callId(), 2, "你")))
                         .isEqualTo(ModelStreamControl.CONTINUE);
+                if (timeLimit) clock.set(start.plusMillis(101));
                 assertThat(sink.emit(new ModelStreamEvent.ReasoningDelta(request.callId(), 3, "b")))
                         .isEqualTo(ModelStreamControl.CANCEL);
                 throw new ModelInvocationException(
@@ -1299,17 +1318,22 @@ class RuntimeCoreTest {
                         true);
             }
         };
-        Fixture fixture = fixture(model, builder -> builder.modelRetry(
-                        new ModelRetryPolicy(new RetryPolicy(4, ignored -> true, BackoffStrategy.none())))
-                .profiles((id, overrides) -> new ResolvedProfile(
-                        id,
-                        "1.0.0",
-                        AgentRunType.CHAT,
-                        AgentRunBudget.disabled(),
-                        new AgentRunLimits(4, 0, 1, 60_000, 60_000),
-                        DefaultResolvedModelSnapshots.deepSeekV4Pro(),
-                        Map.of(),
-                        Map.of(RuntimeControlOptions.MAX_REASONING_BYTES, 4))));
+        Fixture fixture = fixture(
+                model,
+                builder -> builder.modelRetry(
+                                new ModelRetryPolicy(new RetryPolicy(4, ignored -> true, BackoffStrategy.none())))
+                        .profiles((id, overrides) -> new ResolvedProfile(
+                                id,
+                                "1.0.0",
+                                AgentRunType.CHAT,
+                                AgentRunBudget.disabled(),
+                                new AgentRunLimits(4, 0, 1, 60_000, 60_000),
+                                DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                                Map.of(),
+                                timeLimit
+                                        ? Map.of(RuntimeControlOptions.MAX_REASONING_DURATION_MILLIS, 100)
+                                        : Map.of(RuntimeControlOptions.MAX_REASONING_BYTES, 4))),
+                clock::get);
 
         var accepted = fixture.runtime.start(request("reasoning-budget"));
         fixture.scheduler.runAll();
@@ -1317,24 +1341,62 @@ class RuntimeCoreTest {
         assertThat(calls).hasValue(1);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
             assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_RESPONSE_INVALID);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(errorCode);
         });
+        var failure = fixture.store.eventsFor(accepted.runId()).stream()
+                .filter(event -> event.type().equals("model.call.failed"))
+                .findFirst()
+                .orElseThrow();
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().equals("model.reasoning-budget-exceeded"))
                 .singleElement()
                 .satisfies(event -> assertThat(event.data())
+                        .containsEntry("reasonCode", reasonCode)
+                        .containsEntry("modelCallId", failure.data().get("modelCallId"))
+                        .containsEntry("modelRequestId", failure.data().get("modelRequestId"))
                         .containsEntry("reasoningBytes", 5L)
                         .containsEntry("reasoningEvents", 3L)
-                        .containsEntry("maxReasoningBytes", 4L)
+                        .containsEntry(
+                                timeLimit ? "maxReasoningDurationMillis" : "maxReasoningBytes", timeLimit ? 100L : 4L)
                         .doesNotContainKeys("reasoning", "content", "delta"));
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().equals("model.call.failed"))
                 .singleElement()
                 .satisfies(event -> assertThat(event.data())
-                        .containsEntry("reasonCode", "OUTPUT_LIMIT_EXCEEDED")
-                        .containsEntry("providerCode", "reasoning_budget_exceeded")
+                        .containsEntry("reasonCode", reasonCode)
+                        .containsEntry("finishReason", "")
+                        .containsEntry("providerCode", "")
                         .containsEntry("retryable", false)
                         .containsEntry("outputObserved", true));
+    }
+
+    @Test
+    void recordsProviderLengthFinishOnTheFailedCall() {
+        AtomicReference<String> callId = new AtomicReference<>();
+        Fixture fixture = fixture(request -> {
+            callId.set(request.callId().value());
+            return new AgentChatResponse(
+                    "truncated",
+                    "deepseek-v4-pro",
+                    "partial",
+                    List.of(),
+                    ModelFinishReason.LENGTH,
+                    ModelUsage.unpriced(1, 1),
+                    "",
+                    Map.of());
+        });
+        var accepted = fixture.runtime.start(request("provider-length"));
+        fixture.scheduler.runAll();
+
+        var run = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_OUTPUT_TRUNCATED);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.call.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("modelCallId", callId.get())
+                        .containsEntry("finishReason", "LENGTH")
+                        .containsEntry("providerCode", "output_truncated"));
     }
 
     @Test
