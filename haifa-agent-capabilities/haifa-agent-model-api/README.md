@@ -34,6 +34,9 @@ only at the model invocation/continuation boundary and is never a public Agent m
 `CANCEL`. The default implementation projects a synchronous result as one completed content delta. Provider raw
 chunks, SDK types, and reasoning text must not cross this module boundary.
 
+`REASONING_TIME_LIMIT_EXCEEDED` and `REASONING_BYTE_LIMIT_EXCEEDED` classify Runtime enforcement
+of local streaming limits. Provider finish reasons continue to describe the response returned by the provider.
+
 `AgentChatResponse` preserves an otherwise empty successful transport response so the Runtime can classify it at the
 provider-neutral boundary. Empty content with no Tool Call or structured output is not a valid agent decision; callers
 must not treat the transport object itself as successful task completion.

@@ -2,6 +2,8 @@
 
 ## Unreleased - 0.1.6-SNAPSHOT
 
+- Distinguish local model reasoning time and byte limits from provider output truncation and the Run deadline.
+
 - Accept dash-prefixed task text in the Coding CLI's one-shot message argument.
 - Account for protected continuation size when selecting the retained tail for Coding Agent compaction.
 - Raise the Coding Agent's maximum per-call reasoning duration to ten minutes.

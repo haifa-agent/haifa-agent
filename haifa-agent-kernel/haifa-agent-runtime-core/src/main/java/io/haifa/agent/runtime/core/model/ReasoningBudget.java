@@ -1,5 +1,6 @@
 package io.haifa.agent.runtime.core.model;
 
+import io.haifa.agent.model.api.ModelErrorCategory;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -13,7 +14,7 @@ final class ReasoningBudget {
     private long bytes;
     private long events;
     private long durationMillis;
-    private boolean exceeded;
+    private ModelErrorCategory limitFailure;
 
     ReasoningBudget(OptionalLong maxBytes, OptionalLong maxDurationMillis) {
         this.maxBytes = maxBytes;
@@ -25,13 +26,19 @@ final class ReasoningBudget {
         bytes = Math.addExact(bytes, delta.getBytes(StandardCharsets.UTF_8).length);
         events = Math.addExact(events, 1);
         durationMillis = Math.max(0, Duration.between(firstDeltaAt, observedAt).toMillis());
-        exceeded = maxBytes.isPresent() && bytes > maxBytes.getAsLong()
-                || maxDurationMillis.isPresent() && durationMillis > maxDurationMillis.getAsLong();
-        return !exceeded;
+        if (maxBytes.isPresent() && bytes > maxBytes.getAsLong()) {
+            // A byte breach remains terminal even when the same delta also exceeds the time limit.
+            limitFailure = ModelErrorCategory.REASONING_BYTE_LIMIT_EXCEEDED;
+        } else if (limitFailure == null
+                && maxDurationMillis.isPresent()
+                && durationMillis > maxDurationMillis.getAsLong()) {
+            limitFailure = ModelErrorCategory.REASONING_TIME_LIMIT_EXCEEDED;
+        }
+        return limitFailure == null;
     }
 
-    boolean exceeded() {
-        return exceeded;
+    ModelErrorCategory limitFailure() {
+        return limitFailure;
     }
 
     long bytes() {

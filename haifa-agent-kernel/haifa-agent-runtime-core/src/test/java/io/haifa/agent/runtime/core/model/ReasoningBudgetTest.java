@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.model.api.ModelErrorCategory;
 import java.time.Instant;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
@@ -19,7 +20,17 @@ class ReasoningBudgetTest {
 
         assertThat(budget.bytes()).isEqualTo(5);
         assertThat(budget.events()).isEqualTo(3);
-        assertThat(budget.exceeded()).isTrue();
+        assertThat(budget.limitFailure()).isEqualTo(ModelErrorCategory.REASONING_BYTE_LIMIT_EXCEEDED);
+    }
+
+    @Test
+    void aDeltaThatBreachesBothLimitsIsClassifiedAsAByteBreach() {
+        ReasoningBudget budget = new ReasoningBudget(OptionalLong.of(1), OptionalLong.of(1));
+
+        assertThat(budget.observe("a", START)).isTrue();
+        assertThat(budget.observe("b", START.plusMillis(2))).isFalse();
+
+        assertThat(budget.limitFailure()).isEqualTo(ModelErrorCategory.REASONING_BYTE_LIMIT_EXCEEDED);
     }
 
     @Test
@@ -30,6 +41,7 @@ class ReasoningBudgetTest {
         assertThat(budget.observe("at-limit", START.plusMillis(300_000))).isTrue();
         assertThat(budget.observe("over-limit", START.plusMillis(300_001))).isFalse();
 
+        assertThat(budget.limitFailure()).isEqualTo(ModelErrorCategory.REASONING_TIME_LIMIT_EXCEEDED);
         assertThat(budget.durationMillis()).isEqualTo(300_001);
         assertThat(budget.events()).isEqualTo(3);
     }

@@ -57,6 +57,16 @@ public enum AgentErrorCode {
             AgentErrorCategory.MODEL,
             Retryability.RETRYABLE_WITH_BACKOFF),
     MODEL_TIMEOUT("MODEL_TIMEOUT", "Model request timed out", AgentErrorCategory.TIMEOUT, Retryability.RETRYABLE),
+    MODEL_REASONING_TIMEOUT(
+            "MODEL_REASONING_TIMEOUT",
+            "Model call reached its local reasoning time limit",
+            AgentErrorCategory.TIMEOUT,
+            Retryability.NOT_RETRYABLE),
+    MODEL_REASONING_BYTE_LIMIT_EXCEEDED(
+            "MODEL_REASONING_BYTE_LIMIT_EXCEEDED",
+            "Model call reached its local reasoning byte limit",
+            AgentErrorCategory.RESOURCE_LIMIT,
+            Retryability.NOT_RETRYABLE),
     MODEL_PROVIDER_UNAVAILABLE(
             "MODEL_PROVIDER_UNAVAILABLE",
             "Model provider is unavailable",

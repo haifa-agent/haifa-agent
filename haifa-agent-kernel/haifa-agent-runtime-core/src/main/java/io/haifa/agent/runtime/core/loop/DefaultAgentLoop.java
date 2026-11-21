@@ -854,6 +854,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             case PERMISSION_DENIED -> AgentErrorCode.MODEL_PERMISSION_DENIED;
             case RATE_LIMITED -> AgentErrorCode.MODEL_RATE_LIMITED;
             case TIMEOUT -> AgentErrorCode.MODEL_TIMEOUT;
+            case REASONING_TIME_LIMIT_EXCEEDED -> AgentErrorCode.MODEL_REASONING_TIMEOUT;
+            case REASONING_BYTE_LIMIT_EXCEEDED -> AgentErrorCode.MODEL_REASONING_BYTE_LIMIT_EXCEEDED;
             case PROVIDER_UNAVAILABLE, SERVER_ERROR, TRANSPORT_ERROR -> AgentErrorCode.MODEL_PROVIDER_UNAVAILABLE;
             case INVALID_REQUEST -> AgentErrorCode.MODEL_REQUEST_INVALID;
             case MODEL_NOT_FOUND -> AgentErrorCode.MODEL_NOT_FOUND;
