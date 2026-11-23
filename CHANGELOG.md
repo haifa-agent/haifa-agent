@@ -2,6 +2,9 @@
 
 ## Unreleased - 0.1.6-SNAPSHOT
 
+- Bind explicit USER memory saves, corrections and deletions to a persisted conversation instruction. SQLite
+  commits each action and its id-only receipt atomically, including across retries and process restarts.
+
 - Distinguish local model reasoning time and byte limits from provider output truncation and the Run deadline.
 
 - Accept dash-prefixed task text in the Coding CLI's one-shot message argument.

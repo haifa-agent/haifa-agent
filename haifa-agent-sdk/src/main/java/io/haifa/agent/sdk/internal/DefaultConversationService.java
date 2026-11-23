@@ -3,6 +3,7 @@ package io.haifa.agent.sdk.internal;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageVisibility;
@@ -35,6 +36,7 @@ import io.haifa.agent.sdk.conversation.ConversationTurnQuery;
 import io.haifa.agent.sdk.conversation.RenameConversationCommand;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
+import io.haifa.agent.sdk.memory.UserMemoryInstruction;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.time.Instant;
@@ -392,6 +394,34 @@ public final class DefaultConversationService implements ConversationService {
             throw conflict("CONVERSATION_UNAVAILABLE");
         }
         return run.sessionId();
+    }
+
+    /** Looks up a persisted USER message using the same caller that will own its memory mutation. */
+    public Optional<ConversationTurn> memoryInstruction(SdkCaller caller, UserMemoryInstruction instruction) {
+        var session = sessions().find(instruction.sessionId());
+        if (session.isEmpty() || !isVisible(session.orElseThrow(), caller)) return Optional.empty();
+        return persistence
+                .runtimePersistence()
+                .state()
+                .message(new AgentMessageId(instruction.messageId()))
+                .filter(message -> message.sessionId().equals(instruction.sessionId())
+                        && message.runId().filter(instruction.runId()::equals).isPresent()
+                        && message.role() == MessageRole.USER
+                        && message.visibility() == MessageVisibility.USER_VISIBLE)
+                .flatMap(message -> {
+                    var text = message.contents().stream()
+                            .filter(TextPart.class::isInstance)
+                            .toList();
+                    if (text.isEmpty()) return Optional.empty();
+                    return Optional.of(new ConversationTurn(
+                            message.id().value(),
+                            message.role(),
+                            message.runId(),
+                            message.sequence(),
+                            text,
+                            message.visibility(),
+                            message.createdAt()));
+                });
     }
 
     private Optional<ConversationRecord> visible(ConversationRecord metadata, SdkCaller caller) {

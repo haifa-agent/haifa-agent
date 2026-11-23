@@ -372,6 +372,12 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   `SdkCaller`；`AGENT` 桶以 Agent Definition id 为目标，Runtime 召回时使用 Run 的 Agent Definition id。凭据、支付和精确
   证件号内容以 `MEMORY_CONTENT_SENSITIVE` 拒绝写入。异步捕获应在 `PutMemoryCommand.observedAt` 传入来源观察时间，
   使清空或删除之前观察到的迟到写入以 `MEMORY_WRITE_STALE` 被拒绝。
+- SQLite 的 `agent.memories()` 支持从持久化 USER 消息执行 `remember`、`correct` 和 `forget`。宿主在确认用户意图后，
+  用服务端会话 ID、Run ID、消息 ID 和原指令里稳定的动作序号构造 `UserMemoryInstruction`。重试时沿用该引用；
+  序号、目标和预期版本均由可信宿主确定。新增或纠正的正文须取自该条用户消息；删除与纠正仅操作当前账号的 USER 记录。
+  SDK 从持久化消息取观察时间。SQLite 将变更与只含记忆 ID 的回执原子提交；重放只返回原 ID，即使该记录后来被删除。
+  当前记录用 `find` 读取。同一动作换载荷会失败。普通 `put` 继续按 subject 更新。自定义后端只有提供同事务的
+  `MemoryCommandExecutor` 才能执行指令写入。
 - `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在显式装配了对应 typed 组件
   时返回应用服务；SQLite Product Components 已提供 Memory 与 Artifact 的单机持久化实现基线。
 
