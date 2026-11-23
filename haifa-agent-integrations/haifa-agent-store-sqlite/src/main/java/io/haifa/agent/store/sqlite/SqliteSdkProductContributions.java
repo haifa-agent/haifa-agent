@@ -2,15 +2,21 @@ package io.haifa.agent.store.sqlite;
 
 import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
+import io.haifa.agent.memory.api.MemoryId;
+import io.haifa.agent.memory.api.MemoryOperationException;
 import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.DefaultMemoryService;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.storage.AppliedCommandResult;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
+import io.haifa.agent.sdk.contribution.MemoryCommandExecutor;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.product.ProductArtifactPolicy;
 import io.haifa.agent.sdk.product.ProductMemoryPolicy;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Opens one SQLite foundation and exposes Persistence, Conversation, and production Memory. */
 public record SqliteSdkProductContributions(
@@ -61,6 +67,39 @@ public record SqliteSdkProductContributions(
         return new MemoryPlatformContribution(
                 new DefaultMemoryService(store, new UuidV7IdentifierGenerator(), clock::instant),
                 new DefaultMemoryRetriever(store),
-                policy);
+                policy,
+                memoryCommands(foundation, clock));
+    }
+
+    private static MemoryCommandExecutor memoryCommands(SqliteStoreFoundation foundation, Clock clock) {
+        var receipts = foundation.idempotency();
+        String operation = "memory.user-instruction";
+        return (ownerKey, operationKey, payloadDigest, mutation) -> {
+            try {
+                return foundation.unitOfWork().execute(() -> {
+                    var existing = receipts.findAppliedCommand(ownerKey, operation, operationKey);
+                    if (existing.isPresent()) {
+                        var receipt = existing.orElseThrow();
+                        if (!receipt.requestDigest().equals(Optional.of(payloadDigest))) {
+                            throw new MemoryOperationException("MEMORY_COMMAND_CONFLICT");
+                        }
+                        return new MemoryId(receipt.resultPayload());
+                    }
+                    MemoryId result = mutation.get();
+                    receipts.recordAppliedCommand(new AppliedCommandResult(
+                            ownerKey,
+                            operation,
+                            operationKey,
+                            Optional.of(payloadDigest),
+                            1,
+                            result.value(),
+                            Instant.ofEpochMilli(clock.millis())));
+                    return result;
+                });
+            } catch (SqliteStoreException failure) {
+                if (failure.getCause() instanceof MemoryOperationException rejection) throw rejection;
+                throw failure;
+            }
+        };
     }
 }

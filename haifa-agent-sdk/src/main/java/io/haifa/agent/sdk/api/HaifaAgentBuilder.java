@@ -684,7 +684,13 @@ public final class HaifaAgentBuilder {
             var agentMemories = memory == null
                     ? Optional.<AgentMemories>empty()
                     : Optional.of(new AgentMemories(
-                            memory.service(), memory.policy(), callers, safeConversations, lifecycleClosed));
+                            memory.service(),
+                            memory.policy(),
+                            callers,
+                            safeConversations,
+                            lifecycleClosed,
+                            memory.commands(),
+                            conversationService::memoryInstruction));
             return new HaifaAgent(
                     effectiveProfile,
                     metadata,

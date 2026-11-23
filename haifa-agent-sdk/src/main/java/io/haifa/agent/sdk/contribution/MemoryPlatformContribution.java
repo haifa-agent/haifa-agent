@@ -8,20 +8,26 @@ import java.util.Objects;
 import java.util.function.Predicate;
 
 /** Product-selected Memory service, recall bridge and product limits. */
-public record MemoryPlatformContribution(MemoryService service, MemoryRetriever retriever, ProductMemoryPolicy policy) {
+public record MemoryPlatformContribution(
+        MemoryService service, MemoryRetriever retriever, ProductMemoryPolicy policy, MemoryCommandExecutor commands) {
+    public MemoryPlatformContribution(MemoryService service, MemoryRetriever retriever, ProductMemoryPolicy policy) {
+        this(service, retriever, policy, MemoryCommandExecutor.unsupported());
+    }
+
     public MemoryPlatformContribution {
         service = Objects.requireNonNull(service, "service must not be null");
         retriever = Objects.requireNonNull(retriever, "retriever must not be null");
         policy = Objects.requireNonNull(policy, "policy must not be null");
+        commands = Objects.requireNonNull(commands, "commands must not be null");
     }
 
     /** Keeps Memory CRUD but recalls into model context only for requests accepted by {@code enabled}. */
     public MemoryPlatformContribution withRecallWhen(Predicate<MemoryContextRequest> enabled) {
-        return new MemoryPlatformContribution(service, retriever.onlyWhen(enabled), policy);
+        return new MemoryPlatformContribution(service, retriever.onlyWhen(enabled), policy, commands);
     }
 
     /** Keeps Memory CRUD and never recalls memories into model context. */
     public MemoryPlatformContribution withoutRecall() {
-        return new MemoryPlatformContribution(service, MemoryRetriever.none(), policy);
+        return new MemoryPlatformContribution(service, MemoryRetriever.none(), policy, commands);
     }
 }

@@ -1,10 +1,13 @@
 package io.haifa.agent.store.sqlite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
+import io.haifa.agent.core.message.MessageRole;
+import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
@@ -12,6 +15,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.memory.api.MemoryId;
 import io.haifa.agent.memory.api.MemoryKind;
 import io.haifa.agent.memory.api.MemorySourceRef;
 import io.haifa.agent.memory.api.MemorySourceType;
@@ -33,13 +37,16 @@ import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationPro
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCaller;
+import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
+import io.haifa.agent.sdk.memory.MemoryException;
 import io.haifa.agent.sdk.memory.MemoryListQuery;
 import io.haifa.agent.sdk.memory.MemoryScopeSpec;
 import io.haifa.agent.sdk.memory.PutMemoryCommand;
+import io.haifa.agent.sdk.memory.UserMemoryInstruction;
 import io.haifa.agent.sdk.product.ChildAgentSpec;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
@@ -58,11 +65,172 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteSdkPersonalFixtureIT {
+
+    @Test
+    void replaysInstructionMemoryAfterCorrectionDeletionAndRestart(@TempDir Path directory) throws Exception {
+        String original = "Use cedar for my weekly title";
+        String revised = "Use willow for my weekly title";
+        UserMemoryInstruction add;
+        UserMemoryInstruction edit;
+        UserMemoryInstruction forget;
+        MemoryId id;
+        try (var agent = instructionAgent(directory, SqliteSdkPersonalFixtureIT::memoryReviewer)) {
+            var memories = agent.memories().orElseThrow();
+            add = instruction(agent, "weekly-add", "Please remember: " + original);
+            id = memories.remember(add, MemoryKind.PREFERENCE, original);
+            edit = instruction(agent, "weekly-edit", "Please correct the weekly title: " + revised);
+            assertThat(memories.correct(edit, id, 1, revised)).isEqualTo(id);
+            forget = instruction(agent, "weekly-forget", "Please forget the weekly title.");
+        }
+        try (var reopened = instructionAgent(directory, SqliteSdkPersonalFixtureIT::memoryReviewer)) {
+            var memories = reopened.memories().orElseThrow();
+            assertThat(memories.remember(add, MemoryKind.PREFERENCE, original)).isEqualTo(id);
+            assertThat(memories.correct(edit, id, 1, revised)).isEqualTo(id);
+            var current = memories.find(id).orElseThrow();
+            assertThat(current.content()).isEqualTo(revised);
+            assertThat(current.revision()).isEqualTo(2);
+            assertThat(memories.forget(forget, id, 2)).isEqualTo(id);
+        }
+        try (var reopened = instructionAgent(directory, SqliteSdkPersonalFixtureIT::memoryReviewer)) {
+            var memories = reopened.memories().orElseThrow();
+            assertThat(memories.remember(add, MemoryKind.PREFERENCE, original)).isEqualTo(id);
+            assertThat(memories.correct(edit, id, 1, revised)).isEqualTo(id);
+            assertThat(memories.forget(forget, id, 2)).isEqualTo(id);
+            assertThat(memories.find(id)).isEmpty();
+            assertThat(memories.list(MemoryListQuery.of(MemoryScopeSpec.user(), 10))
+                            .items())
+                    .isEmpty();
+        }
+    }
+
+    @Test
+    void bindsInstructionMemoryToTheAuthenticatedUserMessage(@TempDir Path directory) throws Exception {
+        var owner = memoryReviewer();
+        var other = new SdkCaller(owner.tenant(), new PrincipalRef("other-owner", "user"));
+        var caller = new AtomicReference<SdkCallerProvider>(() -> owner);
+        try (var agent = instructionAgent(directory, () -> caller.get().current())) {
+            var add = instruction(agent, "bound-add", "Remember Cedar and Willow");
+            var memories = agent.memories().orElseThrow();
+            assertThatThrownBy(() -> memories.remember(add, MemoryKind.FACT, "Maple"))
+                    .isInstanceOf(MemoryException.class)
+                    .extracting("code")
+                    .isEqualTo("MEMORY_INSTRUCTION_UNAVAILABLE");
+            var missing = new UserMemoryInstruction(add.sessionId(), add.runId(), "unrelated-message", 0);
+            assertThatThrownBy(() -> memories.remember(missing, MemoryKind.FACT, "Cedar"))
+                    .isInstanceOf(MemoryException.class)
+                    .extracting("code")
+                    .isEqualTo("MEMORY_INSTRUCTION_UNAVAILABLE");
+            var id = memories.remember(add, MemoryKind.FACT, "Cedar");
+            assertThatThrownBy(() -> memories.remember(add, MemoryKind.FACT, "Willow"))
+                    .isInstanceOf(MemoryException.class)
+                    .extracting("code")
+                    .isEqualTo("MEMORY_COMMAND_CONFLICT");
+            caller.set(() -> other);
+            assertThatThrownBy(() -> memories.remember(add, MemoryKind.FACT, "Cedar"))
+                    .isInstanceOf(MemoryException.class);
+            assertThat(memories.list(MemoryListQuery.of(MemoryScopeSpec.user(), 10))
+                            .items())
+                    .isEmpty();
+            var secondAction = new UserMemoryInstruction(add.sessionId(), add.runId(), add.messageId(), 1);
+            // The call begins as the other account. A second identity lookup would now see the owner.
+            var nextCaller = new AtomicReference<>(other);
+            caller.set(() -> nextCaller.getAndSet(owner));
+            assertThatThrownBy(() -> memories.remember(secondAction, MemoryKind.FACT, "Willow"))
+                    .isInstanceOf(MemoryException.class)
+                    .extracting("code")
+                    .isEqualTo("MEMORY_INSTRUCTION_UNAVAILABLE");
+            caller.set(() -> other);
+            assertThat(memories.list(MemoryListQuery.of(MemoryScopeSpec.user(), 10))
+                            .items())
+                    .isEmpty();
+            caller.set(() -> owner);
+            assertThat(memories.list(MemoryListQuery.of(MemoryScopeSpec.user(), 10))
+                            .items())
+                    .singleElement()
+                    .satisfies(memory -> {
+                        assertThat(memory.id()).isEqualTo(id);
+                        assertThat(memory.revision()).isEqualTo(1);
+                    });
+            assertThat(memories.remember(secondAction, MemoryKind.FACT, "Willow"))
+                    .isNotEqualTo(id);
+        }
+    }
+
+    @Test
+    void serializesConcurrentInstructionMemoryAndHonorsClear(@TempDir Path directory) throws Exception {
+        try (var first = instructionAgent(directory, SqliteSdkPersonalFixtureIT::memoryReviewer);
+                var second = instructionAgent(directory, SqliteSdkPersonalFixtureIT::memoryReviewer);
+                var workers = Executors.newFixedThreadPool(2)) {
+            var add = instruction(first, "concurrent-add", "Remember Cedar");
+            var ready = new CountDownLatch(2);
+            var release = new CountDownLatch(1);
+            var firstResult = workers.submit(() -> {
+                ready.countDown();
+                if (!release.await(10, TimeUnit.SECONDS)) throw new AssertionError("Missing release");
+                return first.memories().orElseThrow().remember(add, MemoryKind.PREFERENCE, "Cedar");
+            });
+            var secondResult = workers.submit(() -> {
+                ready.countDown();
+                if (!release.await(10, TimeUnit.SECONDS)) throw new AssertionError("Missing release");
+                return second.memories().orElseThrow().remember(add, MemoryKind.PREFERENCE, "Cedar");
+            });
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            release.countDown();
+            var id = firstResult.get(15, TimeUnit.SECONDS);
+            assertThat(secondResult.get(15, TimeUnit.SECONDS)).isEqualTo(id);
+            var memories = first.memories().orElseThrow();
+            assertThat(memories.list(MemoryListQuery.of(MemoryScopeSpec.user(), 10))
+                            .items())
+                    .singleElement()
+                    .satisfies(memory -> assertThat(memory.revision()).isEqualTo(1));
+            var late = instruction(first, "never-applied", "Remember Maple");
+            assertThat(memories.clear(MemoryScopeSpec.user())).isEqualTo(1);
+            assertThat(memories.remember(add, MemoryKind.PREFERENCE, "Cedar")).isEqualTo(id);
+            assertThatThrownBy(() -> memories.remember(late, MemoryKind.FACT, "Maple"))
+                    .isInstanceOf(MemoryException.class)
+                    .extracting("code")
+                    .isEqualTo("MEMORY_WRITE_STALE");
+            assertThat(memories.list(MemoryListQuery.of(MemoryScopeSpec.user(), 10))
+                            .items())
+                    .isEmpty();
+        }
+    }
+
+    private static HaifaAgent instructionAgent(Path directory, SdkCallerProvider caller) {
+        var protector =
+                new AesGcmModelContinuationProtector(new SecretKeySpec(new byte[32], "AES"), new SecureRandom());
+        var sqlite = sqliteProductContributions(directory, protector);
+        return HaifaAgents.builder(personalMemoryProfile())
+                .model(modelContribution())
+                .persistence(sqlite.persistence())
+                .conversation(sqlite.conversation())
+                .memory(sqlite.memory())
+                .callerProvider(caller)
+                .timeProvider(() -> SqliteTestSupport.NOW)
+                .build();
+    }
+
+    private static UserMemoryInstruction instruction(HaifaAgent agent, String key, String content) throws Exception {
+        var run = agent.conversations().start(new StartConversationCommand(key, "Memory", content));
+        assertThat(agent.runs()
+                        .await(run.runId(), Duration.ofSeconds(15))
+                        .orElseThrow()
+                        .status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        var session = run.record().sessionId();
+        var turn = agent.conversations().turns(session).stream()
+                .filter(message ->
+                        message.role() == MessageRole.USER && message.runId().equals(Optional.of(run.runId())))
+                .findFirst()
+                .orElseThrow();
+        return new UserMemoryInstruction(session, run.runId(), turn.messageId(), 0);
+    }
 
     @Test
     void reopensParentAndConcurrentChildResultsWithoutReplayingDelegation(@TempDir Path directory) throws Exception {

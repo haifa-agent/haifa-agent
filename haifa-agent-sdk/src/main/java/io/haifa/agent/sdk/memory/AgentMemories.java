@@ -6,19 +6,26 @@ import io.haifa.agent.memory.api.Memory;
 import io.haifa.agent.memory.api.MemoryActor;
 import io.haifa.agent.memory.api.MemoryDraft;
 import io.haifa.agent.memory.api.MemoryId;
+import io.haifa.agent.memory.api.MemoryKind;
 import io.haifa.agent.memory.api.MemoryOperationException;
 import io.haifa.agent.memory.api.MemoryPage;
 import io.haifa.agent.memory.api.MemoryQuery;
 import io.haifa.agent.memory.api.MemoryScope;
 import io.haifa.agent.memory.api.MemoryService;
+import io.haifa.agent.memory.api.MemorySourceRef;
+import io.haifa.agent.memory.api.MemorySourceType;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
+import io.haifa.agent.sdk.contribution.MemoryCommandExecutor;
 import io.haifa.agent.sdk.conversation.ConversationService;
+import io.haifa.agent.sdk.conversation.ConversationTurn;
 import io.haifa.agent.sdk.internal.CanonicalSdkDigest;
 import io.haifa.agent.sdk.product.ProductMemoryPolicy;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /**
@@ -26,6 +33,8 @@ import java.util.function.Supplier;
  * choose the USER, AGENT or SESSION bucket through {@link MemoryScopeSpec}.
  */
 public final class AgentMemories {
+    private final MemoryCommandExecutor commands;
+    private final BiFunction<SdkCaller, UserMemoryInstruction, Optional<ConversationTurn>> instructionLookup;
     private final MemoryService delegate;
     private final ProductMemoryPolicy productPolicy;
     private final SdkCallerProvider callers;
@@ -38,11 +47,114 @@ public final class AgentMemories {
             SdkCallerProvider callers,
             ConversationService conversations,
             AtomicBoolean closed) {
+        this(
+                delegate,
+                productPolicy,
+                callers,
+                conversations,
+                closed,
+                MemoryCommandExecutor.unsupported(),
+                (caller, instruction) -> {
+                    throw new MemoryOperationException("MEMORY_COMMAND_UNSUPPORTED");
+                });
+    }
+
+    public AgentMemories(
+            MemoryService delegate,
+            ProductMemoryPolicy productPolicy,
+            SdkCallerProvider callers,
+            ConversationService conversations,
+            AtomicBoolean closed,
+            MemoryCommandExecutor commands,
+            BiFunction<SdkCaller, UserMemoryInstruction, Optional<ConversationTurn>> instructionLookup) {
+        this.commands = Objects.requireNonNull(commands);
+        this.instructionLookup = Objects.requireNonNull(instructionLookup);
         this.delegate = Objects.requireNonNull(delegate, "delegate must not be null");
         this.productPolicy = Objects.requireNonNull(productPolicy, "productPolicy must not be null");
         this.callers = Objects.requireNonNull(callers, "callers must not be null");
         this.conversations = Objects.requireNonNull(conversations, "conversations must not be null");
         this.closed = Objects.requireNonNull(closed, "closed must not be null");
+    }
+
+    /** Applies a user-authorized save once. The returned id acknowledges the original write, even after deletion. */
+    public MemoryId remember(UserMemoryInstruction instruction, MemoryKind kind, String content) {
+        return execute("memory.remember", () -> {
+            String digest = CanonicalSdkDigest.sha256("remember", kind.name(), content);
+            return apply(instruction, content, digest, (actor, turn) -> {
+                // Separate hex groups so generated identifiers never resemble a payment-card number.
+                byte[] keyBytes = HexFormat.of().parseHex(instruction.key().substring("sha256:".length()));
+                String subject = HexFormat.ofDelimiter(".").formatHex(keyBytes);
+                var draft = new MemoryDraft(
+                        MemoryScope.user(actor.tenant(), actor.principal()),
+                        kind,
+                        subject,
+                        content,
+                        Optional.of(new MemorySourceRef(MemorySourceType.EXPLICIT_USER_COMMAND, turn.messageId())),
+                        Optional.of(turn.createdAt()));
+                return delegate.put(draft, actor).id();
+            });
+        });
+    }
+
+    /** Applies the correction selected by the host at the original revision. */
+    public MemoryId correct(UserMemoryInstruction instruction, MemoryId id, long expectedRevision, String content) {
+        return execute(
+                "memory.correct",
+                () -> apply(
+                        instruction,
+                        content,
+                        CanonicalSdkDigest.sha256("correct", id.value(), Long.toString(expectedRevision), content),
+                        (actor, turn) -> {
+                            requireUserFact(id, actor);
+                            return delegate.update(id, expectedRevision, content, actor)
+                                    .id();
+                        }));
+    }
+
+    /** Applies a single authorized deletion. A replay returns its receipt without touching the current record. */
+    public MemoryId forget(UserMemoryInstruction instruction, MemoryId id, long expectedRevision) {
+        return execute(
+                "memory.forget",
+                () -> apply(
+                        instruction,
+                        null,
+                        CanonicalSdkDigest.sha256("forget", id.value(), Long.toString(expectedRevision)),
+                        (actor, turn) -> {
+                            requireUserFact(id, actor);
+                            delegate.delete(id, expectedRevision, actor);
+                            return id;
+                        }));
+    }
+
+    private MemoryId apply(
+            UserMemoryInstruction instruction,
+            String content,
+            String digest,
+            BiFunction<MemoryActor, ConversationTurn, MemoryId> mutation) {
+        SdkCaller caller = caller();
+        MemoryActor actor = actor(caller);
+        ConversationTurn turn =
+                instructionLookup.apply(caller, instruction).orElseThrow(AgentMemories::instructionUnavailable);
+        if (content != null) {
+            validateContent(content);
+            if (content.isBlank() || !turn.text().contains(content)) throw instructionUnavailable();
+        }
+        String owner = CanonicalSdkDigest.sha256(
+                "memory-owner-v1",
+                actor.tenant().tenantId(),
+                actor.principal().principalType(),
+                actor.principal().principalId());
+        return commands.apply(owner, instruction.key(), digest, () -> mutation.apply(actor, turn));
+    }
+
+    private static MemoryOperationException instructionUnavailable() {
+        return new MemoryOperationException("MEMORY_INSTRUCTION_UNAVAILABLE");
+    }
+
+    private void requireUserFact(MemoryId id, MemoryActor actor) {
+        delegate.find(id, actor)
+                .filter(fact -> fact.scope().equals(MemoryScope.user(actor.tenant(), actor.principal())))
+                .orElseThrow(() -> new MemoryOperationException("MEMORY_UNAVAILABLE"));
     }
 
     /** Creates a memory, replaces the content of the same subject, or returns it unchanged for a duplicate. */
